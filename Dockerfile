@@ -1,5 +1,7 @@
 FROM node:24-alpine
 
+ARG BUILD_VERSION=dev
+
 RUN apk add --no-cache git coreutils
 
 # Install obsidian-headless
@@ -16,5 +18,6 @@ COPY quartz/quartz.config.ts ./quartz.config.ts
 COPY quartz/quartz.layout.ts ./quartz.layout.ts
 COPY quartz/components/RawLink.tsx ./quartz/components/RawLink.tsx
 RUN echo 'export { default as RawLink } from "./RawLink"' >> ./quartz/components/index.ts
+RUN sed -i "s/%%BUILD_VERSION%%/v${BUILD_VERSION}/" ./quartz.layout.ts
 
 WORKDIR /data
