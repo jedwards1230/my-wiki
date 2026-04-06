@@ -1,0 +1,234 @@
+# Auto-version and release on push to main.
+# Supports semver labels (semver:patch, semver:minor, semver:major) on PRs,
+# defaults to patch bump, and manual workflow_dispatch triggers.
+
+name: Release
+
+run-name: >-
+  ${{
+    github.event_name == 'workflow_dispatch'
+      && format('Release: {0}{1}',
+           inputs.dry_run && 'dry-run ' || '',
+           inputs.bump_type)
+      || format('Release: {0}', github.event.head_commit.message || github.sha)
+  }}
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      dry_run:
+        description: "Dry run (skip tagging and pushing)"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  detect:
+    name: Detect bump type
+    runs-on: ubuntu-latest
+    outputs:
+      bump_type: ${{ steps.bump.outputs.type }}
+      should_release: ${{ steps.bump.outputs.should_release }}
+    steps:
+      - name: Determine bump type
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # workflow_dispatch: use provided inputs
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BUMP="${{ inputs.bump_type }}"
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "type=${BUMP}" >> $GITHUB_OUTPUT
+              echo "should_release=false" >> $GITHUB_OUTPUT
+              echo "::notice::Dry run: would release with bump_type=${BUMP}"
+            else
+              echo "type=${BUMP}" >> $GITHUB_OUTPUT
+              echo "should_release=true" >> $GITHUB_OUTPUT
+            fi
+            exit 0
+          fi
+
+          # push event: check PR labels for semver override, default to patch
+          LABELS=$(gh pr list --state merged --base main --limit 100 \
+            --json labels,mergeCommit \
+            | jq -r --arg sha "$GITHUB_SHA" \
+              '.[] | select(.mergeCommit.oid == $sha) | .labels[].name' 2>/dev/null || echo "")
+
+          echo "Labels for commit ${GITHUB_SHA}: ${LABELS:-<none>}"
+
+          if echo "$LABELS" | grep -q 'semver:major'; then
+            echo "type=major" >> $GITHUB_OUTPUT
+          elif echo "$LABELS" | grep -q 'semver:minor'; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+          else
+            echo "type=patch" >> $GITHUB_OUTPUT
+          fi
+          echo "should_release=true" >> $GITHUB_OUTPUT
+
+  tag:
+    name: Tag Release
+    needs: [detect]
+    if: needs.detect.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        run: |
+          BUMP_TYPE="${{ needs.detect.outputs.bump_type }}"
+
+          # Find latest semver tag
+          LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n1 || true)
+
+          if [ -z "$LATEST_TAG" ]; then
+            MAJOR=0; MINOR=0; PATCH=0
+            echo "No existing semver tags found, starting from 0.0.0"
+          else
+            LATEST_VERSION="${LATEST_TAG#v}"
+            MAJOR=$(echo "$LATEST_VERSION" | cut -d. -f1)
+            MINOR=$(echo "$LATEST_VERSION" | cut -d. -f2)
+            PATCH=$(echo "$LATEST_VERSION" | cut -d. -f3)
+            echo "Latest tag: $LATEST_TAG"
+          fi
+
+          case "$BUMP_TYPE" in
+            major) NEXT_VERSION="$((MAJOR + 1)).0.0" ;;
+            minor) NEXT_VERSION="${MAJOR}.$((MINOR + 1)).0" ;;
+            patch) NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+          esac
+
+          NEXT_TAG="v${NEXT_VERSION}"
+
+          if git rev-parse "$NEXT_TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $NEXT_TAG already exists"
+            exit 1
+          fi
+
+          echo "version=${NEXT_VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${NEXT_TAG}" >> $GITHUB_OUTPUT
+          echo "Next version: $NEXT_VERSION (tag: $NEXT_TAG)"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+  build:
+    name: Build and Push Image
+    needs: [tag]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.tag.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.version=${{ needs.tag.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: Create GitHub Release
+    needs: [tag, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ needs.tag.outputs.tag }}"
+          VERSION="${{ needs.tag.outputs.version }}"
+
+          # Find previous tag for changelog
+          PREV_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | grep -B1 "^${TAG}$" | head -1)
+          if [ "$PREV_TAG" = "$TAG" ] || [ -z "$PREV_TAG" ]; then
+            COMPARE_NOTE="Initial release"
+          else
+            COMPARE_NOTE="**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
+          fi
+
+          gh release create "${TAG}" \
+            --title "Release ${VERSION}" \
+            --notes "$(cat <<EOF
+          ## Docker Image
+
+          \`\`\`bash
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
+          \`\`\`
+
+          ${COMPARE_NOTE}
+          EOF
+          )" \
+            --latest
+
+      - name: Write workflow summary
+        run: |
+          TAG="${{ needs.tag.outputs.tag }}"
+          VERSION="${{ needs.tag.outputs.version }}"
+          echo "## Release ${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${VERSION} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Bump | ${{ needs.detect.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY

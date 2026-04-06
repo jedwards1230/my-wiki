@@ -11,4 +11,10 @@ RUN git clone --depth 1 https://github.com/jackyzha0/quartz.git . && \
     npm ci --ignore-scripts && \
     rm -rf .git
 
+# Copy custom Quartz configuration and components
+COPY quartz/quartz.config.ts ./quartz.config.ts
+COPY quartz/quartz.layout.ts ./quartz.layout.ts
+COPY quartz/components/RawLink.tsx ./quartz/components/RawLink.tsx
+RUN echo 'export { default as RawLink } from "./RawLink"' >> ./quartz/components/index.ts
+
 WORKDIR /data
