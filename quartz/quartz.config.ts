@@ -10,7 +10,7 @@ const config: QuartzConfig = {
     analytics: null,
     locale: "en-US",
     baseUrl: "wiki.lilbro.cloud",
-    ignorePatterns: ["private", ".obsidian"],
+    ignorePatterns: ["private", ".obsidian", "raw"],
     defaultDateType: "modified",
     theme: {
       fontOrigin: "googleFonts",
