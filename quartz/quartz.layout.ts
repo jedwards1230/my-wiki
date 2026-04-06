@@ -6,7 +6,9 @@ export const sharedPageComponents: SharedLayout = {
   header: [],
   afterBody: [],
   footer: Component.Footer({
-    links: {},
+    links: {
+      "%%BUILD_VERSION%%": "https://github.com/jedwards1230/home-wiki/releases",
+    },
   }),
 }
 
