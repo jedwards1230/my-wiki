@@ -2,7 +2,7 @@ import { QuartzComponent, QuartzComponentConstructor, QuartzComponentProps } fro
 
 const RawLink: QuartzComponent = ({ fileData }: QuartzComponentProps) => {
   const slug = fileData.slug ?? ""
-  const rawUrl = `/raw/${slug}.md`
+  const rawUrl = `/${slug}.md`
   return (
     <a
       href={rawUrl}
