@@ -25,11 +25,7 @@ export const defaultContentPageLayout: PageLayout = {
     Component.MobileOnly(Component.Spacer()),
     Component.Search(),
     Component.Darkmode(),
-    Component.DesktopOnly(
-      Component.Explorer({
-        filterFn: (node) => node.slugSegment !== "tags" && node.slugSegment !== "raw",
-      }),
-    ),
+    Component.DesktopOnly(Component.Explorer()),
   ],
   right: [
     Component.Graph(),
@@ -45,11 +41,7 @@ export const defaultListPageLayout: PageLayout = {
     Component.MobileOnly(Component.Spacer()),
     Component.Search(),
     Component.Darkmode(),
-    Component.DesktopOnly(
-      Component.Explorer({
-        filterFn: (node) => node.slugSegment !== "tags" && node.slugSegment !== "raw",
-      }),
-    ),
+    Component.DesktopOnly(Component.Explorer()),
   ],
   right: [],
 }
