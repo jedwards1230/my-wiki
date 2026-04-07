@@ -38,8 +38,16 @@ func New(cfg Config, publicFS, vaultFS fs.FS) *Server {
 	}
 
 	mux := http.NewServeMux()
+	healthHandler := HealthHandler()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		HealthHandler().ServeHTTP(w, r)
+		healthHandler.ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if !s.ready.Load() {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		healthHandler.ServeHTTP(w, r)
 	})
 	if rawHandler != nil {
 		mux.HandleFunc("GET /raw", func(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +76,11 @@ func New(cfg Config, publicFS, vaultFS fs.FS) *Server {
 
 func (s *Server) readinessMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /healthz and /readyz bypass readiness gate (probes must always respond)
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !s.ready.Load() {
 			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 			return

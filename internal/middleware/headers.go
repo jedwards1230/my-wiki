@@ -18,7 +18,7 @@ func CacheHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ext := strings.ToLower(path.Ext(r.URL.Path))
 		if cachedExtensions[ext] {
-			w.Header().Set("Cache-Control", "public, immutable")
+			w.Header().Set("Cache-Control", "public, immutable, max-age=3600")
 			w.Header().Set("Expires", time.Now().Add(time.Hour).UTC().Format(http.TimeFormat))
 		}
 		next.ServeHTTP(w, r)

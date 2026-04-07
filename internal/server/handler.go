@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"net/http"
@@ -251,20 +252,23 @@ func (h *RawHandler) serveAutoindex(w http.ResponseWriter, r *http.Request, dirP
 		}
 	}
 
+	escapedDir := html.EscapeString(urlDir)
+
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "<html><head><title>Index of %s</title></head>\n", urlDir)
-	fmt.Fprintf(&buf, "<body><h1>Index of %s</h1><hr><pre>\n", urlDir)
+	fmt.Fprintf(&buf, "<html><head><title>Index of %s</title></head>\n", escapedDir)
+	fmt.Fprintf(&buf, "<body><h1>Index of %s</h1><hr><pre>\n", escapedDir)
 
 	if dirPath != "" {
-		fmt.Fprintf(&buf, "<a href=\"%s\">../</a>\n", path.Dir(strings.TrimSuffix(urlDir, "/"))+"/")
+		fmt.Fprintf(&buf, "<a href=\"%s\">../</a>\n", html.EscapeString(path.Dir(strings.TrimSuffix(urlDir, "/"))+"/"))
 	}
 
 	for _, entry := range entries {
 		name := entry.Name()
+		escapedName := html.EscapeString(name)
 		if entry.IsDir() {
-			fmt.Fprintf(&buf, "<a href=\"%s%s/\">%s/</a>\n", urlDir, name, name)
+			fmt.Fprintf(&buf, "<a href=\"%s%s/\">%s/</a>\n", escapedDir, escapedName, escapedName)
 		} else {
-			fmt.Fprintf(&buf, "<a href=\"%s%s\">%s</a>\n", urlDir, name, name)
+			fmt.Fprintf(&buf, "<a href=\"%s%s\">%s</a>\n", escapedDir, escapedName, escapedName)
 		}
 	}
 

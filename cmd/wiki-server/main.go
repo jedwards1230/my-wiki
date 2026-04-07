@@ -12,6 +12,8 @@ import (
 	"github.com/jedwards1230/home-wiki/internal/server"
 )
 
+var version = "dev"
+
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -60,7 +62,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		logger.Info("starting wiki-server", "port", port, "publicDir", publicDir, "vaultDir", vaultDir)
+		logger.Info("starting wiki-server", "version", version, "port", port, "publicDir", publicDir, "vaultDir", vaultDir)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("server error", "error", err)
 			os.Exit(1)
