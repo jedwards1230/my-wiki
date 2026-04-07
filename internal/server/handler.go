@@ -50,7 +50,7 @@ func (h *StaticHandler) serveFile(w http.ResponseWriter, r *http.Request, name s
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	stat, err := f.Stat()
 	if err != nil || stat.IsDir() {
@@ -77,7 +77,7 @@ func (h *StaticHandler) serve404(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	data, err := io.ReadAll(f)
 	if err != nil {
@@ -87,7 +87,7 @@ func (h *StaticHandler) serve404(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusNotFound)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // MarkdownHandler serves vault markdown files as text/plain.
@@ -108,7 +108,7 @@ func (h *MarkdownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	stat, err := f.Stat()
 	if err != nil || stat.IsDir() {
@@ -124,7 +124,7 @@ func (h *MarkdownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // RawHandler serves raw source files with native MIME types and directory listing.
@@ -199,7 +199,7 @@ func (h *RawHandler) serveRawFile(w http.ResponseWriter, r *http.Request, name s
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	stat, err := f.Stat()
 	if err != nil || stat.IsDir() {
@@ -219,7 +219,7 @@ func (h *RawHandler) serveRawFile(w http.ResponseWriter, r *http.Request, name s
 
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Write(data)
+	_, _ = w.Write(data)
 	return true
 }
 
@@ -272,7 +272,7 @@ func (h *RawHandler) serveAutoindex(w http.ResponseWriter, r *http.Request, dirP
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Write(buf.Bytes())
+	_, _ = w.Write(buf.Bytes())
 	return true
 }
 
@@ -280,6 +280,6 @@ func (h *RawHandler) serveAutoindex(w http.ResponseWriter, r *http.Request, dirP
 func HealthHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		io.WriteString(w, "ok")
+		_, _ = io.WriteString(w, "ok")
 	}
 }
