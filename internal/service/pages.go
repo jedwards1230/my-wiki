@@ -75,7 +75,11 @@ func (s *PageService) Delete(relPath string) error {
 func (s *PageService) List(prefix string) ([]PageInfo, error) {
 	searchDir := s.vaultDir
 	if prefix != "" {
-		searchDir = filepath.Join(s.vaultDir, prefix)
+		searchDir = filepath.Clean(filepath.Join(s.vaultDir, prefix))
+		vaultPrefix := filepath.Clean(s.vaultDir) + string(filepath.Separator)
+		if !strings.HasPrefix(searchDir, vaultPrefix) && searchDir != filepath.Clean(s.vaultDir) {
+			return nil, fmt.Errorf("path traversal not allowed")
+		}
 	}
 
 	var pages []PageInfo
@@ -125,8 +129,10 @@ func (s *PageService) resolve(relPath string) (string, error) {
 	absPath := filepath.Join(s.vaultDir, relPath)
 	absPath = filepath.Clean(absPath)
 
-	// Prevent path traversal
-	if !strings.HasPrefix(absPath, s.vaultDir) {
+	// Prevent path traversal: use separator suffix to avoid prefix collisions
+	// e.g., /data/vault-evil would match /data/vault without the separator check
+	vaultPrefix := filepath.Clean(s.vaultDir) + string(filepath.Separator)
+	if !strings.HasPrefix(absPath, vaultPrefix) && absPath != filepath.Clean(s.vaultDir) {
 		return "", fmt.Errorf("path traversal not allowed")
 	}
 

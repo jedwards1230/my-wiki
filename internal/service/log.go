@@ -99,9 +99,25 @@ func parseLogIndexLine(line string) LogEntry {
 	return entry
 }
 
+// validDate checks that date is a valid YYYY-MM-DD string with no path components.
+func validDate(date string) bool {
+	if len(date) != 10 {
+		return false
+	}
+	for _, c := range date {
+		if c != '-' && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return date[4] == '-' && date[7] == '-'
+}
+
 // Day returns activity entries for a specific date.
 // If detail is false, only headers (### lines) are returned.
 func (s *LogService) Day(date string, detail bool) (*DayLog, error) {
+	if !validDate(date) {
+		return nil, fmt.Errorf("invalid date format: %s (expected YYYY-MM-DD)", date)
+	}
 	file := filepath.Join(s.activityDir(), date+".md")
 	if _, err := os.Stat(file); os.IsNotExist(err) {
 		return nil, fmt.Errorf("no activity file for %s", date)
