@@ -12,7 +12,7 @@ import (
 func largeTextHandler(contentType string, size int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", contentType)
-		w.Write([]byte(strings.Repeat("a", size)))
+		_, _ = w.Write([]byte(strings.Repeat("a", size)))
 	}
 }
 
@@ -34,7 +34,7 @@ func TestGzipCompressesLargeText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create gzip reader: %v", err)
 	}
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 	body, _ := io.ReadAll(gr)
 	if len(body) != 2000 {
 		t.Fatalf("expected 2000 bytes after decompress, got %d", len(body))
