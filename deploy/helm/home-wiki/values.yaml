@@ -90,3 +90,6 @@ resources:
 
 nodeSelector: {}
 tolerations: []
+
+# Inject arbitrary manifests (e.g., OnePasswordItem, NetworkPolicy, ServiceMonitor)
+extraManifests: []
