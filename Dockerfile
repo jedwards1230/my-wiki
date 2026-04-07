@@ -1,3 +1,15 @@
+# --- Go builder stage ---
+FROM golang:1.25-alpine AS go-builder
+WORKDIR /src
+COPY go.mod ./
+# Copy go.sum only if it exists (no external dependencies currently)
+COPY go.sum* ./
+COPY cmd/ cmd/
+COPY internal/ internal/
+ARG BUILD_VERSION=dev
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${BUILD_VERSION}" -o /wiki-server ./cmd/wiki-server
+
+# --- Main image ---
 FROM node:24-alpine
 
 ARG BUILD_VERSION=dev
@@ -23,5 +35,8 @@ RUN sed -i "s/%%BUILD_VERSION%%/v${BUILD_VERSION}/" ./quartz.layout.ts
 # Install wiki scripts
 COPY scripts/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/wiki-*
+
+# Copy Go binary from builder
+COPY --from=go-builder /wiki-server /usr/local/bin/wiki-server
 
 WORKDIR /data
