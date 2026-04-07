@@ -10,15 +10,37 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jedwards1230/home-wiki/internal/api"
 	"github.com/jedwards1230/home-wiki/internal/server"
+	"github.com/jedwards1230/home-wiki/internal/vault"
 	"github.com/spf13/cobra"
 )
 
 func newServeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the wiki HTTP server",
-		RunE:  runServe,
+		Short: "Start the wiki server",
+		Long:  "Start the wiki HTTP server with static site, API, or MCP transport.",
+	}
+
+	// Add subcommands
+	cmd.AddCommand(newServeHTTPCmd())
+
+	// Default to http if no subcommand given
+	cmd.RunE = runServeHTTP
+
+	// Flags shared with http subcommand
+	cmd.Flags().String("port", envOr("WIKI_PORT", "8080"), "HTTP port (env: WIKI_PORT)")
+	cmd.Flags().String("public-dir", envOr("WIKI_PUBLIC_DIR", "/data/public"), "path to Quartz public output (env: WIKI_PUBLIC_DIR)")
+
+	return cmd
+}
+
+func newServeHTTPCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "http",
+		Short: "Start the HTTP server (static site + API)",
+		RunE:  runServeHTTP,
 	}
 
 	cmd.Flags().String("port", envOr("WIKI_PORT", "8080"), "HTTP port (env: WIKI_PORT)")
@@ -34,7 +56,7 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-func runServe(cmd *cobra.Command, _ []string) error {
+func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	port, _ := cmd.Flags().GetString("port")
 	publicDir, _ := cmd.Flags().GetString("public-dir")
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
@@ -50,7 +72,13 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	publicFS := os.DirFS(publicDir)
 	vaultFS := os.DirFS(vaultDir)
 
-	srv := server.New(cfg, publicFS, vaultFS)
+	// Build API handler
+	v := vault.New(vaultDir)
+	apiHandler := api.NewHandler(v)
+
+	srv := server.New(cfg, publicFS, vaultFS,
+		server.WithAPIRoutes(apiHandler.RegisterRoutes),
+	)
 
 	// Graceful shutdown on SIGTERM/SIGINT
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)

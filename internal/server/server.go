@@ -23,8 +23,18 @@ type Server struct {
 	config  Config
 }
 
+// Option configures the server.
+type Option func(mux *http.ServeMux)
+
+// WithAPIRoutes registers API routes on the server mux.
+func WithAPIRoutes(register func(mux *http.ServeMux)) Option {
+	return func(mux *http.ServeMux) {
+		register(mux)
+	}
+}
+
 // New creates a new Server with the given config and filesystems.
-func New(cfg Config, publicFS, vaultFS fs.FS) *Server {
+func New(cfg Config, publicFS, vaultFS fs.FS, opts ...Option) *Server {
 	s := &Server{config: cfg}
 
 	staticHandler := NewStaticHandler(publicFS)
@@ -49,6 +59,12 @@ func New(cfg Config, publicFS, vaultFS fs.FS) *Server {
 		}
 		healthHandler.ServeHTTP(w, r)
 	})
+
+	// Apply options (API routes, etc.) before static catch-all
+	for _, opt := range opts {
+		opt(mux)
+	}
+
 	if rawHandler != nil {
 		mux.HandleFunc("GET /raw", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/raw/", http.StatusMovedPermanently)
@@ -76,8 +92,8 @@ func New(cfg Config, publicFS, vaultFS fs.FS) *Server {
 
 func (s *Server) readinessMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /healthz and /readyz bypass readiness gate (probes must always respond)
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+		// /healthz, /readyz, and /api/ bypass readiness gate
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
