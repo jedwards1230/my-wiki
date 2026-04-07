@@ -28,8 +28,8 @@ func TestCacheControlForStaticAssets(t *testing.T) {
 			h.ServeHTTP(w, r)
 
 			cc := w.Header().Get("Cache-Control")
-			if !strings.Contains(cc, "public") || !strings.Contains(cc, "immutable") {
-				t.Fatalf("expected Cache-Control: public, immutable for %s, got %q", path, cc)
+			if !strings.Contains(cc, "public") || !strings.Contains(cc, "immutable") || !strings.Contains(cc, "max-age=3600") {
+				t.Fatalf("expected Cache-Control: public, immutable, max-age=3600 for %s, got %q", path, cc)
 			}
 			if exp := w.Header().Get("Expires"); exp == "" {
 				t.Fatalf("expected Expires header for %s", path)
