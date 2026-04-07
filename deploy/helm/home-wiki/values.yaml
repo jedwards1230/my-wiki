@@ -81,6 +81,17 @@ resources:
     limits:
       cpu: 100m
       memory: 64Mi
+  wikiMcp:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+mcp:
+  enabled: false
+  port: 8081
 
 nodeSelector: {}
 tolerations: []
