@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jedwards1230/home-wiki/internal/api"
+	"github.com/jedwards1230/home-wiki/internal/mcpserver"
 	"github.com/jedwards1230/home-wiki/internal/server"
 	"github.com/jedwards1230/home-wiki/internal/vault"
 	"github.com/spf13/cobra"
@@ -25,6 +26,7 @@ func newServeCmd() *cobra.Command {
 
 	// Add subcommands
 	cmd.AddCommand(newServeHTTPCmd())
+	cmd.AddCommand(newServeMCPCmd())
 
 	// Default to http if no subcommand given
 	cmd.RunE = runServeHTTP
@@ -124,6 +126,63 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	}
 
 	logger.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return httpSrv.Shutdown(shutdownCtx)
+}
+
+func newServeMCPCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "mcp",
+		Short: "Start a standalone MCP server (streamable-http transport)",
+		RunE:  runServeMCP,
+	}
+
+	cmd.Flags().String("port", envOr("WIKI_MCP_PORT", "8081"), "MCP server port (env: WIKI_MCP_PORT)")
+
+	return cmd
+}
+
+func runServeMCP(cmd *cobra.Command, _ []string) error {
+	port, _ := cmd.Flags().GetString("port")
+	vaultDir, _ := cmd.Root().Flags().GetString("vault")
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	v := vault.New(vaultDir)
+	mcpSrv := mcpserver.New(v)
+	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
+
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", httpTransport)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	httpSrv := &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("starting wiki MCP server", "port", port, "vaultDir", vaultDir)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("MCP server failed: %w", err)
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+
+	logger.Info("shutting down MCP server")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return httpSrv.Shutdown(shutdownCtx)
