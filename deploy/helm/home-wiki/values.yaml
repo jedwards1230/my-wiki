@@ -1,0 +1,94 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/jedwards1230/home-wiki
+  tag: ""  # defaults to appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: ghcr-secret
+
+nginx:
+  image:
+    repository: nginx
+    tag: "1.27-alpine"
+    pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: wiki.example.com
+  tls:
+    secretName: wiki-tls
+
+obsidian:
+  vault: "Home Wiki"
+  deviceName: "k8s-wiki"
+  excludedFolders: "private"
+  syncMode: "bidirectional"
+
+quartz:
+  concurrency: 4
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 5Gi
+
+secrets:
+  obsidian:
+    enabled: false
+    itemPath: ""
+
+homepage:
+  enabled: false
+  name: "Wiki"
+  description: "Home knowledge base"
+  group: "Web Services"
+  icon: "obsidian.png"
+
+resources:
+  setupSync:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  setupQuartz:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  sync:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  quartz:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  nginx:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
