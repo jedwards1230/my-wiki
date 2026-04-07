@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -51,16 +52,26 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	srv := server.New(cfg, publicFS, vaultFS)
 
-	// Poll for readiness: wait until publicDir/index.html exists
+	// Graceful shutdown on SIGTERM/SIGINT
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	// Poll for readiness with cancellation
 	go func() {
 		indexPath := publicDir + "/index.html"
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
 		for {
-			if _, err := os.Stat(indexPath); err == nil {
-				srv.SetReady()
-				logger.Info("server ready", "publicDir", publicDir)
+			select {
+			case <-ctx.Done():
 				return
+			case <-ticker.C:
+				if _, err := os.Stat(indexPath); err == nil {
+					srv.SetReady()
+					logger.Info("server ready", "publicDir", publicDir)
+					return
+				}
 			}
-			time.Sleep(500 * time.Millisecond)
 		}
 	}()
 
@@ -69,21 +80,22 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		Handler: srv.Handler(),
 	}
 
-	// Graceful shutdown on SIGTERM/SIGINT
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
-
+	// Start server in goroutine, propagate error via channel
+	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("starting wiki-server", "version", version, "port", port, "publicDir", publicDir, "vaultDir", vaultDir)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server error", "error", err)
-			os.Exit(1)
+			errCh <- fmt.Errorf("server failed: %w", err)
 		}
 	}()
 
-	<-ctx.Done()
-	logger.Info("shutting down")
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
 
+	logger.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return httpSrv.Shutdown(shutdownCtx)

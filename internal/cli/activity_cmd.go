@@ -85,13 +85,11 @@ func runActivity(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	created := false
 	if _, err := os.Stat(dailyFile); os.IsNotExist(err) {
 		content := fmt.Sprintf("---\ntitle: \"%s\"\ntags:\n  - meta/activity\ndate: %s\n---\n", today, today)
 		if err := os.WriteFile(dailyFile, []byte(content), 0o644); err != nil {
 			return err
 		}
-		created = true
 		fmt.Printf("Created %s\n", dailyFile)
 	}
 
@@ -114,7 +112,6 @@ func runActivity(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintln(f, desc)
 	}
 
-	_ = created // suppress unused warning
 	fmt.Printf("Logged: %s | %s | %s\n", timeStr, actType, title)
 
 	// Update log index

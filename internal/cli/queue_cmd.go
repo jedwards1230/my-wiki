@@ -138,7 +138,9 @@ func generateQueueFile(v *vault.Vault, items []rawFileInfo) error {
 			if dateStr == "" {
 				dateStr = "--"
 			}
-			fmt.Fprintf(&b, "| `%s` | %s | %s |\n", item.Path, dateStr, item.Title)
+			safeTitle := strings.ReplaceAll(item.Title, "|", "\\|")
+			safeTitle = strings.ReplaceAll(safeTitle, "\n", " ")
+			fmt.Fprintf(&b, "| `%s` | %s | %s |\n", item.Path, dateStr, safeTitle)
 		}
 	}
 

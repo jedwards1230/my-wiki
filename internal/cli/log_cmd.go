@@ -55,10 +55,6 @@ func runLog(cmd *cobra.Command, args []string) error {
 		return showDay(activityDir, today, detail)
 	default:
 		if dateRe.MatchString(args[0]) {
-			// Check if second arg is --detail (positional)
-			if len(args) > 1 && args[1] == "--detail" {
-				detail = true
-			}
 			return showDay(activityDir, args[0], detail)
 		}
 		return fmt.Errorf("unknown argument %q: expected today, YYYY-MM-DD, or lint", args[0])
@@ -68,7 +64,7 @@ func runLog(cmd *cobra.Command, args []string) error {
 func showIndex(logIndex string, n int) error {
 	f, err := os.Open(logIndex)
 	if err != nil {
-		return fmt.Errorf("no log index found at %s", logIndex)
+		return fmt.Errorf("no log index found at %s: %w", logIndex, err)
 	}
 	defer func() { _ = f.Close() }()
 

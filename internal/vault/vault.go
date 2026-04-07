@@ -81,7 +81,7 @@ func ParseFrontmatter(path string) (map[string]string, error) {
 
 	// First line must be ---
 	if !scanner.Scan() {
-		return fm, nil
+		return fm, scanner.Err()
 	}
 	if strings.TrimSpace(scanner.Text()) != "---" {
 		return nil, nil // no frontmatter
