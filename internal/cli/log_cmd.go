@@ -70,7 +70,7 @@ func showIndex(logIndex string, n int) error {
 	if err != nil {
 		return fmt.Errorf("no log index found at %s", logIndex)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var lines []string
 	scanner := bufio.NewScanner(f)
@@ -104,7 +104,7 @@ func showDay(activityDir, date string, detail bool) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -159,7 +159,7 @@ func lintLog(logIndex, activityDir string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

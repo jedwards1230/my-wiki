@@ -215,8 +215,8 @@ func updateLogIndex(logIndex, dailyFile, today, title string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(f, indexLine)
-		f.Close()
+		_, _ = fmt.Fprintln(f, indexLine)
+		_ = f.Close()
 	}
 
 	fmt.Printf("Updated meta/log.md (%d entries, hash: %s)\n", entryCount, hash)

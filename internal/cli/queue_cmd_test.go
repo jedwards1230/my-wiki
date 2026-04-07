@@ -11,8 +11,8 @@ func setupQueueVault(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	os.MkdirAll(filepath.Join(dir, "raw"), 0o755)
-	os.MkdirAll(filepath.Join(dir, "meta"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "raw"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "meta"), 0o755)
 
 	files := map[string]string{
 		"raw/unprocessed.md": "---\ntitle: Unprocessed\nsource: https://example.com\ndate-added: 2026-01-15\n---\n\nContent.\n",
@@ -20,7 +20,7 @@ func setupQueueVault(t *testing.T) string {
 		"raw/also-new.md":    "---\ntitle: Also New\nsource: https://example.com/2\ndate-added: 2026-02-01\n---\n\nMore content.\n",
 	}
 	for name, content := range files {
-		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 	}
 
 	return dir
@@ -38,7 +38,7 @@ func TestQueueList(t *testing.T) {
 	cmd.SetArgs([]string{"--vault", dir, "queue"})
 	err := cmd.Execute()
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 
 	if err != nil {
@@ -73,7 +73,7 @@ func TestQueueCount(t *testing.T) {
 	cmd.SetArgs([]string{"--vault", dir, "queue", "--count"})
 	err := cmd.Execute()
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 
 	if err != nil {
@@ -119,10 +119,10 @@ func TestQueueGenerate(t *testing.T) {
 
 func TestQueueEmpty(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "raw"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "raw"), 0o755)
 
 	// Only processed files
-	os.WriteFile(filepath.Join(dir, "raw/done.md"), []byte("---\ntitle: Done\ningested: true\n---\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "raw/done.md"), []byte("---\ntitle: Done\ningested: true\n---\n"), 0o644)
 
 	old := os.Stdout
 	r, w, _ := os.Pipe()
@@ -132,7 +132,7 @@ func TestQueueEmpty(t *testing.T) {
 	cmd.SetArgs([]string{"--vault", dir, "queue"})
 	err := cmd.Execute()
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 
 	if err != nil {
