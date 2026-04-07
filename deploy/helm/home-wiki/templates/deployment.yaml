@@ -143,7 +143,7 @@ spec:
         - name: wiki-server
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["/usr/local/bin/wiki-server"]
+          command: ["/usr/local/bin/wiki-server", "serve"]
           env:
             - name: WIKI_PUBLIC_DIR
               value: "/data/public"
