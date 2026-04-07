@@ -107,12 +107,12 @@ func (w *gzipResponseWriter) commit() {
 		gz.Reset(w.ResponseWriter)
 		w.gw = gz
 
-		w.gw.Write(w.buf)
+		_, _ = w.gw.Write(w.buf)
 	} else {
 		// Pass through
 		w.Header().Set("Vary", "Accept-Encoding")
 		w.ResponseWriter.WriteHeader(w.statusCode)
-		w.ResponseWriter.Write(w.buf)
+		_, _ = w.ResponseWriter.Write(w.buf)
 	}
 }
 
@@ -121,7 +121,7 @@ func (w *gzipResponseWriter) finish() {
 		w.commit()
 	}
 	if w.compressed && w.gw != nil {
-		w.gw.Close()
+		_ = w.gw.Close()
 		gzipWriterPool.Put(w.gw)
 	}
 }
