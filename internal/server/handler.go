@@ -255,24 +255,37 @@ func (h *RawHandler) serveAutoindex(w http.ResponseWriter, r *http.Request, dirP
 	escapedDir := html.EscapeString(urlDir)
 
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "<html><head><title>Index of %s</title></head>\n", escapedDir)
-	fmt.Fprintf(&buf, "<body><h1>Index of %s</h1><hr><pre>\n", escapedDir)
+	fmt.Fprintf(&buf, `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Index of %s</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+h1 { font-size: 1.4rem; font-weight: 600; }
+a { text-decoration: none; color: #2563eb; }
+a:hover { text-decoration: underline; }
+ul { list-style: none; padding: 0; }
+li { padding: 0.3rem 0; }
+li::before { content: "📁 "; }
+li.file::before { content: "📄 "; }
+hr { border: none; border-top: 1px solid #e5e7eb; }
+</style></head>
+<body><h1>Index of %s</h1><hr><ul>
+`, escapedDir, escapedDir)
 
 	if dirPath != "" {
-		fmt.Fprintf(&buf, "<a href=\"%s\">../</a>\n", html.EscapeString(path.Dir(strings.TrimSuffix(urlDir, "/"))+"/"))
+		fmt.Fprintf(&buf, "<li><a href=\"%s\">../</a></li>\n", html.EscapeString(path.Dir(strings.TrimSuffix(urlDir, "/"))+"/"))
 	}
 
 	for _, entry := range entries {
 		name := entry.Name()
 		escapedName := html.EscapeString(name)
 		if entry.IsDir() {
-			fmt.Fprintf(&buf, "<a href=\"%s%s/\">%s/</a>\n", escapedDir, escapedName, escapedName)
+			fmt.Fprintf(&buf, "<li><a href=\"%s%s/\">%s/</a></li>\n", escapedDir, escapedName, escapedName)
 		} else {
-			fmt.Fprintf(&buf, "<a href=\"%s%s\">%s</a>\n", escapedDir, escapedName, escapedName)
+			fmt.Fprintf(&buf, "<li class=\"file\"><a href=\"%s%s\">%s</a></li>\n", escapedDir, escapedName, escapedName)
 		}
 	}
 
-	fmt.Fprintf(&buf, "</pre><hr></body></html>")
+	fmt.Fprintf(&buf, "</ul><hr></body></html>")
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

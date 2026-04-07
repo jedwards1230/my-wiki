@@ -247,6 +247,9 @@ func TestRawAutoindex(t *testing.T) {
 	if !strings.Contains(body, "file1.txt") || !strings.Contains(body, "file2.txt") {
 		t.Fatalf("expected directory listing with file1.txt and file2.txt, got %q", body)
 	}
+	if !strings.Contains(body, "<ul>") {
+		t.Fatalf("expected styled list markup, got %q", body)
+	}
 	ct := w.Header().Get("Content-Type")
 	if !strings.Contains(ct, "text/html") {
 		t.Fatalf("expected text/html for autoindex, got %q", ct)
