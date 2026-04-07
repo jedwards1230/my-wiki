@@ -10,15 +10,39 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jedwards1230/home-wiki/internal/api"
+	"github.com/jedwards1230/home-wiki/internal/mcpserver"
 	"github.com/jedwards1230/home-wiki/internal/server"
+	"github.com/jedwards1230/home-wiki/internal/vault"
 	"github.com/spf13/cobra"
 )
 
 func newServeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the wiki HTTP server",
-		RunE:  runServe,
+		Short: "Start the wiki server",
+		Long:  "Start the wiki HTTP server with static site, API, or MCP transport.",
+	}
+
+	// Add subcommands
+	cmd.AddCommand(newServeHTTPCmd())
+	cmd.AddCommand(newServeMCPCmd())
+
+	// Default to http if no subcommand given
+	cmd.RunE = runServeHTTP
+
+	// Flags shared with http subcommand
+	cmd.Flags().String("port", envOr("WIKI_PORT", "8080"), "HTTP port (env: WIKI_PORT)")
+	cmd.Flags().String("public-dir", envOr("WIKI_PUBLIC_DIR", "/data/public"), "path to Quartz public output (env: WIKI_PUBLIC_DIR)")
+
+	return cmd
+}
+
+func newServeHTTPCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "http",
+		Short: "Start the HTTP server (static site + API)",
+		RunE:  runServeHTTP,
 	}
 
 	cmd.Flags().String("port", envOr("WIKI_PORT", "8080"), "HTTP port (env: WIKI_PORT)")
@@ -34,7 +58,7 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-func runServe(cmd *cobra.Command, _ []string) error {
+func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	port, _ := cmd.Flags().GetString("port")
 	publicDir, _ := cmd.Flags().GetString("public-dir")
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
@@ -50,7 +74,13 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	publicFS := os.DirFS(publicDir)
 	vaultFS := os.DirFS(vaultDir)
 
-	srv := server.New(cfg, publicFS, vaultFS)
+	// Build API handler
+	v := vault.New(vaultDir)
+	apiHandler := api.NewHandler(v)
+
+	srv := server.New(cfg, publicFS, vaultFS,
+		server.WithAPIRoutes(apiHandler.RegisterRoutes),
+	)
 
 	// Graceful shutdown on SIGTERM/SIGINT
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -96,6 +126,63 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 
 	logger.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return httpSrv.Shutdown(shutdownCtx)
+}
+
+func newServeMCPCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "mcp",
+		Short: "Start a standalone MCP server (streamable-http transport)",
+		RunE:  runServeMCP,
+	}
+
+	cmd.Flags().String("port", envOr("WIKI_MCP_PORT", "8081"), "MCP server port (env: WIKI_MCP_PORT)")
+
+	return cmd
+}
+
+func runServeMCP(cmd *cobra.Command, _ []string) error {
+	port, _ := cmd.Flags().GetString("port")
+	vaultDir, _ := cmd.Root().Flags().GetString("vault")
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	v := vault.New(vaultDir)
+	mcpSrv := mcpserver.New(v)
+	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
+
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", httpTransport)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	httpSrv := &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("starting wiki MCP server", "port", port, "vaultDir", vaultDir)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("MCP server failed: %w", err)
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+
+	logger.Info("shutting down MCP server")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return httpSrv.Shutdown(shutdownCtx)

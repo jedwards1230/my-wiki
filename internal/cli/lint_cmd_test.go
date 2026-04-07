@@ -17,14 +17,14 @@ func setupLintVault(t *testing.T) string {
 	}
 
 	files := map[string]string{
-		"index.md": "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\nWelcome. See [[project/alpha]] and [[meta/schema]].\n",
-		"meta/schema.md": "---\ntitle: Schema\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nLinks to [[index]].\n",
-		"project/alpha.md": "---\ntitle: Alpha\ntags:\n  - project\ndate: 2026-02-01\n---\n\nSee [[meta/schema]].\n",
-		"orphan.md":           "---\ntitle: Orphan\ntags:\n  - test\ndate: 2026-03-01\n---\n\nNo links here.\n",
-		"no-frontmatter.md":   "Just text.\n",
-		"missing-tags.md":     "---\ntitle: No Tags\ndate: 2026-01-01\n---\n\nMissing tags.\n",
-		"raw/good.md":         "---\ntitle: Good\nsource: https://example.com\ndate-added: 2026-01-01\n---\n\nContent.\n",
-		"raw/bad.md":          "---\ntitle: Bad Raw\n---\n\nMissing source and date-added.\n",
+		"index.md":          "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\nWelcome. See [[project/alpha]] and [[meta/schema]].\n",
+		"meta/schema.md":    "---\ntitle: Schema\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nLinks to [[index]].\n",
+		"project/alpha.md":  "---\ntitle: Alpha\ntags:\n  - project\ndate: 2026-02-01\n---\n\nSee [[meta/schema]].\n",
+		"orphan.md":         "---\ntitle: Orphan\ntags:\n  - test\ndate: 2026-03-01\n---\n\nNo links here.\n",
+		"no-frontmatter.md": "Just text.\n",
+		"missing-tags.md":   "---\ntitle: No Tags\ndate: 2026-01-01\n---\n\nMissing tags.\n",
+		"raw/good.md":       "---\ntitle: Good\nsource: https://example.com\ndate-added: 2026-01-01\n---\n\nContent.\n",
+		"raw/bad.md":        "---\ntitle: Bad Raw\n---\n\nMissing source and date-added.\n",
 	}
 
 	for name, content := range files {
@@ -108,7 +108,7 @@ func TestLintAll_Clean(t *testing.T) {
 
 	// Create a minimal clean vault
 	files := map[string]string{
-		"index.md":  "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[about]]\n",
+		"index.md": "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[about]]\n",
 		"about.md": "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[index]]\n",
 	}
 	for name, content := range files {
