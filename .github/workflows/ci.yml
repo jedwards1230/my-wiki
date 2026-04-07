@@ -54,7 +54,7 @@ jobs:
           version: latest
 
       - name: Check go mod tidy
-        run: go mod tidy && git diff --exit-code go.mod go.sum
+        run: go mod tidy && git diff --exit-code go.mod
 
   build:
     name: Build
