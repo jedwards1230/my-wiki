@@ -62,17 +62,17 @@ spec:
             - name: OBSIDIAN_EMAIL
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-obsidian
+                  name: {{ .Values.obsidianSecretName | default (printf "%s-obsidian" .Release.Name) }}
                   key: OBSIDIAN_EMAIL
             - name: OBSIDIAN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-obsidian
+                  name: {{ .Values.obsidianSecretName | default (printf "%s-obsidian" .Release.Name) }}
                   key: OBSIDIAN_PASSWORD
             - name: OBSIDIAN_E2E_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-obsidian
+                  name: {{ .Values.obsidianSecretName | default (printf "%s-obsidian" .Release.Name) }}
                   key: OBSIDIAN_E2E_PASSWORD
           securityContext:
             allowPrivilegeEscalation: false

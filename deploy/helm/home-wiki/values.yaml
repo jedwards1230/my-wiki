@@ -5,8 +5,7 @@ image:
   tag: ""  # defaults to appVersion
   pullPolicy: IfNotPresent
 
-imagePullSecrets:
-  - name: ghcr-secret
+imagePullSecrets: []
 
 nginx:
   image:
@@ -41,10 +40,9 @@ persistence:
   accessMode: ReadWriteOnce
   size: 5Gi
 
-secrets:
-  obsidian:
-    enabled: false
-    itemPath: ""
+# Name of the K8s Secret containing OBSIDIAN_EMAIL, OBSIDIAN_PASSWORD, OBSIDIAN_E2E_PASSWORD.
+# Create this secret however you like (kubectl, Sealed Secrets, External Secrets, etc.)
+obsidianSecretName: ""  # defaults to {{ .Release.Name }}-obsidian
 
 homepage:
   enabled: false
