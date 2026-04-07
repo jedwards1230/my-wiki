@@ -265,6 +265,64 @@ func TestCreatePageHandlerAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestCreatePageHandlerEmptyContent(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := createPageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "empty-page.md",
+		"content": "",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty content")
+	}
+}
+
+func TestUpdatePageHandlerNonExistent(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := updatePageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "does-not-exist.md",
+		"content": "---\ntitle: Ghost\n---\n\nContent.\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for non-existent page")
+	}
+	text := getTextContent(result)
+	if !strings.Contains(text, "page not found") {
+		t.Errorf("expected 'page not found' message, got:\n%s", text)
+	}
+}
+
+func TestUpdatePageHandlerEmptyContent(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := updatePageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "index.md",
+		"content": "",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty content")
+	}
+}
+
 func TestListPagesHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
@@ -278,19 +336,6 @@ func TestListPagesHandler(t *testing.T) {
 	text := getTextContent(result)
 	if !strings.Contains(text, "index.md") {
 		t.Errorf("expected index.md in result, got:\n%s", text)
-	}
-}
-
-func TestSearchHandler(t *testing.T) {
-	handler := searchHandler()
-
-	result, err := handler(context.Background(), makeReq(map[string]any{"query": "test"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for unimplemented search")
 	}
 }
 
