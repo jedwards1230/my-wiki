@@ -31,7 +31,7 @@ func TestNotReadyReturns503(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 when not ready, got %d", resp.StatusCode)
@@ -47,7 +47,7 @@ func TestHealthzBypassesReadiness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// healthz should return 200 even when not ready, so K8s can see the pod is alive
 	// But it should return 503 so K8s readiness probe keeps traffic away until content is built
@@ -66,7 +66,7 @@ func TestReadyServesContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 when ready, got %d", resp.StatusCode)
@@ -82,7 +82,7 @@ func TestReadyHealthz(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 on healthz when ready, got %d", resp.StatusCode)
