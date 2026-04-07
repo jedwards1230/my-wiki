@@ -106,12 +106,12 @@ func runActivity(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
-	fmt.Fprintln(f)
-	fmt.Fprintln(f, entry)
+	_, _ = fmt.Fprintln(f)
+	_, _ = fmt.Fprintln(f, entry)
 	if desc != "" {
-		fmt.Fprintln(f, desc)
+		_, _ = fmt.Fprintln(f, desc)
 	}
 
 	_ = created // suppress unused warning

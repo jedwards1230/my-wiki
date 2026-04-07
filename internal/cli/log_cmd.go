@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -223,18 +222,3 @@ func lintLog(logIndex, activityDir string) error {
 	return nil
 }
 
-// parseNFlag is a helper used in tests. In practice cobra handles this.
-func parseNFlag(args []string) (int, []string) {
-	for i, arg := range args {
-		if arg == "-n" && i+1 < len(args) {
-			n, err := strconv.Atoi(args[i+1])
-			if err == nil {
-				rest := make([]string, 0, len(args)-2)
-				rest = append(rest, args[:i]...)
-				rest = append(rest, args[i+2:]...)
-				return n, rest
-			}
-		}
-	}
-	return 0, args
-}

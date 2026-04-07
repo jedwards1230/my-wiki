@@ -74,7 +74,7 @@ func ParseFrontmatter(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	fm := make(map[string]string)
 	scanner := bufio.NewScanner(f)
@@ -124,7 +124,7 @@ func ExtractWikilinks(path string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var links []string
 	scanner := bufio.NewScanner(f)
