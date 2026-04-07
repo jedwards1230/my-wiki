@@ -25,7 +25,7 @@ date: 2026-01-01
 ## [2026-04-05] 2 changes | ` + "`123456`" + ` | Something | [[meta/activity/2026-04-05]]
 ## [2026-04-04] 1 changes | ` + "`fedcba`" + ` | First entry | [[meta/activity/2026-04-04]]
 `
-	os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte(logContent), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte(logContent), 0o644)
 
 	// Create activity files
 	activityContent := `---
@@ -44,7 +44,7 @@ Edited stuff.
 ### 16:00 | note | Third thing
 Just a note.
 `
-	os.WriteFile(filepath.Join(dir, "meta", "activity", "2026-04-06.md"), []byte(activityContent), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "meta", "activity", "2026-04-06.md"), []byte(activityContent), 0o644)
 
 	return dir
 }
@@ -201,7 +201,7 @@ func TestLogLint_Clean(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(dir, "meta", "activity"), 0o755)
 
 	// Create an empty log index (no entries to mismatch)
-	os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte("---\ntitle: Log\n---\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte("---\ntitle: Log\n---\n"), 0o644)
 
 	cmd := NewRootCmd()
 	cmd.SetArgs([]string{"--vault", dir, "log", "lint"})
