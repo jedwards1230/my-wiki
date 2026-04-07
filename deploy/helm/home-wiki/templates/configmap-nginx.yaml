@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-nginx-config
+  labels:
+    app.kubernetes.io/name: wiki
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: web
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        root /data/public;
+        index index.html;
+
+        # Quartz generates file.html, not file/index.html
+        location / {
+            try_files $uri $uri.html $uri/ =404;
+        }
+
+        # Agent access: append .md to any wiki page URL to get raw markdown
+        # e.g. wiki.lilbro.cloud/meta/schema.md -> plain text markdown
+        location ~ \.md$ {
+            root /data/vault;
+            default_type text/plain;
+            add_header X-Content-Type-Options nosniff;
+        }
+
+        # Redirect /raw to /raw/
+        location = /raw {
+            return 301 /raw/;
+        }
+
+        # Raw source files served with native MIME types (PDF viewer, video player, etc.)
+        location ^~ /raw/ {
+            root /data/vault;
+            autoindex on;
+            try_files $uri $uri.md $uri/ =404;
+            types {
+                text/plain md txt;
+                text/html html htm;
+                text/css css;
+                application/javascript js mjs;
+                application/json json canvas base;
+                application/pdf pdf;
+                image/png png;
+                image/jpeg jpg jpeg;
+                image/gif gif;
+                image/svg+xml svg;
+                image/webp webp;
+                video/mp4 mp4;
+                video/webm webm;
+                audio/mpeg mp3;
+                audio/ogg ogg;
+            }
+            default_type application/octet-stream;
+            add_header X-Content-Type-Options nosniff;
+        }
+
+        # Cache static assets
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
+            expires 1h;
+            add_header Cache-Control "public, immutable";
+        }
+
+        # Health check
+        location /healthz {
+            access_log off;
+            return 200 "ok";
+        }
+
+        # Gzip
+        gzip on;
+        gzip_types text/plain text/css application/json application/javascript text/xml text/markdown;
+        gzip_min_length 1000;
+    }
