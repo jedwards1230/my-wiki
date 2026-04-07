@@ -9,14 +9,7 @@ if [ "$(echo "$INPUT" | jq -r '.stop_hook_active')" = "true" ]; then
   exit 0
 fi
 
-# Skip lint hook inside worktrees — worktree branches are validated by GitHub CI.
-TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-GIT_COMMON="$(git rev-parse --git-common-dir 2>/dev/null)" || exit 0
-MAIN_ROOT="$(cd "$(dirname "$GIT_COMMON")" 2>/dev/null && pwd)" || exit 0
-if [ "$TOPLEVEL" != "$MAIN_ROOT" ]; then
-  exit 0
-fi
-cd "$TOPLEVEL" || exit 0
+cd "$(git rev-parse --show-toplevel)"
 
 # Check for Go files modified in working tree, staged, or recent commits on branch
 MODIFIED=$(
@@ -31,9 +24,16 @@ MODIFIED=$(
 GO_CHANGED=$(echo "$MODIFIED" | grep '\.go$' | head -1 || true)
 [ -z "$GO_CHANGED" ] && exit 0
 
-# Resolve via go env — works on macOS and Linux regardless of PATH during hook execution
-GOLANGCI=$(go env GOPATH 2>/dev/null)/bin/golangci-lint
-if [ ! -x "$GOLANGCI" ]; then
+# Find golangci-lint: check GOPATH/bin first, then PATH
+GOLANGCI=""
+GOPATH_DIR=$(go env GOPATH 2>/dev/null || true)
+if [ -n "$GOPATH_DIR" ] && [ -x "$GOPATH_DIR/bin/golangci-lint" ]; then
+  GOLANGCI="$GOPATH_DIR/bin/golangci-lint"
+elif command -v golangci-lint &>/dev/null; then
+  GOLANGCI=golangci-lint
+else
+  echo "WARNING: golangci-lint not found — skipping lint checks" >&2
+  echo "Install: https://golangci-lint.run/welcome/install/" >&2
   exit 0
 fi
 
@@ -41,12 +41,16 @@ fi
 PACKAGES=$(echo "$MODIFIED" | grep '\.go$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' ')
 
 # shellcheck disable=SC2086
-if $GOLANGCI run --timeout 60s $PACKAGES 2>/tmp/wiki-lint-out.txt; then
+if $GOLANGCI run --timeout 60s $PACKAGES 2>/tmp/lint-out.txt; then
   exit 0
 fi
-if grep -q "configuration file for golangci-lint v2 with golangci-lint v1" /tmp/wiki-lint-out.txt 2>/dev/null; then
+
+# Handle v1/v2 config mismatch gracefully
+if grep -q "configuration file for golangci-lint v2 with golangci-lint v1" /tmp/lint-out.txt 2>/dev/null; then
+  echo "WARNING: golangci-lint v1 installed but config requires v2 — skipping" >&2
   exit 0
 fi
+
 echo "golangci-lint issues. Fix before finishing:" >&2
-cat /tmp/wiki-lint-out.txt >&2
+cat /tmp/lint-out.txt >&2
 exit 2

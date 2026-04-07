@@ -62,13 +62,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-quality-check.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-vet-test.sh\"",
             "timeout": 150,
             "statusMessage": "Running go vet and tests..."
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-lint-check.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-lint.sh\"",
             "timeout": 90,
             "statusMessage": "Running golangci-lint..."
           }
@@ -81,13 +81,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-quality-check.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-vet-test.sh\"",
             "timeout": 150,
             "statusMessage": "Running go vet and tests..."
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-lint-check.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-lint.sh\"",
             "timeout": 90,
             "statusMessage": "Running golangci-lint..."
           }
