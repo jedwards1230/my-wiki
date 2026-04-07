@@ -118,9 +118,9 @@ func TestStaticContentType(t *testing.T) {
 
 func newVaultFS() fstest.MapFS {
 	return fstest.MapFS{
-		"notes/hello.md":   {Data: []byte("# Hello\nWorld")},
+		"notes/hello.md":    {Data: []byte("# Hello\nWorld")},
 		"deep/path/note.md": {Data: []byte("# Deep\nNote")},
-		"meta/schema.md":   {Data: []byte("# Schema\nContent")},
+		"meta/schema.md":    {Data: []byte("# Schema\nContent")},
 	}
 }
 
