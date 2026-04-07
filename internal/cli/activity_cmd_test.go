@@ -11,10 +11,10 @@ func setupActivityVault(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	os.MkdirAll(filepath.Join(dir, "meta", "activity"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "meta", "activity"), 0o755)
 
 	// Create empty log index
-	os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte("---\ntitle: Activity Log\n---\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte("---\ntitle: Activity Log\n---\n"), 0o644)
 
 	return dir
 }

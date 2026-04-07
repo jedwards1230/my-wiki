@@ -11,7 +11,7 @@ func setupLogVault(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	os.MkdirAll(filepath.Join(dir, "meta", "activity"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "meta", "activity"), 0o755)
 
 	// Create log index
 	logContent := `---
@@ -60,7 +60,7 @@ func TestLogIndex(t *testing.T) {
 	cmd.SetArgs([]string{"--vault", dir, "log"})
 	err := cmd.Execute()
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 
 	if err != nil {
@@ -91,7 +91,7 @@ func TestLogIndexN(t *testing.T) {
 	cmd.SetArgs([]string{"--vault", dir, "log", "-n", "1"})
 	err := cmd.Execute()
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 
 	if err != nil {
@@ -122,7 +122,7 @@ func TestLogDay(t *testing.T) {
 	cmd.SetArgs([]string{"--vault", dir, "log", "2026-04-06"})
 	err := cmd.Execute()
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 
 	if err != nil {
@@ -154,7 +154,7 @@ func TestLogDayDetail(t *testing.T) {
 	cmd.SetArgs([]string{"--vault", dir, "log", "2026-04-06", "--detail"})
 	err := cmd.Execute()
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 
 	if err != nil {
@@ -198,7 +198,7 @@ func TestLogLint(t *testing.T) {
 
 func TestLogLint_Clean(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "meta", "activity"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "meta", "activity"), 0o755)
 
 	// Create an empty log index (no entries to mismatch)
 	os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte("---\ntitle: Log\n---\n"), 0o644)

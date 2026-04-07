@@ -13,7 +13,7 @@ func setupLintVault(t *testing.T) string {
 
 	dirs := []string{"raw", "private", ".obsidian", "meta", "project"}
 	for _, d := range dirs {
-		os.MkdirAll(filepath.Join(dir, d), 0o755)
+		_ = os.MkdirAll(filepath.Join(dir, d), 0o755)
 	}
 
 	files := map[string]string{
@@ -29,7 +29,7 @@ func setupLintVault(t *testing.T) string {
 
 	for name, content := range files {
 		p := filepath.Join(dir, name)
-		os.WriteFile(p, []byte(content), 0o644)
+		_ = os.WriteFile(p, []byte(content), 0o644)
 	}
 
 	return dir
@@ -79,7 +79,7 @@ func TestLintLinks(t *testing.T) {
 
 func TestLintLinks_Broken(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "page.md"), []byte("---\ntitle: Page\ntags:\n  - test\ndate: 2026-01-01\n---\n\n[[nonexistent]]\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "page.md"), []byte("---\ntitle: Page\ntags:\n  - test\ndate: 2026-01-01\n---\n\n[[nonexistent]]\n"), 0o644)
 
 	cmd := NewRootCmd()
 	cmd.SetArgs([]string{"--vault", dir, "lint", "links"})
@@ -112,7 +112,7 @@ func TestLintAll_Clean(t *testing.T) {
 		"about.md": "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[index]]\n",
 	}
 	for name, content := range files {
-		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 	}
 
 	cmd := NewRootCmd()
