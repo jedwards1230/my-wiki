@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jedwards1230/home-wiki/internal/service"
@@ -70,6 +69,3 @@ func sanitize(s string) string {
 func buildDescription(summary string, touched []string) string {
 	return service.BuildDescription(summary, touched)
 }
-
-// validActivityTypes is kept for reference
-var validActivityTypes = strings.Split("ingest,edit,create,lint,note,migrate", ",")

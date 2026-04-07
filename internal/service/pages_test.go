@@ -15,9 +15,9 @@ func setupPagesVault(t *testing.T) string {
 	}
 
 	files := map[string]string{
-		"index.md":         "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\nWelcome.\n",
-		"meta/schema.md":   "---\ntitle: Schema\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nSchema content.\n",
-		"project/alpha.md": "---\ntitle: Alpha\ntags:\n  - project\ndate: 2026-02-01\n---\n\nAlpha content.\n",
+		"index.md":          "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\nWelcome.\n",
+		"meta/schema.md":    "---\ntitle: Schema\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nSchema content.\n",
+		"project/alpha.md":  "---\ntitle: Alpha\ntags:\n  - project\ndate: 2026-02-01\n---\n\nAlpha content.\n",
 		"private/secret.md": "---\ntitle: Secret\n---\n\nPrivate.\n",
 		"raw/source.md":     "---\ntitle: Source\n---\n\nRaw.\n",
 	}

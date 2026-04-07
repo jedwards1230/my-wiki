@@ -33,7 +33,6 @@ var (
 	logIndexDateRe    = regexp.MustCompile(`\[(\d{4}-\d{2}-\d{2})\]`)
 	logIndexHashRe    = regexp.MustCompile("(?:^|[^a-f0-9])([a-f0-9]{6})(?:[^a-f0-9]|$)")
 	logIndexChangesRe = regexp.MustCompile(`(\d+) changes?`)
-	logIndexTitleRe   = regexp.MustCompile(`\| ([^|]+?) \| \[\[`)
 	logIndexRefRe     = regexp.MustCompile(`\[\[(.+?)\]\]`)
 )
 
