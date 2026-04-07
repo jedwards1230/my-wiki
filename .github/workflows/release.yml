@@ -1,4 +1,7 @@
 # Auto-version and release on push to main.
+# Builds Docker image, publishes Helm chart (both tagged with same version),
+# and creates a GitHub release.
+#
 # Supports semver labels (semver:patch, semver:minor, semver:major) on PRs,
 # defaults to patch bump, and manual workflow_dispatch triggers.
 
@@ -139,10 +142,28 @@ jobs:
           echo "tag=${NEXT_TAG}" >> $GITHUB_OUTPUT
           echo "Next version: $NEXT_VERSION (tag: $NEXT_TAG)"
 
-      - name: Create and push tag
+      - name: Update Chart.yaml
+        run: |
+          NEXT_VERSION="${{ steps.version.outputs.version }}"
+          CHART_FILE="deploy/helm/home-wiki/Chart.yaml"
+
+          yq -i ".version = \"${NEXT_VERSION}\"" "$CHART_FILE"
+          yq -i ".appVersion = \"${NEXT_VERSION}\"" "$CHART_FILE"
+
+          echo "Updated $CHART_FILE:"
+          cat "$CHART_FILE"
+
+      - name: Create tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Commit Chart.yaml bump (included in tag, not pushed to main)
+          if ! git diff --quiet deploy/helm/home-wiki/Chart.yaml; then
+            git add deploy/helm/home-wiki/Chart.yaml
+            git commit -m "chore: bump chart version to ${{ steps.version.outputs.version }}"
+          fi
+
           git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.version }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
@@ -183,9 +204,40 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  helm:
+    name: Publish Helm Chart
+    needs: [tag]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.tag.outputs.tag }}
+      - uses: azure/setup-helm@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push
+        run: |
+          helm package deploy/helm/home-wiki/
+          helm push home-wiki-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+      - name: Write summary
+        run: |
+          CHART_VERSION=$(grep '^version:' deploy/helm/home-wiki/Chart.yaml | awk '{print $2}')
+          echo "## Helm Chart Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Chart Version | ${CHART_VERSION} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry | \`oci://ghcr.io/${{ github.repository_owner }}/charts/home-wiki\` |" >> $GITHUB_STEP_SUMMARY
+
   release:
     name: Create GitHub Release
-    needs: [tag, build]
+    needs: [tag, build, helm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -218,6 +270,12 @@ jobs:
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
           \`\`\`
 
+          ## Helm Chart
+
+          \`\`\`bash
+          helm install wiki oci://ghcr.io/${{ github.repository_owner }}/charts/home-wiki --version ${VERSION}
+          \`\`\`
+
           ${COMPARE_NOTE}
           EOF
           )" \
@@ -233,4 +291,5 @@ jobs:
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Version | ${VERSION} |" >> $GITHUB_STEP_SUMMARY
           echo "| Image | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Chart | \`oci://ghcr.io/${{ github.repository_owner }}/charts/home-wiki:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Bump | ${{ needs.detect.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
