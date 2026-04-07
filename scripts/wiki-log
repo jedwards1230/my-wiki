@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# wiki-log — View and lint the wiki activity log
+#
+# Usage:
+#   wiki-log                  Show the log index (meta/log.md)
+#   wiki-log today            Show today's activity entries
+#   wiki-log 2026-04-06       Show a specific day's activity
+#   wiki-log lint             Check for hash mismatches, missing entries, stale days
+#   wiki-log -n 5             Show last N lines from the log index
+#
+# Environment:
+#   WIKI_VAULT  Path to the wiki vault (default: /data/vault or ~/Obsidian/home-wiki)
+
+set -euo pipefail
+
+# Resolve vault path
+if [[ -n "${WIKI_VAULT:-}" ]]; then
+  VAULT="$WIKI_VAULT"
+elif [[ -d /data/vault ]]; then
+  VAULT=/data/vault
+elif [[ -d "$HOME/Obsidian/home-wiki" ]]; then
+  VAULT="$HOME/Obsidian/home-wiki"
+else
+  echo "Error: Cannot find wiki vault. Set WIKI_VAULT." >&2
+  exit 1
+fi
+
+LOG_INDEX="$VAULT/meta/log.md"
+ACTIVITY_DIR="$VAULT/meta/activity"
+
+show_index() {
+  local lines="${1:-0}"
+  if [[ ! -f "$LOG_INDEX" ]]; then
+    echo "No log index found at $LOG_INDEX" >&2
+    exit 1
+  fi
+  if [[ "$lines" -gt 0 ]]; then
+    grep '^## \[' "$LOG_INDEX" | tail -n "$lines"
+  else
+    grep '^## \[' "$LOG_INDEX"
+  fi
+}
+
+show_day() {
+  local date="$1"
+  local file="$ACTIVITY_DIR/$date.md"
+  if [[ ! -f "$file" ]]; then
+    echo "No activity file for $date" >&2
+    exit 1
+  fi
+  cat "$file"
+}
+
+lint() {
+  local errors=0
+
+  echo "=== Activity Log Lint ==="
+  echo
+
+  # Check log index exists
+  if [[ ! -f "$LOG_INDEX" ]]; then
+    echo "FAIL: Log index missing at $LOG_INDEX"
+    exit 1
+  fi
+
+  # Check each activity file has a matching index entry
+  if [[ -d "$ACTIVITY_DIR" ]]; then
+    for file in "$ACTIVITY_DIR"/*.md; do
+      [[ -f "$file" ]] || continue
+      local basename
+      basename=$(basename "$file" .md)
+
+      # Check it's in the index
+      if ! grep -q "\[$basename\]" "$LOG_INDEX"; then
+        echo "WARN: $basename has activity file but no index entry"
+        ((errors++))
+      fi
+    done
+  fi
+
+  # Check hash mismatches
+  while IFS= read -r line; do
+    local date hash_stored
+    date=$(echo "$line" | sed -n 's/.*\[\([0-9-]*\)\].*/\1/p')
+    hash_stored=$(echo "$line" | sed -n 's/.*`\([a-f0-9]\{6\}\)`.*/\1/p')
+    [[ -z "$date" || -z "$hash_stored" ]] && continue
+
+    local file="$ACTIVITY_DIR/$date.md"
+    if [[ ! -f "$file" ]]; then
+      echo "WARN: Index references $date but no activity file exists"
+      ((errors++))
+      continue
+    fi
+
+    local hash_actual
+    hash_actual=$(md5sum "$file" | cut -c1-6)
+    if [[ "$hash_stored" != "$hash_actual" ]]; then
+      echo "WARN: Hash mismatch for $date (index: $hash_stored, actual: $hash_actual)"
+      ((errors++))
+    fi
+  done < <(grep '^## \[' "$LOG_INDEX")
+
+  # Check for activity files without frontmatter
+  if [[ -d "$ACTIVITY_DIR" ]]; then
+    for file in "$ACTIVITY_DIR"/*.md; do
+      [[ -f "$file" ]] || continue
+      if ! head -1 "$file" | grep -q '^---'; then
+        echo "WARN: $(basename "$file") missing frontmatter"
+        ((errors++))
+      fi
+    done
+  fi
+
+  echo
+  if [[ "$errors" -eq 0 ]]; then
+    echo "OK: All checks passed"
+  else
+    echo "FOUND: $errors issue(s)"
+  fi
+  return "$errors"
+}
+
+# Parse args
+case "${1:-}" in
+  ""|index)
+    show_index 0
+    ;;
+  -n)
+    show_index "${2:-5}"
+    ;;
+  today)
+    show_day "$(date +%Y-%m-%d)"
+    ;;
+  lint)
+    lint
+    ;;
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
+    show_day "$1"
+    ;;
+  *)
+    echo "Usage: wiki-log [today|YYYY-MM-DD|lint|-n N]" >&2
+    exit 1
+    ;;
+esac
