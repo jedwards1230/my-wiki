@@ -140,12 +140,20 @@ spec:
           resources:
             {{- toYaml .Values.resources.quartz | nindent 12 }}
 
-        - name: nginx
-          image: "{{ .Values.nginx.image.repository }}:{{ .Values.nginx.image.tag }}"
-          imagePullPolicy: {{ .Values.nginx.image.pullPolicy }}
+        - name: wiki-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/wiki-server"]
+          env:
+            - name: WIKI_PUBLIC_DIR
+              value: "/data/public"
+            - name: WIKI_VAULT_DIR
+              value: "/data/vault"
+            - name: WIKI_PORT
+              value: "8080"
           ports:
             - name: http
-              containerPort: 80
+              containerPort: 8080
               protocol: TCP
           securityContext:
             allowPrivilegeEscalation: false
@@ -153,22 +161,20 @@ spec:
             - name: data
               mountPath: /data
               readOnly: true
-            - name: nginx-config
-              mountPath: /etc/nginx/conf.d
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 10
+            initialDelaySeconds: 5
             periodSeconds: 30
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
             initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 5
           resources:
-            {{- toYaml .Values.resources.nginx | nindent 12 }}
+            {{- toYaml .Values.resources.wikiServer | nindent 12 }}
 
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -187,6 +193,3 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
-        - name: nginx-config
-          configMap:
-            name: {{ .Release.Name }}-nginx-config
