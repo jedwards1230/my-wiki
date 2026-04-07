@@ -43,6 +43,25 @@ func getBoolArg(req mcp.CallToolRequest, key string) bool {
 	return false
 }
 
+func getStringArrayArg(req mcp.CallToolRequest, key string) []string {
+	args := req.GetArguments()
+	v, ok := args[key]
+	if !ok {
+		return nil
+	}
+	arr, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func toJSON(v any) string {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -134,11 +153,13 @@ func logLintHandler(svc *service.LogService) server.ToolHandlerFunc {
 
 func activityHandler(svc *service.ActivityService) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		touched := getStringArrayArg(req, "touched")
 		entry := service.ActivityEntry{
 			Type:    getStringArg(req, "type"),
 			Title:   getStringArg(req, "title"),
 			Time:    getStringArg(req, "time"),
 			Summary: getStringArg(req, "summary"),
+			Touched: touched,
 		}
 
 		if err := svc.Append(entry); err != nil {
@@ -174,6 +195,10 @@ func createPageHandler(svc *service.PageService) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("path is required"), nil
 		}
 
+		if content == "" {
+			return mcp.NewToolResultError("content is required"), nil
+		}
+
 		// Check if page already exists
 		if _, err := svc.Read(path); err == nil {
 			return mcp.NewToolResultError(fmt.Sprintf("page already exists: %s (use wiki_update_page to modify)", path)), nil
@@ -196,6 +221,15 @@ func updatePageHandler(svc *service.PageService) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("path is required"), nil
 		}
 
+		if content == "" {
+			return mcp.NewToolResultError("content is required"), nil
+		}
+
+		// Check if page exists before overwriting
+		if _, err := svc.Read(path); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("page not found: %s — use wiki_create_page for new pages", path)), nil
+		}
+
 		if err := svc.Write(path, content); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -214,11 +248,5 @@ func listPagesHandler(svc *service.PageService) server.ToolHandlerFunc {
 		}
 
 		return mcp.NewToolResultText(toJSON(pages)), nil
-	}
-}
-
-func searchHandler() server.ToolHandlerFunc {
-	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultError("search is not yet implemented"), nil
 	}
 }
