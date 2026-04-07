@@ -11,12 +11,12 @@ import (
 const gzipMinLength = 1000
 
 var compressibleTypes = map[string]bool{
-	"text/plain":                true,
-	"text/css":                  true,
-	"text/html":                 true,
-	"application/json":          true,
-	"application/javascript":    true,
-	"text/xml":                  true,
+	"text/plain":             true,
+	"text/css":               true,
+	"text/html":              true,
+	"application/json":       true,
+	"application/javascript": true,
+	"text/xml":               true,
 }
 
 var gzipWriterPool = sync.Pool{
@@ -45,11 +45,11 @@ func Gzip(next http.Handler) http.Handler {
 
 type gzipResponseWriter struct {
 	http.ResponseWriter
-	buf        []byte       // buffer until we decide whether to compress
-	gw         *gzip.Writer // set once we commit to compressing
-	committed  bool         // whether we've decided to compress or pass through
-	compressed bool         // whether we're compressing
-	statusCode int          // buffered status code
+	buf         []byte       // buffer until we decide whether to compress
+	gw          *gzip.Writer // set once we commit to compressing
+	committed   bool         // whether we've decided to compress or pass through
+	compressed  bool         // whether we're compressing
+	statusCode  int          // buffered status code
 	wroteHeader bool
 }
 

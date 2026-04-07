@@ -1,0 +1,203 @@
+package service
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/jedwards1230/home-wiki/internal/vault"
+)
+
+// LintService provides vault lint operations.
+type LintService struct {
+	vault *vault.Vault
+}
+
+// NewLintService creates a LintService for the given vault.
+func NewLintService(v *vault.Vault) *LintService {
+	return &LintService{vault: v}
+}
+
+// Run executes the specified lint check and returns a report.
+// Valid checks: "all", "frontmatter", "raw", "links", "orphans".
+func (s *LintService) Run(check string) (*LintReport, error) {
+	report := &LintReport{}
+
+	switch check {
+	case "all":
+		s.checkFrontmatter(report)
+		s.checkRawFrontmatter(report)
+		s.checkLinks(report)
+		s.checkOrphans(report)
+	case "frontmatter":
+		s.checkFrontmatter(report)
+	case "raw":
+		s.checkRawFrontmatter(report)
+	case "links":
+		s.checkLinks(report)
+	case "orphans":
+		s.checkOrphans(report)
+	default:
+		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, raw, links, or orphans", check)
+	}
+
+	report.Total = len(report.Issues)
+	return report, nil
+}
+
+func (s *LintService) checkFrontmatter(report *LintReport) {
+	pages, err := s.vault.FindWikiPages()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "frontmatter", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+
+	for _, page := range pages {
+		rel, _ := filepath.Rel(s.vault.Dir, page)
+		fm, err := vault.ParseFrontmatter(page)
+		if err != nil {
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "frontmatter", Level: "FAIL", Message: err.Error(),
+			})
+			continue
+		}
+		if fm == nil {
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "frontmatter", Level: "FAIL", Message: "missing frontmatter",
+			})
+			continue
+		}
+
+		var missing []string
+		for _, key := range []string{"title", "tags", "date"} {
+			if _, ok := fm[key]; !ok {
+				missing = append(missing, key)
+			}
+		}
+		if len(missing) > 0 {
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "frontmatter", Level: "WARN",
+				Message: "missing: " + strings.Join(missing, " "),
+			})
+		}
+	}
+}
+
+func (s *LintService) checkRawFrontmatter(report *LintReport) {
+	files, err := s.vault.FindRawFiles()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "raw", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+
+	for _, file := range files {
+		rel, _ := filepath.Rel(s.vault.Dir, file)
+		fm, err := vault.ParseFrontmatter(file)
+		if err != nil {
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "raw", Level: "FAIL", Message: err.Error(),
+			})
+			continue
+		}
+		if fm == nil {
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "raw", Level: "FAIL", Message: "missing frontmatter",
+			})
+			continue
+		}
+
+		var missing []string
+		for _, key := range []string{"title", "source", "date-added"} {
+			if _, ok := fm[key]; !ok {
+				missing = append(missing, key)
+			}
+		}
+		if len(missing) > 0 {
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "raw", Level: "WARN",
+				Message: "missing: " + strings.Join(missing, " "),
+			})
+		}
+	}
+}
+
+func (s *LintService) checkLinks(report *LintReport) {
+	slugs, err := s.vault.BuildSlugIndex()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "links", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+
+	pages, err := s.vault.FindWikiPages()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "links", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+
+	for _, page := range pages {
+		rel, _ := filepath.Rel(s.vault.Dir, page)
+		links, err := vault.ExtractWikilinks(page)
+		if err != nil {
+			continue
+		}
+		for _, link := range links {
+			target := strings.ToLower(link)
+			if !slugs[target] {
+				report.Issues = append(report.Issues, LintIssue{
+					File: rel, Check: "links", Level: "WARN",
+					Message: fmt.Sprintf("broken link [[%s]]", link),
+				})
+			}
+		}
+	}
+}
+
+func (s *LintService) checkOrphans(report *LintReport) {
+	pages, err := s.vault.FindWikiPages()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "orphans", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+
+	targets := make(map[string]bool)
+	for _, page := range pages {
+		links, err := vault.ExtractWikilinks(page)
+		if err != nil {
+			continue
+		}
+		for _, link := range links {
+			targets[strings.ToLower(link)] = true
+		}
+	}
+
+	for _, page := range pages {
+		rel, _ := filepath.Rel(s.vault.Dir, page)
+		base := strings.TrimSuffix(filepath.Base(page), ".md")
+
+		// Skip index and log
+		if base == "index" || rel == "meta/log.md" {
+			continue
+		}
+
+		relNoExt := strings.TrimSuffix(rel, ".md")
+		baseLower := strings.ToLower(base)
+		relLower := strings.ToLower(relNoExt)
+
+		if !targets[baseLower] && !targets[relLower] {
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "orphans", Level: "WARN",
+				Message: "no inbound links",
+			})
+		}
+	}
+}
