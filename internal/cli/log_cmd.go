@@ -1,15 +1,11 @@
 package cli
 
 import (
-	"bufio"
-	"crypto/md5"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 
+	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/spf13/cobra"
 )
 
@@ -32,189 +28,81 @@ var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 func runLog(cmd *cobra.Command, args []string) error {
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
-	logIndex := filepath.Join(vaultDir, "meta", "log.md")
-	activityDir := filepath.Join(vaultDir, "meta", "activity")
-
 	n, _ := cmd.Flags().GetInt("number")
 	detail, _ := cmd.Flags().GetBool("detail")
 
+	logSvc := service.NewLogService(vaultDir)
+
 	// If -n is set with no args, show last N
 	if n > 0 && len(args) == 0 {
-		return showIndex(logIndex, n)
+		return printLogIndex(logSvc, n)
 	}
 
 	if len(args) == 0 {
-		return showIndex(logIndex, 0)
+		return printLogIndex(logSvc, 0)
 	}
 
 	switch args[0] {
 	case "lint":
-		return lintLog(logIndex, activityDir)
+		return printLogLint(logSvc)
 	case "today":
 		today := time.Now().Format("2006-01-02")
-		return showDay(activityDir, today, detail)
+		return printLogDay(logSvc, today, detail)
 	default:
 		if dateRe.MatchString(args[0]) {
-			return showDay(activityDir, args[0], detail)
+			return printLogDay(logSvc, args[0], detail)
 		}
 		return fmt.Errorf("unknown argument %q: expected today, YYYY-MM-DD, or lint", args[0])
 	}
 }
 
-func showIndex(logIndex string, n int) error {
-	f, err := os.Open(logIndex)
+func printLogIndex(svc *service.LogService, n int) error {
+	entries, err := svc.Index(n)
 	if err != nil {
-		return fmt.Errorf("no log index found at %s: %w", logIndex, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	var lines []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "## [") {
-			lines = append(lines, line)
-		}
-	}
-	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	if n > 0 && n < len(lines) {
-		lines = lines[len(lines)-n:]
-	}
-
-	for _, l := range lines {
-		fmt.Println(l)
+	for _, e := range entries {
+		fmt.Printf("## [%s] %d changes | %s | %s\n", e.Date, e.Changes, e.Title, e.ActivityRef)
 	}
 	return nil
 }
 
-func showDay(activityDir, date string, detail bool) error {
-	file := filepath.Join(activityDir, date+".md")
-	if _, err := os.Stat(file); os.IsNotExist(err) {
-		return fmt.Errorf("no activity file for %s", date)
-	}
-
-	f, err := os.Open(file)
+func printLogDay(svc *service.LogService, date string, detail bool) error {
+	dayLog, err := svc.Day(date, detail)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
 
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if detail {
-			fmt.Println(line)
-		} else if strings.HasPrefix(line, "### ") {
-			fmt.Println(line)
+	for _, e := range dayLog.Entries {
+		fmt.Printf("### %s | %s | %s\n", e.Time, e.Type, e.Title)
+		if detail && e.Summary != "" {
+			fmt.Println(e.Summary)
+			fmt.Println()
 		}
 	}
-	return scanner.Err()
+	return nil
 }
 
-var (
-	indexDateRe = regexp.MustCompile(`\[(\d{4}-\d{2}-\d{2})\]`)
-	indexHashRe = regexp.MustCompile("`([a-f0-9]{6})`")
-)
-
-func lintLog(logIndex, activityDir string) error {
+func printLogLint(svc *service.LogService) error {
 	fmt.Println("=== Activity Log Lint ===")
 	fmt.Println()
 
-	errors := 0
-
-	if _, err := os.Stat(logIndex); os.IsNotExist(err) {
-		fmt.Println("FAIL: Log index missing at", logIndex)
-		return fmt.Errorf("log index missing")
-	}
-
-	// Check each activity file has a matching index entry
-	indexContent, err := os.ReadFile(logIndex)
+	issues, err := svc.Lint()
 	if err != nil {
 		return err
 	}
-	indexStr := string(indexContent)
 
-	if entries, err := os.ReadDir(activityDir); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			date := strings.TrimSuffix(entry.Name(), ".md")
-			if !strings.Contains(indexStr, "["+date+"]") {
-				fmt.Printf("WARN: %s has activity file but no index entry\n", date)
-				errors++
-			}
-		}
-	}
-
-	// Check hash mismatches
-	f, err := os.Open(logIndex)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "## [") {
-			continue
-		}
-
-		dateMatch := indexDateRe.FindStringSubmatch(line)
-		hashMatch := indexHashRe.FindStringSubmatch(line)
-		if dateMatch == nil || hashMatch == nil {
-			continue
-		}
-
-		date := dateMatch[1]
-		storedHash := hashMatch[1]
-
-		actFile := filepath.Join(activityDir, date+".md")
-		data, err := os.ReadFile(actFile)
-		if err != nil {
-			if os.IsNotExist(err) {
-				fmt.Printf("WARN: Index references %s but no activity file exists\n", date)
-				errors++
-			}
-			continue
-		}
-
-		actualHash := fmt.Sprintf("%x", md5.Sum(data))[:6]
-		if storedHash != actualHash {
-			fmt.Printf("WARN: Hash mismatch for %s (index: %s, actual: %s)\n", date, storedHash, actualHash)
-			errors++
-		}
-	}
-
-	// Check for activity files without frontmatter
-	if entries, err := os.ReadDir(activityDir); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			file := filepath.Join(activityDir, entry.Name())
-			data, err := os.ReadFile(file)
-			if err != nil {
-				continue
-			}
-			if !strings.HasPrefix(string(data), "---") {
-				fmt.Printf("WARN: %s missing frontmatter\n", entry.Name())
-				errors++
-			}
-		}
+	for _, issue := range issues {
+		fmt.Printf("WARN: %s\n", issue.Message)
 	}
 
 	fmt.Println()
-	if errors == 0 {
+	if len(issues) == 0 {
 		fmt.Println("OK: All checks passed")
 	} else {
-		fmt.Printf("FOUND: %d issue(s)\n", errors)
-		return fmt.Errorf("%d issue(s) found", errors)
+		fmt.Printf("FOUND: %d issue(s)\n", len(issues))
+		return fmt.Errorf("%d issue(s) found", len(issues))
 	}
 	return nil
 }
-
