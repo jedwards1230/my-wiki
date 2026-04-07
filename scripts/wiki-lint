@@ -146,18 +146,27 @@ check_links() {
     echo "${rel%.md}"
   done | tr '[:upper:]' '[:lower:]' | sort -u > "$slugs_file"
 
-  # Step 2: Extract all wikilinks as "source_file\ttarget" pairs
-  # Use rg to extract all wikilinks in one pass, then post-process
-  rg -o --no-filename --with-filename '\[\[[^\]]+\]\]' "$VAULT" \
-    --glob '*.md' \
-    --glob '!.obsidian/**' \
-    --glob '!private/**' \
-    --glob '!raw/**' 2>/dev/null | while IFS=: read -r filepath match; do
-    rel="${filepath#"$VAULT"/}"
-    target=$(echo "$match" | sed 's/\[\[//;s/\]\]//;s/|.*//' | sed 's/#.*//')
-    [[ -z "$target" ]] && continue
-    printf '%s\t%s\n' "$rel" "$target"
-  done > "$links_file"
+  # Step 2: Extract wikilinks, skipping fenced code blocks and inline code
+  local filelist
+  filelist=$(mktemp)
+  find "$VAULT" -name '*.md' -type f \
+    -not -path "$VAULT/raw/*" \
+    -not -path "$VAULT/private/*" \
+    -not -path "$VAULT/.obsidian/*" | sort > "$filelist"
+
+  : > "$links_file"
+  while read -r f; do
+    rel="${f#"$VAULT"/}"
+    sed '/^```/,/^```/d' "$f" \
+      | sed 's/`[^`]*`//g' \
+      | grep -o '\[\[[^]]*\]\]' 2>/dev/null \
+      | sed 's/\[\[//;s/\]\]//;s/[\\|].*//' \
+      | sed 's/#.*//' \
+      | grep -v '^$' \
+      | sed "s|^|${rel}	|" \
+      >> "$links_file" || true
+  done < "$filelist"
+  rm -f "$filelist"
 
   # Step 3: Check each link against the slug index
   while IFS=$'\t' read -r src target; do
@@ -186,14 +195,29 @@ check_orphans() {
   targets_file=$(mktemp)
   results_file=$(mktemp)
 
-  # Step 1: Extract all link targets (lowercase)
-  rg -o --no-filename '\[\[[^\]]+\]\]' "$VAULT" \
-    --glob '*.md' \
-    --glob '!.obsidian/**' \
-    --glob '!private/**' \
-    --glob '!raw/**' 2>/dev/null \
-    | sed 's/\[\[//;s/\]\]//;s/|.*//' | sed 's/#.*//' \
+  # Step 1: Extract all link targets (lowercase), skipping code blocks
+  local raw_targets
+  raw_targets=$(mktemp)
+  : > "$raw_targets"
+  local filelist2
+  filelist2=$(mktemp)
+  find "$VAULT" -name '*.md' -type f \
+    -not -path "$VAULT/raw/*" \
+    -not -path "$VAULT/private/*" \
+    -not -path "$VAULT/.obsidian/*" | sort > "$filelist2"
+
+  while read -r f; do
+    sed '/^```/,/^```/d' "$f" \
+      | sed 's/`[^`]*`//g' \
+      | grep -o '\[\[[^]]*\]\]' 2>/dev/null \
+      >> "$raw_targets" || true
+  done < "$filelist2"
+  rm -f "$filelist2"
+
+  sed 's/\[\[//;s/\]\]//;s/|.*//' "$raw_targets" | sed 's/#.*//' \
     | grep -v '^$' | tr '[:upper:]' '[:lower:]' | sort -u > "$targets_file"
+
+  rm -f "$raw_targets"
 
   # Step 2: Check each page against targets
   find_wiki_pages | while read -r f; do
