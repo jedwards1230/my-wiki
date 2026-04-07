@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stop hook: Block if Go files were modified but go vet or go test fails.
+# Stop hook: Block if modified Go files fail go vet or go test.
 set -euo pipefail
 
 INPUT=$(cat)
@@ -9,7 +9,6 @@ if [ "$(echo "$INPUT" | jq -r '.stop_hook_active')" = "true" ]; then
   exit 0
 fi
 
-# Always run from the git root so relative paths and go tooling work correctly
 cd "$(git rev-parse --show-toplevel)"
 
 # Check for Go files modified in working tree, staged, or recent commits on branch
@@ -25,14 +24,17 @@ MODIFIED=$(
 GO_CHANGED=$(echo "$MODIFIED" | grep '\.go$' | head -1 || true)
 [ -z "$GO_CHANGED" ] && exit 0
 
-# go vet first (fast, catches type errors and suspicious constructs)
+if ! command -v go &>/dev/null; then
+  echo "WARNING: go not found in PATH — skipping vet and test checks" >&2
+  exit 0
+fi
+
 if ! VET_RESULT=$(go vet ./... 2>&1); then
   echo "go vet failed. Fix these issues before finishing:" >&2
   echo "$VET_RESULT" >&2
   exit 2
 fi
 
-# go test (with timeout to prevent hangs)
 if ! TEST_RESULT=$(go test -timeout 120s -count=1 ./... 2>&1); then
   echo "go test failed. Fix failing tests before finishing:" >&2
   echo "$TEST_RESULT" >&2
