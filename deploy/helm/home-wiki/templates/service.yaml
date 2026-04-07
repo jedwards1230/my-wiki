@@ -14,6 +14,12 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    {{- if .Values.mcp.enabled }}
+    - port: {{ .Values.mcp.port }}
+      targetPort: mcp
+      protocol: TCP
+      name: mcp
+    {{- end }}
   selector:
     app.kubernetes.io/name: wiki
     app.kubernetes.io/instance: {{ .Release.Name }}
