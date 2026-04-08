@@ -96,10 +96,10 @@ func TestLintEndpointInvalidCheck(t *testing.T) {
 	}
 }
 
-func TestQueueEndpoint(t *testing.T) {
+func TestIngestEndpoint(t *testing.T) {
 	mux, _ := setupTestMux(t)
 
-	r := httptest.NewRequest(http.MethodGet, "/api/queue", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/ingest", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 
@@ -116,10 +116,10 @@ func TestQueueEndpoint(t *testing.T) {
 	}
 }
 
-func TestQueueGenerateEndpoint(t *testing.T) {
+func TestIngestGenerateEndpoint(t *testing.T) {
 	mux, _ := setupTestMux(t)
 
-	r := httptest.NewRequest(http.MethodPost, "/api/queue/generate", nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/ingest/generate", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 
@@ -257,7 +257,7 @@ func TestPageReadEndpointNotFound(t *testing.T) {
 func TestPageWriteEndpoint(t *testing.T) {
 	mux, _ := setupTestMux(t)
 
-	body := "---\ntitle: New Page\n---\n\nContent.\n"
+	body := "---\ntitle: New Page\ntags:\n  - test\ndate: 2026-01-15\n---\n\nContent.\n"
 	r := httptest.NewRequest(http.MethodPut, "/api/pages/new-page.md", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)

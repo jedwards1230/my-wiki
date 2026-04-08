@@ -10,29 +10,35 @@ import (
 
 // Handler holds all API services and registers routes.
 type Handler struct {
-	lint     *service.LintService
-	queue    *service.QueueService
-	log      *service.LogService
-	activity *service.ActivityService
-	pages    *service.PageService
+	lint      *service.LintService
+	ingest    *service.IngestService
+	directory *service.DirectoryService
+	log       *service.LogService
+	activity  *service.ActivityService
+	pages     *service.PageService
+	recent    *service.RecentService
 }
 
 // NewHandler creates an API handler with services built from the given vault.
 func NewHandler(v *vault.Vault) *Handler {
 	return &Handler{
-		lint:     service.NewLintService(v),
-		queue:    service.NewQueueService(v),
-		log:      service.NewLogService(v.Dir),
-		activity: service.NewActivityService(v.Dir),
-		pages:    service.NewPageService(v.Dir),
+		lint:      service.NewLintService(v),
+		ingest:    service.NewIngestService(v),
+		directory: service.NewDirectoryService(v),
+		log:       service.NewLogService(v.Dir),
+		activity:  service.NewActivityService(v.Dir),
+		pages:     service.NewPageService(v.Dir),
+		recent:    service.NewRecentService(v),
 	}
 }
 
 // RegisterRoutes registers all API routes on the given mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/lint", h.handleLint)
-	mux.HandleFunc("GET /api/queue", h.handleQueueList)
-	mux.HandleFunc("POST /api/queue/generate", h.handleQueueGenerate)
+	mux.HandleFunc("GET /api/ingest", h.handleIngestList)
+	mux.HandleFunc("POST /api/ingest/generate", h.handleIngestGenerate)
+	mux.HandleFunc("GET /api/directory", h.handleDirectoryList)
+	mux.HandleFunc("POST /api/directory/generate", h.handleDirectoryGenerate)
 	mux.HandleFunc("GET /api/log", h.handleLogIndex)
 	mux.HandleFunc("GET /api/log/lint", h.handleLogLint)
 	mux.HandleFunc("GET /api/log/{date}", h.handleLogDay)
@@ -42,6 +48,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/pages/{path...}", h.handlePageDelete)
 	mux.HandleFunc("PATCH /api/pages/{path...}", h.handlePagePatch)
 	mux.HandleFunc("GET /api/pages", h.handlePageList)
+	mux.HandleFunc("GET /api/recent", h.handleRecentList)
 	mux.HandleFunc("GET /api/search", h.handleSearch)
 }
 

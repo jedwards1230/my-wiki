@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"github.com/jedwards1230/home-wiki/internal/vault"
 )
 
 // PageInfo describes a wiki page.
@@ -48,7 +51,12 @@ func (s *PageService) Read(relPath string) (string, error) {
 }
 
 // Write creates or overwrites a wiki page at the given relative path.
+// Content is validated for required frontmatter before writing.
 func (s *PageService) Write(relPath, content string) error {
+	if err := validateFrontmatter(relPath, content); err != nil {
+		return err
+	}
+
 	absPath, err := s.resolve(relPath)
 	if err != nil {
 		return err
@@ -59,6 +67,64 @@ func (s *PageService) Write(relPath, content string) error {
 	}
 
 	return os.WriteFile(absPath, []byte(content), 0o644)
+}
+
+// dateRe matches YYYY-MM-DD format.
+var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// validateFrontmatter checks that content has the required frontmatter fields
+// for the given path. Wiki pages require title, tags, and date. Raw files
+// require title, source, and date-added.
+func validateFrontmatter(relPath, content string) error {
+	fm, err := vault.ParseFrontmatterString(content)
+	if err != nil {
+		return fmt.Errorf("failed to parse frontmatter: %w", err)
+	}
+	if fm == nil {
+		return fmt.Errorf("missing frontmatter block (expected --- delimiters)")
+	}
+
+	isRaw := strings.HasPrefix(relPath, "raw/") || strings.HasPrefix(relPath, "raw\\")
+
+	if isRaw {
+		return validateRawFrontmatter(fm)
+	}
+	return validateWikiFrontmatter(fm)
+}
+
+func validateWikiFrontmatter(fm map[string]string) error {
+	if fm["title"] == "" {
+		return fmt.Errorf("missing required frontmatter field: title")
+	}
+	tags, hasTags := fm["tags"]
+	if !hasTags || tags == "" {
+		return fmt.Errorf("missing required frontmatter field: tags (must have at least one tag)")
+	}
+	dateVal, hasDate := fm["date"]
+	if !hasDate || dateVal == "" {
+		return fmt.Errorf("missing required frontmatter field: date")
+	}
+	if !dateRe.MatchString(dateVal) {
+		return fmt.Errorf("invalid date format: expected YYYY-MM-DD, got %q", dateVal)
+	}
+	return nil
+}
+
+func validateRawFrontmatter(fm map[string]string) error {
+	if fm["title"] == "" {
+		return fmt.Errorf("missing required frontmatter field: title")
+	}
+	if fm["source"] == "" {
+		return fmt.Errorf("missing required frontmatter field: source")
+	}
+	dateVal, hasDate := fm["date-added"]
+	if !hasDate || dateVal == "" {
+		return fmt.Errorf("missing required frontmatter field: date-added")
+	}
+	if !dateRe.MatchString(dateVal) {
+		return fmt.Errorf("invalid date-added format: expected YYYY-MM-DD, got %q", dateVal)
+	}
+	return nil
 }
 
 // Delete removes a wiki page at the given relative path.

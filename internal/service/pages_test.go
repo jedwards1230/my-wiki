@@ -87,7 +87,7 @@ func TestPageService_Write(t *testing.T) {
 	dir := setupPagesVault(t)
 	svc := NewPageService(dir)
 
-	err := svc.Write("new-page.md", "---\ntitle: New\n---\n\nContent.\n")
+	err := svc.Write("new-page.md", "---\ntitle: New\ntags:\n  - test\ndate: 2026-01-15\n---\n\nContent.\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestPageService_WriteNestedPath(t *testing.T) {
 	dir := setupPagesVault(t)
 	svc := NewPageService(dir)
 
-	err := svc.Write("deep/nested/page.md", "content")
+	err := svc.Write("deep/nested/page.md", "---\ntitle: Nested\ntags:\n  - test\ndate: 2026-03-01\n---\n\nContent.\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,5 +193,118 @@ func TestPageService_PathTraversal(t *testing.T) {
 	_, err := svc.Read("../../etc/passwd")
 	if err == nil {
 		t.Fatal("expected error for path traversal")
+	}
+}
+
+func TestPageService_WriteValidation(t *testing.T) {
+	dir := setupPagesVault(t)
+	svc := NewPageService(dir)
+
+	tests := []struct {
+		name    string
+		path    string
+		content string
+		wantErr string
+	}{
+		{
+			name:    "valid wiki page",
+			path:    "valid.md",
+			content: "---\ntitle: Valid Page\ntags:\n  - test\n  - wiki\ndate: 2026-04-01\n---\n\nBody text.\n",
+			wantErr: "",
+		},
+		{
+			name:    "missing title",
+			path:    "bad.md",
+			content: "---\ntags:\n  - test\ndate: 2026-04-01\n---\n\nBody.\n",
+			wantErr: "missing required frontmatter field: title",
+		},
+		{
+			name:    "missing tags",
+			path:    "bad.md",
+			content: "---\ntitle: No Tags\ndate: 2026-04-01\n---\n\nBody.\n",
+			wantErr: "missing required frontmatter field: tags (must have at least one tag)",
+		},
+		{
+			name:    "empty tags list",
+			path:    "bad.md",
+			content: "---\ntitle: Empty Tags\ntags:\ndate: 2026-04-01\n---\n\nBody.\n",
+			wantErr: "missing required frontmatter field: tags (must have at least one tag)",
+		},
+		{
+			name:    "missing date",
+			path:    "bad.md",
+			content: "---\ntitle: No Date\ntags:\n  - test\n---\n\nBody.\n",
+			wantErr: "missing required frontmatter field: date",
+		},
+		{
+			name:    "invalid date format",
+			path:    "bad.md",
+			content: "---\ntitle: Bad Date\ntags:\n  - test\ndate: 2026\n---\n\nBody.\n",
+			wantErr: "invalid date format: expected YYYY-MM-DD, got",
+		},
+		{
+			name:    "no frontmatter block",
+			path:    "bad.md",
+			content: "Just plain text without frontmatter.\n",
+			wantErr: "missing frontmatter block",
+		},
+		{
+			name:    "valid raw file",
+			path:    "raw/paper.md",
+			content: "---\ntitle: Research Paper\nsource: https://example.com/paper.pdf\ndate-added: 2026-03-15\n---\n\nSummary.\n",
+			wantErr: "",
+		},
+		{
+			name:    "raw file missing source",
+			path:    "raw/bad.md",
+			content: "---\ntitle: No Source\ndate-added: 2026-03-15\n---\n\nSummary.\n",
+			wantErr: "missing required frontmatter field: source",
+		},
+		{
+			name:    "raw file missing date-added",
+			path:    "raw/bad.md",
+			content: "---\ntitle: No Date\nsource: https://example.com\n---\n\nSummary.\n",
+			wantErr: "missing required frontmatter field: date-added",
+		},
+		{
+			name:    "raw file invalid date-added",
+			path:    "raw/bad.md",
+			content: "---\ntitle: Bad Date\nsource: https://example.com\ndate-added: March 2026\n---\n\nSummary.\n",
+			wantErr: "invalid date-added format: expected YYYY-MM-DD, got",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := svc.Write(tc.path, tc.content)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected no error, got: %s", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("expected error containing %q, got: %s", tc.wantErr, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPageService_PatchValidContent(t *testing.T) {
+	dir := setupPagesVault(t)
+	svc := NewPageService(dir)
+
+	// Patch index.md (which has valid frontmatter) — result should still be valid
+	result, err := svc.Patch("index.md", []PatchOp{
+		{Find: "Welcome.", Replace: "Welcome to the wiki."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "Welcome to the wiki.") {
+		t.Error("expected patched content")
 	}
 }

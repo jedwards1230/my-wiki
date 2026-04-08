@@ -311,6 +311,94 @@ func TestExtractWikilinks_WithAliasAndAnchor(t *testing.T) {
 	}
 }
 
+func TestParseFrontmatter_ListValues(t *testing.T) {
+	dir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		content string
+		wantMap map[string]string
+	}{
+		{
+			name:    "scalar only",
+			content: "---\ntitle: Hello\ndate: 2026-01-01\n---\nBody.\n",
+			wantMap: map[string]string{"title": "Hello", "date": "2026-01-01"},
+		},
+		{
+			name:    "single list item",
+			content: "---\ntags:\n  - homelab\n---\nBody.\n",
+			wantMap: map[string]string{"tags": "homelab"},
+		},
+		{
+			name:    "multiple list items",
+			content: "---\ntags:\n  - homelab\n  - guide\n  - networking\n---\nBody.\n",
+			wantMap: map[string]string{"tags": "homelab,guide,networking"},
+		},
+		{
+			name:    "mixed scalar and list",
+			content: "---\ntitle: My Page\ntags:\n  - homelab\n  - guide\ndate: 2026-01-01\n---\nBody.\n",
+			wantMap: map[string]string{"title": "My Page", "tags": "homelab,guide", "date": "2026-01-01"},
+		},
+		{
+			name:    "list items with quotes",
+			content: "---\ntags:\n  - \"quoted value\"\n  - plain\n---\nBody.\n",
+			wantMap: map[string]string{"tags": "quoted value,plain"},
+		},
+		{
+			name:    "empty list (key with no items)",
+			content: "---\ntags:\ndate: 2026-01-01\n---\nBody.\n",
+			wantMap: map[string]string{"tags": "", "date": "2026-01-01"},
+		},
+		{
+			name:    "multiple lists",
+			content: "---\ntags:\n  - a\n  - b\naliases:\n  - x\n  - y\n---\nBody.\n",
+			wantMap: map[string]string{"tags": "a,b", "aliases": "x,y"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := filepath.Join(dir, tt.name+".md")
+			if err := os.WriteFile(f, []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fm, err := ParseFrontmatter(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for k, want := range tt.wantMap {
+				got, ok := fm[k]
+				if !ok {
+					t.Errorf("missing key %q", k)
+					continue
+				}
+				if got != want {
+					t.Errorf("key %q = %q, want %q", k, got, want)
+				}
+			}
+			if len(fm) != len(tt.wantMap) {
+				t.Errorf("got %d keys, want %d: %v", len(fm), len(tt.wantMap), fm)
+			}
+		})
+	}
+}
+
+func TestParseFrontmatter_ExistingFixture(t *testing.T) {
+	dir := setupTestVault(t)
+
+	// index.md has tags: \n  - root
+	fm, err := ParseFrontmatter(filepath.Join(dir, "index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fm["tags"] != "root" {
+		t.Errorf("tags = %q, want %q", fm["tags"], "root")
+	}
+	if fm["title"] != "Home" {
+		t.Errorf("title = %q, want %q", fm["title"], "Home")
+	}
+}
+
 func TestBuildSlugIndex(t *testing.T) {
 	dir := setupTestVault(t)
 	v := New(dir)
