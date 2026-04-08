@@ -106,6 +106,18 @@ func (h *MarkdownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	f, err := h.fsys.Open(p)
 	if err != nil {
+		// File not found: if path ends in .md, check if the base is a directory.
+		// e.g., "homelab.md" → check if "homelab" is a directory → redirect to /homelab/
+		if strings.HasSuffix(p, ".md") {
+			dirPath := strings.TrimSuffix(p, ".md")
+			if df, derr := h.fsys.Open(dirPath); derr == nil {
+				defer func() { _ = df.Close() }()
+				if ds, serr := df.Stat(); serr == nil && ds.IsDir() {
+					http.Redirect(w, r, "/"+dirPath+"/", http.StatusMovedPermanently)
+					return
+				}
+			}
+		}
 		http.NotFound(w, r)
 		return
 	}
