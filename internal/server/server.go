@@ -2,11 +2,13 @@ package server
 
 import (
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
 
 	"github.com/jedwards1230/home-wiki/internal/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Config holds server configuration.
@@ -33,8 +35,8 @@ func WithAPIRoutes(register func(mux *http.ServeMux)) Option {
 	}
 }
 
-// New creates a new Server with the given config and filesystems.
-func New(cfg Config, publicFS, vaultFS fs.FS, opts ...Option) *Server {
+// New creates a new Server with the given config, filesystems, and optional logger.
+func New(cfg Config, publicFS, vaultFS fs.FS, logger *slog.Logger, opts ...Option) *Server {
 	s := &Server{config: cfg}
 
 	staticHandler := NewStaticHandler(publicFS)
@@ -52,6 +54,7 @@ func New(cfg Config, publicFS, vaultFS fs.FS, opts ...Option) *Server {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		healthHandler.ServeHTTP(w, r)
 	})
+	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if !s.ready.Load() {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
@@ -80,10 +83,15 @@ func New(cfg Config, publicFS, vaultFS fs.FS, opts ...Option) *Server {
 		staticHandler.ServeHTTP(w, r)
 	})
 
-	// Wrap with middleware: readiness → cache headers → gzip → mux
+	// Wrap with middleware (outermost first):
+	// request → readiness → logging → metrics → gzip → cache headers → mux
 	var handler http.Handler = mux
 	handler = middleware.CacheHeaders(handler)
 	handler = middleware.Gzip(handler)
+	handler = middleware.Metrics(handler)
+	if logger != nil {
+		handler = middleware.Logging(logger)(handler)
+	}
 	handler = s.readinessMiddleware(handler)
 
 	s.handler = handler
@@ -92,8 +100,8 @@ func New(cfg Config, publicFS, vaultFS fs.FS, opts ...Option) *Server {
 
 func (s *Server) readinessMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /healthz, /readyz, and /api/ bypass readiness gate
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || strings.HasPrefix(r.URL.Path, "/api/") {
+		// /healthz, /readyz, /metrics, and /api/ bypass readiness gate
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" || strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}

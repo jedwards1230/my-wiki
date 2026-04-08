@@ -63,7 +63,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	publicDir, _ := cmd.Flags().GetString("public-dir")
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	cfg := server.Config{
 		PublicDir: publicDir,
@@ -78,7 +78,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	v := vault.New(vaultDir)
 	apiHandler := api.NewHandler(v)
 
-	srv := server.New(cfg, publicFS, vaultFS,
+	srv := server.New(cfg, publicFS, vaultFS, logger,
 		server.WithAPIRoutes(apiHandler.RegisterRoutes),
 	)
 
@@ -147,7 +147,7 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	port, _ := cmd.Flags().GetString("port")
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	v := vault.New(vaultDir)
 	mcpSrv := mcpserver.New(v)

@@ -93,6 +93,10 @@ mcp:
   enabled: false
   port: 8081
 
+metrics:
+  enabled: false
+  interval: 30s
+
 nodeSelector: {}
 tolerations: []
 
