@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -62,6 +63,23 @@ func TestPageService_ReadNotFound(t *testing.T) {
 	_, err := svc.Read("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent page")
+	}
+	if !strings.Contains(err.Error(), "page not found") {
+		t.Errorf("expected 'page not found' error, got: %s", err)
+	}
+}
+
+func TestPageService_ReadDirectory(t *testing.T) {
+	dir := setupPagesVault(t)
+	svc := NewPageService(dir)
+
+	// "meta" is a directory, not a page
+	_, err := svc.Read("meta")
+	if err == nil {
+		t.Fatal("expected error reading a directory path")
+	}
+	if !strings.Contains(err.Error(), "is a directory, not a page") {
+		t.Errorf("expected directory error, got: %s", err)
 	}
 }
 
