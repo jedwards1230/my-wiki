@@ -69,7 +69,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// Support env var for mcp-port when flag is at default
 	if mcpPort == 0 {
 		if envVal := os.Getenv("WIKI_MCP_PORT"); envVal != "" {
-			fmt.Sscanf(envVal, "%d", &mcpPort)
+			_, _ = fmt.Sscanf(envVal, "%d", &mcpPort)
 		}
 	}
 
