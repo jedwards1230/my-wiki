@@ -216,6 +216,50 @@ func registerTools(
 	)
 
 	s.AddTool(
+		mcp.NewTool("wiki_delete_page",
+			mcp.WithTitleAnnotation("Delete Page"),
+			mcp.WithDescription("Delete a wiki page. Returns an error if the page does not exist."),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
+			mcp.WithIdempotentHintAnnotation(false),
+			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithString("path",
+				mcp.Required(),
+				mcp.Description("Relative path to the page to delete (e.g., project/old-page or project/old-page.md). The .md extension is added if omitted."),
+			),
+		),
+		deletePageHandler(pages),
+	)
+
+	s.AddTool(
+		mcp.NewTool("wiki_patch_page",
+			mcp.WithTitleAnnotation("Patch Page"),
+			mcp.WithDescription("Apply targeted find-and-replace edits to an existing wiki page without replacing the entire content. Each operation replaces the first occurrence of 'find' with 'replace'. If any find string is not found, the operation fails with no changes written."),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
+			mcp.WithIdempotentHintAnnotation(false),
+			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithString("path",
+				mcp.Required(),
+				mcp.Description("Relative path to the page to patch (e.g., project/my-project or project/my-project.md). The .md extension is added if omitted."),
+			),
+			mcp.WithArray("operations",
+				mcp.Required(),
+				mcp.Description("Array of find-and-replace operations to apply in order."),
+				mcp.Items(map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"find":    map[string]any{"type": "string", "description": "Text to find in the page."},
+						"replace": map[string]any{"type": "string", "description": "Text to replace it with."},
+					},
+					"required": []string{"find", "replace"},
+				}),
+			),
+		),
+		patchPageHandler(pages),
+	)
+
+	s.AddTool(
 		mcp.NewTool("wiki_list_pages",
 			mcp.WithTitleAnnotation("List Pages"),
 			mcp.WithDescription("List wiki pages (excludes raw/, private/, .obsidian/). Returns JSON array of {path, title, has_meta}."),

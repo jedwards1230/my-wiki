@@ -339,6 +339,171 @@ func TestListPagesHandler(t *testing.T) {
 	}
 }
 
+func TestDeletePageHandler(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := deletePageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, "deleted") {
+		t.Errorf("expected deleted message, got:\n%s", text)
+	}
+
+	// Verify the file is gone
+	readHandler := readPageHandler(svc)
+	result, err = readHandler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error reading deleted page")
+	}
+}
+
+func TestDeletePageHandlerNotFound(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := deletePageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{"path": "nonexistent"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for missing page")
+	}
+}
+
+func TestDeletePageHandlerEmptyPath(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := deletePageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty path")
+	}
+}
+
+func TestPatchPageHandler(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := patchPageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "project/alpha",
+		"operations": []interface{}{
+			map[string]interface{}{"find": "Content.", "replace": "Updated content."},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, "Updated content.") {
+		t.Errorf("expected patched content, got:\n%s", text)
+	}
+
+	// Verify the file was actually updated
+	readHandler := readPageHandler(svc)
+	readResult, err := readHandler(context.Background(), makeReq(map[string]any{"path": "project/alpha"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readText := getTextContent(readResult)
+	if !strings.Contains(readText, "Updated content.") {
+		t.Errorf("expected updated content on re-read, got:\n%s", readText)
+	}
+}
+
+func TestPatchPageHandlerFindNotFound(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := patchPageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "project/alpha",
+		"operations": []interface{}{
+			map[string]interface{}{"find": "nonexistent text", "replace": "replacement"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for missing find string")
+	}
+}
+
+func TestPatchPageHandlerEmptyPath(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := patchPageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"operations": []interface{}{
+			map[string]interface{}{"find": "x", "replace": "y"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty path")
+	}
+}
+
+func TestPatchPageHandlerEmptyOperations(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := patchPageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":       "project/alpha",
+		"operations": []interface{}{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty operations")
+	}
+}
+
+func TestPatchPageHandlerPageNotFound(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Dir)
+	handler := patchPageHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "nonexistent",
+		"operations": []interface{}{
+			map[string]interface{}{"find": "x", "replace": "y"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for nonexistent page")
+	}
+}
+
 func TestNewCreatesServer(t *testing.T) {
 	v := setupTestVault(t)
 	s := New(v)
