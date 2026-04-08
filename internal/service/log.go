@@ -198,7 +198,7 @@ func (s *LogService) Lint() ([]LogLintIssue, error) {
 				continue
 			}
 			date := strings.TrimSuffix(entry.Name(), ".md")
-			if !strings.Contains(indexStr, "["+date+"]") {
+			if !strings.Contains(indexStr, date) {
 				issues = append(issues, LogLintIssue{
 					Message: fmt.Sprintf("%s has activity file but no index entry", date),
 				})

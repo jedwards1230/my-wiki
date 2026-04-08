@@ -171,7 +171,7 @@ func (s *ActivityService) updateLogIndex(dailyFile, today, title string) error {
 		return err
 	}
 
-	todayPrefix := fmt.Sprintf("## [%s]", today)
+	todayPrefix := fmt.Sprintf("## [[meta/activity/%s|%s]]", today, today)
 	lines := strings.Split(string(existing), "\n")
 	found := false
 	for i, line := range lines {
