@@ -30,7 +30,7 @@ func setupTestVault(t *testing.T) *vault.Vault {
 		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 	}
 
-	logContent := "---\ntitle: Activity Log\n---\n\n## [2026-04-06] 1 changes | abcdef | Test | [[meta/activity/2026-04-06]]\n"
+	logContent := "---\ntitle: Activity Log\n---\n\n## [[meta/activity/2026-04-06|2026-04-06]] 1 changes | abcdef | Test\n"
 	_ = os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte(logContent), 0o644)
 
 	actContent := "---\ntitle: \"2026-04-06\"\ntags:\n  - meta/activity\ndate: 2026-04-06\n---\n\n### 10:00 | create | First thing\nCreated a page.\n"

@@ -33,7 +33,7 @@ func setupTestVault(t *testing.T) *vault.Vault {
 	}
 
 	// Create log index
-	logContent := "---\ntitle: Activity Log\n---\n\n## [2026-04-06] 1 changes | abcdef | Test | [[meta/activity/2026-04-06]]\n"
+	logContent := "---\ntitle: Activity Log\n---\n\n## [[meta/activity/2026-04-06|2026-04-06]] 1 changes | abcdef | Test\n"
 	_ = os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte(logContent), 0o644)
 
 	// Create activity file

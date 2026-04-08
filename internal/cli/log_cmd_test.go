@@ -21,9 +21,9 @@ tags:
 date: 2026-01-01
 ---
 
-## [2026-04-06] 3 changes | ` + "`abcdef`" + ` | Last edit | [[meta/activity/2026-04-06]]
-## [2026-04-05] 2 changes | ` + "`123456`" + ` | Something | [[meta/activity/2026-04-05]]
-## [2026-04-04] 1 changes | ` + "`fedcba`" + ` | First entry | [[meta/activity/2026-04-04]]
+## [[meta/activity/2026-04-06|2026-04-06]] 3 changes | ` + "`abcdef`" + ` | Last edit
+## [[meta/activity/2026-04-05|2026-04-05]] 2 changes | ` + "`123456`" + ` | Something
+## [[meta/activity/2026-04-04|2026-04-04]] 1 changes | ` + "`fedcba`" + ` | First entry
 `
 	_ = os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte(logContent), 0o644)
 
