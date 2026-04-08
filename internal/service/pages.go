@@ -118,6 +118,28 @@ func (s *PageService) List(prefix string) ([]PageInfo, error) {
 	return pages, nil
 }
 
+// Patch applies a series of find-and-replace operations to an existing page.
+// If any find string is not found, it returns an error without writing.
+func (s *PageService) Patch(relPath string, ops []PatchOp) (string, error) {
+	content, err := s.Read(relPath)
+	if err != nil {
+		return "", err
+	}
+
+	for i, op := range ops {
+		if !strings.Contains(content, op.Find) {
+			return "", fmt.Errorf("patch op %d: find string not found in %s", i, relPath)
+		}
+		content = strings.Replace(content, op.Find, op.Replace, 1)
+	}
+
+	if err := s.Write(relPath, content); err != nil {
+		return "", err
+	}
+
+	return content, nil
+}
+
 // resolve converts a relative path to an absolute path within the vault,
 // ensuring it doesn't escape the vault directory.
 func (s *PageService) resolve(relPath string) (string, error) {
