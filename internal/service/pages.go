@@ -121,6 +121,16 @@ func (s *PageService) List(prefix string) ([]PageInfo, error) {
 // Patch applies a series of find-and-replace operations to an existing page.
 // If any find string is not found, it returns an error without writing.
 func (s *PageService) Patch(relPath string, ops []PatchOp) (string, error) {
+	if len(ops) == 0 {
+		return "", fmt.Errorf("operations must not be empty")
+	}
+	for i, op := range ops {
+		if op.Find == "" {
+			return "", fmt.Errorf("operation %d: find must be non-empty", i)
+		}
+		_ = i // validated
+	}
+
 	content, err := s.Read(relPath)
 	if err != nil {
 		return "", err

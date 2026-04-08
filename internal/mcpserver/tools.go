@@ -297,11 +297,25 @@ func getPatchOps(req mcp.CallToolRequest) ([]service.PatchOp, error) {
 			return nil, fmt.Errorf("operation %d must be an object", i)
 		}
 
-		find, _ := m["find"].(string)
-		replace, _ := m["replace"].(string)
-
+		findValue, ok := m["find"]
+		if !ok {
+			return nil, fmt.Errorf("operation %d: find is required", i)
+		}
+		find, ok := findValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("operation %d: find must be a string", i)
+		}
 		if find == "" {
-			return nil, fmt.Errorf("operation %d: find is required and must be non-empty", i)
+			return nil, fmt.Errorf("operation %d: find must be non-empty", i)
+		}
+
+		replaceValue, ok := m["replace"]
+		if !ok {
+			return nil, fmt.Errorf("operation %d: replace is required", i)
+		}
+		replace, ok := replaceValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("operation %d: replace must be a string", i)
 		}
 
 		ops = append(ops, service.PatchOp{Find: find, Replace: replace})
