@@ -17,12 +17,14 @@ func New(v *vault.Vault) *server.MCPServer {
 	)
 
 	lint := service.NewLintService(v)
-	queue := service.NewQueueService(v)
+	ingest := service.NewIngestService(v)
+	directory := service.NewDirectoryService(v)
 	logSvc := service.NewLogService(v.Dir)
 	activity := service.NewActivityService(v.Dir)
 	pages := service.NewPageService(v.Dir)
+	recent := service.NewRecentService(v)
 
-	registerTools(s, lint, queue, logSvc, activity, pages)
+	registerTools(s, lint, ingest, directory, logSvc, activity, pages, recent)
 
 	return s
 }
@@ -37,10 +39,12 @@ func NewStreamableHTTPServer(s *server.MCPServer) *server.StreamableHTTPServer {
 func registerTools(
 	s *server.MCPServer,
 	lint *service.LintService,
-	queue *service.QueueService,
+	ingest *service.IngestService,
+	directory *service.DirectoryService,
 	logSvc *service.LogService,
 	activity *service.ActivityService,
 	pages *service.PageService,
+	recent *service.RecentService,
 ) {
 	s.AddTool(
 		mcp.NewTool("wiki_lint",
@@ -59,27 +63,51 @@ func registerTools(
 	)
 
 	s.AddTool(
-		mcp.NewTool("wiki_queue",
-			mcp.WithTitleAnnotation("List Queue"),
+		mcp.NewTool("wiki_ingest",
+			mcp.WithTitleAnnotation("List Ingest Queue"),
 			mcp.WithDescription("List raw/ files missing the 'ingested' frontmatter key — source documents awaiting summarization into wiki pages. Returns JSON array of {path, title, date_added}."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 		),
-		queueListHandler(queue),
+		ingestListHandler(ingest),
 	)
 
 	s.AddTool(
-		mcp.NewTool("wiki_queue_generate",
-			mcp.WithTitleAnnotation("Generate Queue"),
-			mcp.WithDescription("Write meta/ingest-queue.md with a table of unprocessed raw sources. Use wiki_queue to read the list without side effects. Returns {path, count}."),
+		mcp.NewTool("wiki_directory",
+			mcp.WithTitleAnnotation("List Page Directory"),
+			mcp.WithDescription("List all wiki pages with title, description, and tags. Returns JSON array of {path, title, description, tags}. Use wiki_directory_generate to write a browseable markdown page."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithIdempotentHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
+		),
+		directoryListHandler(directory),
+	)
+
+	s.AddTool(
+		mcp.NewTool("wiki_directory_generate",
+			mcp.WithTitleAnnotation("Generate Page Directory"),
+			mcp.WithDescription("Write meta/directory.md with all wiki pages grouped by tag. Use wiki_directory to read the list without side effects. Returns {path, count}."),
 			mcp.WithReadOnlyHintAnnotation(false),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 		),
-		queueGenerateHandler(queue),
+		directoryGenerateHandler(directory),
+	)
+
+	s.AddTool(
+		mcp.NewTool("wiki_ingest_generate",
+			mcp.WithTitleAnnotation("Generate Ingest Queue"),
+			mcp.WithDescription("Write meta/ingest-queue.md with a table of unprocessed raw sources. Use wiki_ingest to read the list without side effects. Returns {path, count}."),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithIdempotentHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
+		),
+		ingestGenerateHandler(ingest),
 	)
 
 	s.AddTool(
@@ -272,5 +300,20 @@ func registerTools(
 			),
 		),
 		listPagesHandler(pages),
+	)
+
+	s.AddTool(
+		mcp.NewTool("wiki_recent",
+			mcp.WithTitleAnnotation("Recent Pages"),
+			mcp.WithDescription("List recently modified wiki pages sorted by modification time. Returns JSON array of {path, title, modified}. Excludes activity log files."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithIdempotentHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithNumber("limit",
+				mcp.Description("Maximum pages to return. Default: 20."),
+			),
+		),
+		recentListHandler(recent),
 	)
 }

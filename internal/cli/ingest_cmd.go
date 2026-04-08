@@ -8,12 +8,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newQueueCmd() *cobra.Command {
+func newIngestCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "queue",
+		Use:   "ingest",
 		Short: "List unprocessed raw sources",
 		Long:  "Show raw files missing the 'ingested' frontmatter field.",
-		RunE:  runQueue,
+		RunE:  runIngest,
 	}
 
 	cmd.Flags().Bool("count", false, "just print the count")
@@ -22,14 +22,14 @@ func newQueueCmd() *cobra.Command {
 	return cmd
 }
 
-func runQueue(cmd *cobra.Command, _ []string) error {
+func runIngest(cmd *cobra.Command, _ []string) error {
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
 	v := vault.New(vaultDir)
 
 	countOnly, _ := cmd.Flags().GetBool("count")
 	generate, _ := cmd.Flags().GetBool("generate")
 
-	svc := service.NewQueueService(v)
+	svc := service.NewIngestService(v)
 
 	switch {
 	case countOnly:

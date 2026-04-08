@@ -86,7 +86,30 @@ func lintHandler(svc *service.LintService) server.ToolHandlerFunc {
 	}
 }
 
-func queueListHandler(svc *service.QueueService) server.ToolHandlerFunc {
+func directoryListHandler(svc *service.DirectoryService) server.ToolHandlerFunc {
+	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		entries, err := svc.List()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		return mcp.NewToolResultText(toJSON(entries)), nil
+	}
+}
+
+func directoryGenerateHandler(svc *service.DirectoryService) server.ToolHandlerFunc {
+	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		path, count, err := svc.Generate()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		result := map[string]any{"path": path, "count": count}
+		return mcp.NewToolResultText(toJSON(result)), nil
+	}
+}
+
+func ingestListHandler(svc *service.IngestService) server.ToolHandlerFunc {
 	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		items, err := svc.List()
 		if err != nil {
@@ -97,7 +120,7 @@ func queueListHandler(svc *service.QueueService) server.ToolHandlerFunc {
 	}
 }
 
-func queueGenerateHandler(svc *service.QueueService) server.ToolHandlerFunc {
+func ingestGenerateHandler(svc *service.IngestService) server.ToolHandlerFunc {
 	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path, count, err := svc.Generate()
 		if err != nil {
@@ -334,5 +357,21 @@ func listPagesHandler(svc *service.PageService) server.ToolHandlerFunc {
 		}
 
 		return mcp.NewToolResultText(toJSON(pages)), nil
+	}
+}
+
+func recentListHandler(svc *service.RecentService) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		limit := getIntArg(req, "limit")
+		if limit <= 0 {
+			limit = 20
+		}
+
+		entries, err := svc.List(limit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		return mcp.NewToolResultText(toJSON(entries)), nil
 	}
 }

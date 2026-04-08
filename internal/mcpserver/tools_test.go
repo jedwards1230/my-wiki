@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/jedwards1230/home-wiki/internal/vault"
@@ -93,10 +94,54 @@ func TestLintHandlerInvalidCheck(t *testing.T) {
 	}
 }
 
-func TestQueueListHandler(t *testing.T) {
+func TestDirectoryListHandler(t *testing.T) {
 	v := setupTestVault(t)
-	svc := service.NewQueueService(v)
-	handler := queueListHandler(svc)
+	svc := service.NewDirectoryService(v)
+	handler := directoryListHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, "index.md") {
+		t.Errorf("expected index.md in result, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Home") {
+		t.Errorf("expected title in result, got:\n%s", text)
+	}
+}
+
+func TestDirectoryGenerateHandler(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewDirectoryService(v)
+	handler := directoryGenerateHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, "path") {
+		t.Errorf("expected path in result, got:\n%s", text)
+	}
+	if !strings.Contains(text, "count") {
+		t.Errorf("expected count in result, got:\n%s", text)
+	}
+
+	// Verify file was created
+	dirFile := filepath.Join(v.Dir, "meta", "directory.md")
+	if _, err := os.Stat(dirFile); os.IsNotExist(err) {
+		t.Error("expected directory.md to be created")
+	}
+}
+
+func TestIngestListHandler(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewIngestService(v)
+	handler := ingestListHandler(svc)
 
 	result, err := handler(context.Background(), makeReq(nil))
 	if err != nil {
@@ -235,7 +280,7 @@ func TestCreatePageHandler(t *testing.T) {
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "new-page.md",
-		"content": "---\ntitle: New\n---\n\nContent.\n",
+		"content": "---\ntitle: New\ntags:\n  - test\ndate: 2026-01-15\n---\n\nContent.\n",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -501,6 +546,65 @@ func TestPatchPageHandlerPageNotFound(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected error result for nonexistent page")
+	}
+}
+
+func TestRecentListHandler(t *testing.T) {
+	v := setupTestVault(t)
+
+	// Set distinct mtimes so we can verify sort order.
+	// index.md = oldest, about.md = middle, project/alpha.md = newest
+	now := time.Now()
+	oldest := now.Add(-3 * time.Hour)
+	middle := now.Add(-2 * time.Hour)
+	newest := now.Add(-1 * time.Hour)
+
+	_ = os.Chtimes(filepath.Join(v.Dir, "index.md"), oldest, oldest)
+	_ = os.Chtimes(filepath.Join(v.Dir, "about.md"), middle, middle)
+	_ = os.Chtimes(filepath.Join(v.Dir, "project", "alpha.md"), newest, newest)
+
+	svc := service.NewRecentService(v)
+	handler := recentListHandler(svc)
+
+	// Test default (all pages returned)
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+
+	// Should contain pages
+	if !strings.Contains(text, "index.md") {
+		t.Errorf("expected index.md in result, got:\n%s", text)
+	}
+	if !strings.Contains(text, "project/alpha.md") {
+		t.Errorf("expected project/alpha.md in result, got:\n%s", text)
+	}
+
+	// Verify sort order: alpha should appear before about, about before index
+	alphaIdx := strings.Index(text, "project/alpha.md")
+	aboutIdx := strings.Index(text, "about.md")
+	indexIdx := strings.Index(text, "index.md")
+	if alphaIdx > aboutIdx || aboutIdx > indexIdx {
+		t.Errorf("expected newest-first order (alpha, about, index), got alpha@%d about@%d index@%d", alphaIdx, aboutIdx, indexIdx)
+	}
+
+	// meta/activity files should be excluded
+	if strings.Contains(text, "meta/activity/") {
+		t.Error("expected meta/activity/ files to be excluded")
+	}
+
+	// Test with limit
+	result, err = handler(context.Background(), makeReq(map[string]any{"limit": float64(2)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = getTextContent(result)
+
+	// Should have at most 2 entries — index.md (oldest) should be absent
+	if strings.Contains(text, "index.md") {
+		t.Errorf("expected index.md to be excluded with limit=2, got:\n%s", text)
 	}
 }
 
