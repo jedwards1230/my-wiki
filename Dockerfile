@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${BUILD_VERSION}" -o 
 FROM node:24-alpine
 
 # System packages + obsidian-headless (rarely changes — keep at top for caching)
-RUN apk add --no-cache git coreutils bash ripgrep && \
+RUN apk add --no-cache git coreutils bash && \
     npm install -g obsidian-headless
 
 # Set up Quartz project (only re-runs when Quartz upstream changes)
@@ -32,10 +32,6 @@ COPY quartz/components/RawLink.tsx ./quartz/components/RawLink.tsx
 RUN echo 'export { default as RawLink } from "./RawLink"' >> ./quartz/components/index.ts
 ARG BUILD_VERSION=dev
 RUN sed -i "s/%%BUILD_VERSION%%/v${BUILD_VERSION}/" ./quartz.layout.ts
-
-# Install wiki scripts
-COPY scripts/ /usr/local/bin/
-RUN chmod +x /usr/local/bin/wiki-*
 
 # Copy Go binary from builder (parallel stage — doesn't block Node layers)
 COPY --from=go-builder /wiki-server /usr/local/bin/wiki-server
