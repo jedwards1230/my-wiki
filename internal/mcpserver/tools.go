@@ -238,6 +238,92 @@ func updatePageHandler(svc *service.PageService) server.ToolHandlerFunc {
 	}
 }
 
+func deletePageHandler(svc *service.PageService) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		path := getStringArg(req, "path")
+		if path == "" {
+			return mcp.NewToolResultError("path is required"), nil
+		}
+
+		if err := svc.Delete(path); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		return mcp.NewToolResultText(fmt.Sprintf("deleted: %s", path)), nil
+	}
+}
+
+func patchPageHandler(svc *service.PageService) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		path := getStringArg(req, "path")
+		if path == "" {
+			return mcp.NewToolResultError("path is required"), nil
+		}
+
+		ops, err := getPatchOps(req)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		if len(ops) == 0 {
+			return mcp.NewToolResultError("operations is required and must not be empty"), nil
+		}
+
+		content, err := svc.Patch(path, ops)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		return mcp.NewToolResultText(content), nil
+	}
+}
+
+func getPatchOps(req mcp.CallToolRequest) ([]service.PatchOp, error) {
+	args := req.GetArguments()
+	v, ok := args["operations"]
+	if !ok {
+		return nil, fmt.Errorf("operations is required")
+	}
+
+	arr, ok := v.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("operations must be an array")
+	}
+
+	ops := make([]service.PatchOp, 0, len(arr))
+	for i, item := range arr {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("operation %d must be an object", i)
+		}
+
+		findValue, ok := m["find"]
+		if !ok {
+			return nil, fmt.Errorf("operation %d: find is required", i)
+		}
+		find, ok := findValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("operation %d: find must be a string", i)
+		}
+		if find == "" {
+			return nil, fmt.Errorf("operation %d: find must be non-empty", i)
+		}
+
+		replaceValue, ok := m["replace"]
+		if !ok {
+			return nil, fmt.Errorf("operation %d: replace is required", i)
+		}
+		replace, ok := replaceValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("operation %d: replace must be a string", i)
+		}
+
+		ops = append(ops, service.PatchOp{Find: find, Replace: replace})
+	}
+
+	return ops, nil
+}
+
 func listPagesHandler(svc *service.PageService) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		prefix := getStringArg(req, "prefix")
