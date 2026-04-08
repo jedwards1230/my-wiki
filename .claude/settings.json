@@ -32,67 +32,8 @@
       "Skill"
     ]
   },
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"",
-            "timeout": 60
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-tool-use.sh\""
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-vet-test.sh\"",
-            "timeout": 150,
-            "statusMessage": "Running go vet and tests..."
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-lint.sh\"",
-            "timeout": 90,
-            "statusMessage": "Running golangci-lint..."
-          }
-        ]
-      }
-    ],
-    "TaskCompleted": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-vet-test.sh\"",
-            "timeout": 150,
-            "statusMessage": "Running go vet and tests..."
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/go-lint.sh\"",
-            "timeout": 90,
-            "statusMessage": "Running golangci-lint..."
-          }
-        ]
-      }
-    ]
+  "enabledPlugins": {
+    "go-quality@jedwards1230-plugins": true,
+    "gopls-lsp@claude-plugins-official": true
   }
 }
