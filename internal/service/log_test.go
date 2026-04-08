@@ -13,9 +13,9 @@ func setupLogVault(t *testing.T) string {
 	_ = os.MkdirAll(filepath.Join(dir, "meta", "activity"), 0o755)
 
 	logContent := "---\ntitle: Activity Log\ntags:\n  - meta\ndate: 2026-01-01\n---\n\n" +
-		"## [2026-04-06] 3 changes | `abcdef` | Last edit | [[meta/activity/2026-04-06]]\n" +
-		"## [2026-04-05] 2 changes | `123456` | Something | [[meta/activity/2026-04-05]]\n" +
-		"## [2026-04-04] 1 changes | `fedcba` | First entry | [[meta/activity/2026-04-04]]\n"
+		"## [[meta/activity/2026-04-06|2026-04-06]] 3 changes | `abcdef` | Last edit\n" +
+		"## [[meta/activity/2026-04-05|2026-04-05]] 2 changes | `123456` | Something\n" +
+		"## [[meta/activity/2026-04-04|2026-04-04]] 1 changes | `fedcba` | First entry\n"
 	_ = os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte(logContent), 0o644)
 
 	activityContent := "---\ntitle: \"2026-04-06\"\ntags:\n  - meta/activity\ndate: 2026-04-06\n---\n\n" +

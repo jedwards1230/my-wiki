@@ -30,10 +30,10 @@ func (s *LogService) activityDir() string {
 }
 
 var (
-	logIndexDateRe    = regexp.MustCompile(`\[(\d{4}-\d{2}-\d{2})\]`)
+	logIndexDateRe    = regexp.MustCompile(`[|\[](\d{4}-\d{2}-\d{2})\]`)
 	logIndexHashRe    = regexp.MustCompile("(?:^|[^a-f0-9])([a-f0-9]{6})(?:[^a-f0-9]|$)")
 	logIndexChangesRe = regexp.MustCompile(`(\d+) changes?`)
-	logIndexRefRe     = regexp.MustCompile(`\[\[(.+?)\]\]`)
+	logIndexRefRe     = regexp.MustCompile(`\[\[([^|\]]+)`)
 )
 
 // Index returns the last n entries from the log index. If n <= 0, all entries.
@@ -67,7 +67,7 @@ func (s *LogService) Index(n int) ([]LogEntry, error) {
 }
 
 func parseLogIndexLine(line string) LogEntry {
-	// Format: ## [2026-04-06] 3 changes | `abcdef` | Last edit | [[meta/activity/2026-04-06]]
+	// Format: ## [[meta/activity/2026-04-06|2026-04-06]] 3 changes | `abcdef` | Last edit
 	entry := LogEntry{}
 
 	if m := logIndexDateRe.FindStringSubmatch(line); m != nil {
@@ -80,16 +80,11 @@ func parseLogIndexLine(line string) LogEntry {
 		entry.Changes, _ = strconv.Atoi(m[1])
 	}
 
-	// Extract title: between hash section and activity ref
-	// Pattern: | `hash` | TITLE | [[ref]]
-	// Find all pipe-separated segments after the date/changes part
+	// Extract title: last pipe-separated segment
+	// Pattern: | `hash` | TITLE
 	parts := strings.Split(line, " | ")
-	if len(parts) >= 3 {
-		// Title is the second-to-last pipe segment (before [[ref]])
-		titleIdx := len(parts) - 2
-		if titleIdx >= 0 {
-			entry.Title = strings.TrimSpace(parts[titleIdx])
-		}
+	if len(parts) >= 2 {
+		entry.Title = strings.TrimSpace(parts[len(parts)-1])
 	}
 
 	if m := logIndexRefRe.FindStringSubmatch(line); m != nil {
@@ -203,7 +198,7 @@ func (s *LogService) Lint() ([]LogLintIssue, error) {
 				continue
 			}
 			date := strings.TrimSuffix(entry.Name(), ".md")
-			if !strings.Contains(indexStr, "["+date+"]") {
+			if !strings.Contains(indexStr, date) {
 				issues = append(issues, LogLintIssue{
 					Message: fmt.Sprintf("%s has activity file but no index entry", date),
 				})
