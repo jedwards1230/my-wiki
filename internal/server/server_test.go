@@ -15,7 +15,7 @@ func testServer(ready bool) *Server {
 	vaultFS := fstest.MapFS{
 		"notes/hello.md": {Data: []byte("# Hello")},
 	}
-	s := New(Config{}, publicFS, vaultFS)
+	s := New(Config{}, publicFS, vaultFS, nil)
 	if ready {
 		s.SetReady()
 	}
