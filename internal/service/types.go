@@ -44,3 +44,9 @@ type ActivityEntry struct {
 	Summary string   `json:"summary,omitempty"`
 	Touched []string `json:"touched,omitempty"`
 }
+
+// PatchOp represents a single find-and-replace operation.
+type PatchOp struct {
+	Find    string `json:"find"`
+	Replace string `json:"replace"`
+}

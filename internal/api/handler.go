@@ -40,6 +40,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/pages/{path...}", h.handlePageRead)
 	mux.HandleFunc("PUT /api/pages/{path...}", h.handlePageWrite)
 	mux.HandleFunc("DELETE /api/pages/{path...}", h.handlePageDelete)
+	mux.HandleFunc("PATCH /api/pages/{path...}", h.handlePagePatch)
 	mux.HandleFunc("GET /api/pages", h.handlePageList)
 	mux.HandleFunc("GET /api/search", h.handleSearch)
 }

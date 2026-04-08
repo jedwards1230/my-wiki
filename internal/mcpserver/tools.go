@@ -238,6 +238,78 @@ func updatePageHandler(svc *service.PageService) server.ToolHandlerFunc {
 	}
 }
 
+func deletePageHandler(svc *service.PageService) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		path := getStringArg(req, "path")
+		if path == "" {
+			return mcp.NewToolResultError("path is required"), nil
+		}
+
+		if err := svc.Delete(path); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		return mcp.NewToolResultText(fmt.Sprintf("deleted: %s", path)), nil
+	}
+}
+
+func patchPageHandler(svc *service.PageService) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		path := getStringArg(req, "path")
+		if path == "" {
+			return mcp.NewToolResultError("path is required"), nil
+		}
+
+		ops, err := getPatchOps(req)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		if len(ops) == 0 {
+			return mcp.NewToolResultError("operations is required and must not be empty"), nil
+		}
+
+		content, err := svc.Patch(path, ops)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		return mcp.NewToolResultText(content), nil
+	}
+}
+
+func getPatchOps(req mcp.CallToolRequest) ([]service.PatchOp, error) {
+	args := req.GetArguments()
+	v, ok := args["operations"]
+	if !ok {
+		return nil, fmt.Errorf("operations is required")
+	}
+
+	arr, ok := v.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("operations must be an array")
+	}
+
+	ops := make([]service.PatchOp, 0, len(arr))
+	for i, item := range arr {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("operation %d must be an object", i)
+		}
+
+		find, _ := m["find"].(string)
+		replace, _ := m["replace"].(string)
+
+		if find == "" {
+			return nil, fmt.Errorf("operation %d: find is required and must be non-empty", i)
+		}
+
+		ops = append(ops, service.PatchOp{Find: find, Replace: replace})
+	}
+
+	return ops, nil
+}
+
 func listPagesHandler(svc *service.PageService) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		prefix := getStringArg(req, "prefix")
