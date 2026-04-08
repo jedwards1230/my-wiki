@@ -118,9 +118,11 @@ func TestStaticContentType(t *testing.T) {
 
 func newVaultFS() fstest.MapFS {
 	return fstest.MapFS{
-		"notes/hello.md":    {Data: []byte("# Hello\nWorld")},
-		"deep/path/note.md": {Data: []byte("# Deep\nNote")},
-		"meta/schema.md":    {Data: []byte("# Schema\nContent")},
+		"notes/hello.md":        {Data: []byte("# Hello\nWorld")},
+		"deep/path/note.md":     {Data: []byte("# Deep\nNote")},
+		"meta/schema.md":        {Data: []byte("# Schema\nContent")},
+		"homelab/overview.md":   {Data: []byte("# Homelab Overview")},
+		"homelab/hosts/pi-1.md": {Data: []byte("# Pi 1")},
 	}
 }
 
@@ -185,6 +187,38 @@ func TestMarkdownNotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestMarkdownDirectoryRedirect(t *testing.T) {
+	h := NewMarkdownHandler(newVaultFS())
+	// "homelab.md" doesn't exist as a file, but "homelab/" is a directory
+	r := httptest.NewRequest(http.MethodGet, "/homelab.md", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusMovedPermanently {
+		t.Fatalf("expected 301, got %d", w.Code)
+	}
+	loc := w.Header().Get("Location")
+	if loc != "/homelab/" {
+		t.Fatalf("expected redirect to /homelab/, got %q", loc)
+	}
+}
+
+func TestMarkdownFileInDirectoryStillServes(t *testing.T) {
+	h := NewMarkdownHandler(newVaultFS())
+	// File inside a directory should still serve normally
+	r := httptest.NewRequest(http.MethodGet, "/homelab/overview.md", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body, _ := io.ReadAll(w.Body)
+	if string(body) != "# Homelab Overview" {
+		t.Fatalf("expected homelab overview content, got %q", string(body))
 	}
 }
 
