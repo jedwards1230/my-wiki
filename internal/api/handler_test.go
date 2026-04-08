@@ -322,6 +322,87 @@ func TestPageListEndpointWithPrefix(t *testing.T) {
 	}
 }
 
+func TestPagePatchEndpoint(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	body := `{"operations":[{"find":"Content.","replace":"Updated content."}]}`
+	r := httptest.NewRequest(http.MethodPatch, "/api/pages/project/alpha.md", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		b, _ := io.ReadAll(w.Body)
+		t.Fatalf("expected 200, got %d: %s", w.Code, string(b))
+	}
+
+	// Verify the content was patched
+	r2 := httptest.NewRequest(http.MethodGet, "/api/pages/project/alpha.md", nil)
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, r2)
+
+	b, _ := io.ReadAll(w2.Body)
+	if !strings.Contains(string(b), "Updated content.") {
+		t.Fatalf("expected patched content, got: %s", string(b))
+	}
+}
+
+func TestPagePatchEndpointNotFound(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	body := `{"operations":[{"find":"foo","replace":"bar"}]}`
+	r := httptest.NewRequest(http.MethodPatch, "/api/pages/nonexistent.md", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestPagePatchEndpointEmptyOps(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	body := `{"operations":[]}`
+	r := httptest.NewRequest(http.MethodPatch, "/api/pages/project/alpha.md", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestPagePatchEndpointEmptyFind(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	body := `{"operations":[{"find":"","replace":"bar"}]}`
+	r := httptest.NewRequest(http.MethodPatch, "/api/pages/project/alpha.md", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestPagePatchEndpointFindNotFound(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	body := `{"operations":[{"find":"nonexistent text","replace":"bar"}]}`
+	r := httptest.NewRequest(http.MethodPatch, "/api/pages/project/alpha.md", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", w.Code)
+	}
+}
+
 func TestSearchEndpoint(t *testing.T) {
 	mux, _ := setupTestMux(t)
 

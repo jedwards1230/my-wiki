@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/jedwards1230/home-wiki/internal/service"
 )
@@ -88,7 +89,19 @@ func (h *Handler) handlePagePatch(w http.ResponseWriter, r *http.Request) {
 
 	content, err := h.pages.Patch(path, body.Operations)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "page not found"):
+			writeError(w, http.StatusNotFound, msg)
+		case strings.Contains(msg, "path traversal"),
+			strings.Contains(msg, "must not be empty"),
+			strings.Contains(msg, "must be non-empty"):
+			writeError(w, http.StatusBadRequest, msg)
+		case strings.Contains(msg, "find string not found"):
+			writeError(w, http.StatusUnprocessableEntity, msg)
+		default:
+			writeError(w, http.StatusInternalServerError, msg)
+		}
 		return
 	}
 
