@@ -34,6 +34,11 @@ func (s *PageService) Read(relPath string) (string, error) {
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Check if the path without .md is a directory
+			dirPath := strings.TrimSuffix(absPath, ".md")
+			if info, dirErr := os.Stat(dirPath); dirErr == nil && info.IsDir() {
+				return "", fmt.Errorf("%s is a directory, not a page", strings.TrimSuffix(relPath, ".md"))
+			}
 			return "", fmt.Errorf("page not found: %s", relPath)
 		}
 		return "", err
