@@ -15,7 +15,7 @@ func testServer(ready bool) *Server {
 	vaultFS := fstest.MapFS{
 		"notes/hello.md": {Data: []byte("# Hello")},
 	}
-	s := New(Config{}, publicFS, vaultFS)
+	s := New(Config{}, publicFS, vaultFS, nil)
 	if ready {
 		s.SetReady()
 	}
@@ -84,6 +84,22 @@ func TestReadyServesContent(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 when ready, got %d", resp.StatusCode)
+	}
+}
+
+func TestMetricsBypassesReadiness(t *testing.T) {
+	s := testServer(false)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 on /metrics even when not ready, got %d", resp.StatusCode)
 	}
 }
 
