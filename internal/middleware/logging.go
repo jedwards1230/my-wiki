@@ -33,11 +33,20 @@ type logStatusWriter struct {
 }
 
 func (w *logStatusWriter) WriteHeader(code int) {
+	if w.wroteHeader {
+		return
+	}
+	w.status = code
+	w.wroteHeader = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *logStatusWriter) Write(b []byte) (int, error) {
 	if !w.wroteHeader {
-		w.status = code
+		w.status = http.StatusOK
 		w.wroteHeader = true
 	}
-	w.ResponseWriter.WriteHeader(code)
+	return w.ResponseWriter.Write(b)
 }
 
 func (w *logStatusWriter) Unwrap() http.ResponseWriter {

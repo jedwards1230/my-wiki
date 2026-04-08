@@ -83,7 +83,8 @@ func New(cfg Config, publicFS, vaultFS fs.FS, logger *slog.Logger, opts ...Optio
 		staticHandler.ServeHTTP(w, r)
 	})
 
-	// Wrap with middleware: readiness → logging → metrics → cache headers → gzip → mux
+	// Wrap with middleware (outermost first):
+	// request → readiness → logging → metrics → gzip → cache headers → mux
 	var handler http.Handler = mux
 	handler = middleware.CacheHeaders(handler)
 	handler = middleware.Gzip(handler)
