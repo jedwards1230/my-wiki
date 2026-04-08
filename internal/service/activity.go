@@ -154,7 +154,7 @@ func (s *ActivityService) updateLogIndex(dailyFile, today, title string) error {
 	}
 
 	hash := fmt.Sprintf("%x", md5.Sum(data))[:6]
-	indexLine := fmt.Sprintf("## [%s] %d changes | `%s` | %s | [[meta/activity/%s]]", today, entryCount, hash, title, today)
+	indexLine := fmt.Sprintf("## [[meta/activity/%s|%s]] %d changes | `%s` | %s", today, today, entryCount, hash, title)
 
 	// Ensure log index exists
 	if _, err := os.Stat(logIndex); os.IsNotExist(err) {
@@ -171,7 +171,7 @@ func (s *ActivityService) updateLogIndex(dailyFile, today, title string) error {
 		return err
 	}
 
-	todayPrefix := fmt.Sprintf("## [%s]", today)
+	todayPrefix := fmt.Sprintf("## [[meta/activity/%s|%s]]", today, today)
 	lines := strings.Split(string(existing), "\n")
 	found := false
 	for i, line := range lines {
