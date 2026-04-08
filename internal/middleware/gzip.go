@@ -29,6 +29,11 @@ var gzipWriterPool = sync.Pool{
 // when the response body is at least 1000 bytes.
 func Gzip(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip gzip for /metrics — Prometheus scraper parses the raw exposition format
+		if r.URL.Path == "/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") || r.Header.Get("Range") != "" {
 			next.ServeHTTP(w, r)
 			return
