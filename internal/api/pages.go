@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -42,7 +43,12 @@ func (h *Handler) handlePageWrite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.pages.Write(path, string(body)); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		var ve *service.ValidationError
+		if errors.As(err, &ve) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 

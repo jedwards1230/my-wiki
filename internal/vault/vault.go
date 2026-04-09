@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -67,8 +68,7 @@ func (v *Vault) FindRawFiles() ([]string, error) {
 }
 
 // ParseFrontmatter parses YAML frontmatter between --- markers into key-value pairs.
-// For keys like "tags:" that have list values below, the value is empty string but the
-// key is present in the map.
+// List values (e.g. tags with "- item" entries) are joined as comma-separated strings.
 func ParseFrontmatter(path string) (map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -76,8 +76,20 @@ func ParseFrontmatter(path string) (map[string]string, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	fm := make(map[string]string)
 	scanner := bufio.NewScanner(f)
+	return parseFrontmatterScanner(scanner)
+}
+
+// ParseFrontmatterString parses YAML frontmatter from a content string.
+// It behaves identically to ParseFrontmatter but operates on a string instead of a file.
+func ParseFrontmatterString(content string) (map[string]string, error) {
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	return parseFrontmatterScanner(scanner)
+}
+
+// parseFrontmatterScanner is the shared implementation for frontmatter parsing.
+func parseFrontmatterScanner(scanner *bufio.Scanner) (map[string]string, error) {
+	fm := make(map[string]string)
 
 	// First line must be ---
 	if !scanner.Scan() {
@@ -87,15 +99,43 @@ func ParseFrontmatter(path string) (map[string]string, error) {
 		return nil, nil // no frontmatter
 	}
 
+	var listKey string // current key accumulating list items
+	var listItems []string
+
+	flushList := func() {
+		if listKey != "" && len(listItems) > 0 {
+			fm[listKey] = strings.Join(listItems, ",")
+		}
+		listKey = ""
+		listItems = nil
+	}
+
+	closed := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "---" {
+			flushList()
+			closed = true
 			break
 		}
-		// Only parse top-level key: value lines (not indented list items)
+
+		// Indented line: could be a list item for the current key
 		if strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "\t") {
+			trimmed := strings.TrimSpace(line)
+			if listKey != "" && strings.HasPrefix(trimmed, "- ") {
+				item := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+				// Strip surrounding quotes
+				if len(item) >= 2 && item[0] == '"' && item[len(item)-1] == '"' {
+					item = item[1 : len(item)-1]
+				}
+				listItems = append(listItems, item)
+			}
 			continue
 		}
+
+		// Top-level line: flush any pending list
+		flushList()
+
 		idx := strings.IndexByte(line, ':')
 		if idx < 0 {
 			continue
@@ -107,6 +147,15 @@ func ParseFrontmatter(path string) (map[string]string, error) {
 			val = val[1 : len(val)-1]
 		}
 		fm[key] = val
+
+		// If value is empty, this key might have list items below
+		if val == "" {
+			listKey = key
+		}
+	}
+
+	if !closed {
+		return nil, fmt.Errorf("unterminated frontmatter block (missing closing ---)")
 	}
 
 	return fm, scanner.Err()
