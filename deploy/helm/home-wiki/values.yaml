@@ -21,12 +21,14 @@ ingress:
 
 obsidian:
   vault: "Home Wiki"
-  deviceName: "k8s-wiki"
+  deviceName: "home-wiki"
   excludedFolders: "private"
   syncMode: "bidirectional"
 
 quartz:
   concurrency: 4
+  baseUrl: "wiki.example.com"
+  repoUrl: "https://github.com/home-wiki/home-wiki/releases"
 
 persistence:
   enabled: true
