@@ -132,9 +132,9 @@ func TestDirectoryGenerateHandler(t *testing.T) {
 	}
 
 	// Verify file was created
-	dirFile := filepath.Join(v.Dir, "meta", "directory.md")
-	if _, err := os.Stat(dirFile); os.IsNotExist(err) {
-		t.Error("expected directory.md to be created")
+	indexFile := filepath.Join(v.Dir, "index.md")
+	if _, err := os.Stat(indexFile); os.IsNotExist(err) {
+		t.Error("expected index.md to be created by directory generate")
 	}
 }
 

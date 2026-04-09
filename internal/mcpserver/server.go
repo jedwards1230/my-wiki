@@ -89,7 +89,7 @@ func registerTools(
 	s.AddTool(
 		mcp.NewTool("wiki_directory_generate",
 			mcp.WithTitleAnnotation("Generate Page Directory"),
-			mcp.WithDescription("Write meta/directory.md with all wiki pages grouped by tag. Use wiki_directory to read the list without side effects. Returns {path, count}."),
+			mcp.WithDescription("Regenerate index.md with all wiki pages grouped by tag. Serves as both homepage and agent catalog. Use wiki_directory to read the list without side effects. Returns {path, count}."),
 			mcp.WithReadOnlyHintAnnotation(false),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
