@@ -74,8 +74,9 @@ func (s *IndexSearcher) Build() error {
 	for _, absPath := range pages {
 		rel, _ := filepath.Rel(s.vault.Dir, absPath)
 
-		// Skip activity logs
-		if strings.HasPrefix(rel, "meta/activity/") {
+		// Skip activity logs (OS-aware separator)
+		activityPrefix := filepath.Join("meta", "activity") + string(filepath.Separator)
+		if strings.HasPrefix(rel, activityPrefix) {
 			continue
 		}
 
