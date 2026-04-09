@@ -8,7 +8,6 @@ import (
 )
 
 // New creates a configured MCP server with all wiki tools registered.
-// New creates a configured MCP server with all wiki tools registered.
 // searchSvc may be nil if search is not configured.
 func New(v *vault.Vault, searchSvc *service.SearchService) *server.MCPServer {
 	s := server.NewMCPServer(

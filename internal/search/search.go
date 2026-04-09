@@ -3,6 +3,7 @@ package search
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Searcher is the interface that search backends must implement.
@@ -93,8 +94,11 @@ func trimToWordBoundary(s string) string {
 	if len(s) == 0 {
 		return s
 	}
-	// If the last char is whitespace or punctuation, it's already at a boundary
-	last := rune(s[len(s)-1])
+	// Decode the last rune properly for UTF-8 safety
+	last, _ := utf8.DecodeLastRuneInString(s)
+	if last == utf8.RuneError {
+		return s
+	}
 	if unicode.IsSpace(last) || unicode.IsPunct(last) {
 		return strings.TrimRightFunc(s, unicode.IsSpace)
 	}

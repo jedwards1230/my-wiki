@@ -90,13 +90,16 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	v := vault.New(vaultDir)
 
 	sub := search.NewSubstringSearcher(v)
+	engines := []search.Searcher{sub}
+
 	idx := search.NewIndexSearcher(v)
 	if err := idx.Build(); err != nil {
-		logger.Warn("search index build failed, index engine unavailable", "error", err)
+		logger.Warn("search index build failed, index engine not registered", "error", err)
 	} else {
 		logger.Info("search index built")
+		engines = append(engines, idx)
 	}
-	searchSvc := service.NewSearchService(sub, idx)
+	searchSvc := service.NewSearchService(engines...)
 
 	apiHandler := api.NewHandler(v, searchSvc)
 
@@ -108,8 +111,10 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	// Start periodic search index rebuild
-	idx.StartAutoRebuild(ctx, 5*time.Minute)
+	// Start periodic search index rebuild (only if registered)
+	if len(engines) > 1 {
+		idx.StartAutoRebuild(ctx, 5*time.Minute)
+	}
 
 	// Poll for readiness with cancellation
 	go func() {

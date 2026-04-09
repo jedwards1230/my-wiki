@@ -17,9 +17,13 @@ type SearchService struct {
 
 // NewSearchService creates a SearchService with the given backends.
 // The first engine is the default when no engine is specified.
+// Panics if two engines share the same Name().
 func NewSearchService(engines ...search.Searcher) *SearchService {
 	byName := make(map[string]search.Searcher, len(engines))
 	for _, e := range engines {
+		if _, exists := byName[e.Name()]; exists {
+			panic(fmt.Sprintf("duplicate search engine name: %q", e.Name()))
+		}
 		byName[e.Name()] = e
 	}
 	return &SearchService{
@@ -61,7 +65,7 @@ func (s *SearchService) Search(query string, limit int, engine string) (*SearchR
 	elapsed := time.Since(start)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("engine %s failed: %w", eng.Name(), err)
 	}
 
 	return &SearchResponse{
