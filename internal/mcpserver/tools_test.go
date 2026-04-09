@@ -610,7 +610,7 @@ func TestRecentListHandler(t *testing.T) {
 
 func TestNewCreatesServer(t *testing.T) {
 	v := setupTestVault(t)
-	s := New(v)
+	s := New(v, nil)
 	if s == nil {
 		t.Fatal("expected non-nil MCP server")
 	}

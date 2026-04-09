@@ -375,3 +375,29 @@ func recentListHandler(svc *service.RecentService) server.ToolHandlerFunc {
 		return mcp.NewToolResultText(toJSON(entries)), nil
 	}
 }
+
+func searchHandler(svc *service.SearchService) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		query := getStringArg(req, "query")
+		if query == "" {
+			return mcp.NewToolResultError("query is required"), nil
+		}
+		if len(query) < 2 {
+			return mcp.NewToolResultError("query must be at least 2 characters"), nil
+		}
+
+		limit := getIntArg(req, "limit")
+		if limit <= 0 {
+			limit = 20
+		}
+
+		engine := getStringArg(req, "engine")
+
+		resp, err := svc.Search(query, limit, engine)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		return mcp.NewToolResultText(toJSON(resp)), nil
+	}
+}

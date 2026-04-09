@@ -17,10 +17,12 @@ type Handler struct {
 	activity  *service.ActivityService
 	pages     *service.PageService
 	recent    *service.RecentService
+	search    *service.SearchService
 }
 
 // NewHandler creates an API handler with services built from the given vault.
-func NewHandler(v *vault.Vault) *Handler {
+// searchSvc may be nil if search is not configured.
+func NewHandler(v *vault.Vault, searchSvc *service.SearchService) *Handler {
 	return &Handler{
 		lint:      service.NewLintService(v),
 		ingest:    service.NewIngestService(v),
@@ -29,6 +31,7 @@ func NewHandler(v *vault.Vault) *Handler {
 		activity:  service.NewActivityService(v.Dir),
 		pages:     service.NewPageService(v.Dir),
 		recent:    service.NewRecentService(v),
+		search:    searchSvc,
 	}
 }
 
