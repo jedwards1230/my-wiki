@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -396,6 +397,30 @@ func TestParseFrontmatter_ExistingFixture(t *testing.T) {
 	}
 	if fm["title"] != "Home" {
 		t.Errorf("title = %q, want %q", fm["title"], "Home")
+	}
+}
+
+func TestParseFrontmatter_Unterminated(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\ntitle: Broken\ntags:\n  - test\n"
+	f := filepath.Join(dir, "broken.md")
+	if err := os.WriteFile(f, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ParseFrontmatter(f)
+	if err == nil {
+		t.Fatal("expected error for unterminated frontmatter, got nil")
+	}
+	if !strings.Contains(err.Error(), "unterminated") {
+		t.Errorf("expected 'unterminated' in error, got: %v", err)
+	}
+}
+
+func TestParseFrontmatterString_Unterminated(t *testing.T) {
+	_, err := ParseFrontmatterString("---\ntitle: Broken\n")
+	if err == nil {
+		t.Fatal("expected error for unterminated frontmatter, got nil")
 	}
 }
 

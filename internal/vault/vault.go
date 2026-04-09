@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -109,10 +110,12 @@ func parseFrontmatterScanner(scanner *bufio.Scanner) (map[string]string, error) 
 		listItems = nil
 	}
 
+	closed := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "---" {
 			flushList()
+			closed = true
 			break
 		}
 
@@ -149,6 +152,10 @@ func parseFrontmatterScanner(scanner *bufio.Scanner) (map[string]string, error) 
 		if val == "" {
 			listKey = key
 		}
+	}
+
+	if !closed {
+		return nil, fmt.Errorf("unterminated frontmatter block (missing closing ---)")
 	}
 
 	return fm, scanner.Err()

@@ -69,6 +69,14 @@ func (s *PageService) Write(relPath, content string) error {
 	return os.WriteFile(absPath, []byte(content), 0o644)
 }
 
+// ValidationError is returned when page content fails frontmatter validation.
+// Callers can type-assert to distinguish validation failures from filesystem errors.
+type ValidationError struct {
+	Message string
+}
+
+func (e *ValidationError) Error() string { return e.Message }
+
 // dateRe matches YYYY-MM-DD format.
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
@@ -78,10 +86,10 @@ var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 func validateFrontmatter(relPath, content string) error {
 	fm, err := vault.ParseFrontmatterString(content)
 	if err != nil {
-		return fmt.Errorf("failed to parse frontmatter: %w", err)
+		return &ValidationError{Message: fmt.Sprintf("failed to parse frontmatter: %v", err)}
 	}
 	if fm == nil {
-		return fmt.Errorf("missing frontmatter block (expected --- delimiters)")
+		return &ValidationError{Message: "missing frontmatter block (expected --- delimiters)"}
 	}
 
 	isRaw := strings.HasPrefix(relPath, "raw/") || strings.HasPrefix(relPath, "raw\\")
@@ -94,35 +102,35 @@ func validateFrontmatter(relPath, content string) error {
 
 func validateWikiFrontmatter(fm map[string]string) error {
 	if fm["title"] == "" {
-		return fmt.Errorf("missing required frontmatter field: title")
+		return &ValidationError{Message: "missing required frontmatter field: title"}
 	}
 	tags, hasTags := fm["tags"]
 	if !hasTags || tags == "" {
-		return fmt.Errorf("missing required frontmatter field: tags (must have at least one tag)")
+		return &ValidationError{Message: "missing required frontmatter field: tags (must have at least one tag)"}
 	}
 	dateVal, hasDate := fm["date"]
 	if !hasDate || dateVal == "" {
-		return fmt.Errorf("missing required frontmatter field: date")
+		return &ValidationError{Message: "missing required frontmatter field: date"}
 	}
 	if !dateRe.MatchString(dateVal) {
-		return fmt.Errorf("invalid date format: expected YYYY-MM-DD, got %q", dateVal)
+		return &ValidationError{Message: fmt.Sprintf("invalid date format: expected YYYY-MM-DD, got %q", dateVal)}
 	}
 	return nil
 }
 
 func validateRawFrontmatter(fm map[string]string) error {
 	if fm["title"] == "" {
-		return fmt.Errorf("missing required frontmatter field: title")
+		return &ValidationError{Message: "missing required frontmatter field: title"}
 	}
 	if fm["source"] == "" {
-		return fmt.Errorf("missing required frontmatter field: source")
+		return &ValidationError{Message: "missing required frontmatter field: source"}
 	}
 	dateVal, hasDate := fm["date-added"]
 	if !hasDate || dateVal == "" {
-		return fmt.Errorf("missing required frontmatter field: date-added")
+		return &ValidationError{Message: "missing required frontmatter field: date-added"}
 	}
 	if !dateRe.MatchString(dateVal) {
-		return fmt.Errorf("invalid date-added format: expected YYYY-MM-DD, got %q", dateVal)
+		return &ValidationError{Message: fmt.Sprintf("invalid date-added format: expected YYYY-MM-DD, got %q", dateVal)}
 	}
 	return nil
 }
