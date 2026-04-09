@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jedwards1230/home-wiki/internal/search"
+	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/jedwards1230/home-wiki/internal/vault"
 )
 
@@ -46,7 +48,11 @@ func setupTestVault(t *testing.T) *vault.Vault {
 func setupTestMux(t *testing.T) (*http.ServeMux, *vault.Vault) {
 	t.Helper()
 	v := setupTestVault(t)
-	h := NewHandler(v)
+	sub := search.NewSubstringSearcher(v)
+	idx := search.NewIndexSearcher(v)
+	_ = idx.Build()
+	searchSvc := service.NewSearchService(sub, idx)
+	h := NewHandler(v, searchSvc)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	return mux, v
@@ -492,12 +498,120 @@ func TestPageWriteValidationEndpoint(t *testing.T) {
 func TestSearchEndpoint(t *testing.T) {
 	mux, _ := setupTestMux(t)
 
-	r := httptest.NewRequest(http.MethodGet, "/api/search?q=test", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/search?q=Alpha", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 
-	if w.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp struct {
+		Data struct {
+			Results []struct {
+				Path   string  `json:"path"`
+				Title  string  `json:"title"`
+				Score  float64 `json:"score"`
+				Engine string  `json:"engine"`
+			} `json:"results"`
+			Engines   []string           `json:"engines"`
+			ElapsedMs map[string]float64 `json:"elapsed_ms"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(resp.Data.Results) == 0 {
+		t.Fatal("expected search results")
+	}
+
+	if len(resp.Data.Engines) == 0 {
+		t.Fatal("expected engines list")
+	}
+
+	if len(resp.Data.ElapsedMs) == 0 {
+		t.Fatal("expected elapsed_ms timing")
+	}
+}
+
+func TestSearchEndpointMissingQuery(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/search", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestSearchEndpointShortQuery(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/search?q=a", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestSearchEndpointWithEngine(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/search?q=Alpha&engine=index", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestSearchEndpointAllEngines(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/search?q=Alpha&engine=all", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp struct {
+		Data struct {
+			Engines   []string           `json:"engines"`
+			ElapsedMs map[string]float64 `json:"elapsed_ms"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+
+	if len(resp.Data.Engines) < 2 {
+		t.Fatalf("expected at least 2 engines, got %d", len(resp.Data.Engines))
+	}
+
+	if len(resp.Data.ElapsedMs) < 2 {
+		t.Fatalf("expected timing for at least 2 engines, got %d", len(resp.Data.ElapsedMs))
+	}
+}
+
+func TestSearchEndpointUnknownEngine(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/search?q=test&engine=bogus", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown engine, got %d", w.Code)
 	}
 }
 
