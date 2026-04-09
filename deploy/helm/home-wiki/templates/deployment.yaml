@@ -101,11 +101,13 @@ spec:
               cd /data/quartz
               if [ -n "$QUARTZ_BASE_URL" ]; then
                 echo "Setting baseUrl to $QUARTZ_BASE_URL..."
-                sed -i "s|%%BASE_URL%%|$QUARTZ_BASE_URL|" quartz.config.ts
+                escaped=$(printf '%s' "$QUARTZ_BASE_URL" | sed 's/[&|\\]/\\&/g')
+                sed -i "s|%%BASE_URL%%|$escaped|" quartz.config.ts
               fi
               if [ -n "$QUARTZ_REPO_URL" ]; then
                 echo "Setting repoUrl to $QUARTZ_REPO_URL..."
-                sed -i "s|%%REPO_URL%%|$QUARTZ_REPO_URL|" quartz.layout.ts
+                escaped=$(printf '%s' "$QUARTZ_REPO_URL" | sed 's/[&|\\]/\\&/g')
+                sed -i "s|%%REPO_URL%%|$escaped|" quartz.layout.ts
               fi
 
               echo "Building Quartz..."
