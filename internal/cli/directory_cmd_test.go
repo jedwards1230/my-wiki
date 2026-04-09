@@ -100,19 +100,19 @@ func TestDirectoryGenerate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dirFile := filepath.Join(dir, "meta", "directory.md")
-	data, err := os.ReadFile(dirFile)
+	indexFile := filepath.Join(dir, "index.md")
+	data, err := os.ReadFile(indexFile)
 	if err != nil {
-		t.Fatalf("directory file not created: %v", err)
+		t.Fatalf("index.md not created: %v", err)
 	}
 
 	content := string(data)
 
-	if !strings.Contains(content, "Page Directory") {
-		t.Error("missing title in generated directory file")
+	if !strings.Contains(content, "Home Wiki") {
+		t.Error("missing title in generated index file")
 	}
 	if !strings.Contains(content, "date: 2026-04-06") {
-		t.Error("missing fixed date in generated directory file")
+		t.Error("missing fixed date in generated index file")
 	}
 	if !strings.Contains(content, "## homelab") {
 		t.Error("missing homelab group")
@@ -145,7 +145,7 @@ func TestDirectoryGenerateGrouping(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(dir, "meta", "directory.md"))
+	data, _ := os.ReadFile(filepath.Join(dir, "index.md"))
 	content := string(data)
 
 	// homelab/host tag should group under "homelab"
