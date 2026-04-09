@@ -77,7 +77,7 @@ func registerTools(
 	s.AddTool(
 		mcp.NewTool("wiki_directory",
 			mcp.WithTitleAnnotation("List Page Directory"),
-			mcp.WithDescription("List all wiki pages with title, description, and tags. Returns JSON array of {path, title, description, tags}. Use wiki_directory_generate to write a browseable markdown page."),
+			mcp.WithDescription("List all wiki pages with title, description, and tags. Returns JSON array of {path, title, description, tags}. Use wiki_directory_generate to write a browsable markdown page."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),

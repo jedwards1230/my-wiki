@@ -403,6 +403,92 @@ func TestPagePatchEndpointFindNotFound(t *testing.T) {
 	}
 }
 
+func TestDirectoryEndpoint(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/directory", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp response
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+}
+
+func TestDirectoryGenerateEndpoint(t *testing.T) {
+	mux, v := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/directory/generate", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		b, _ := io.ReadAll(w.Body)
+		t.Fatalf("expected 200, got %d: %s", w.Code, string(b))
+	}
+
+	// Verify file was created
+	dirFile := filepath.Join(v.Dir, "meta", "directory.md")
+	if _, err := os.Stat(dirFile); os.IsNotExist(err) {
+		t.Fatal("directory.md not created")
+	}
+}
+
+func TestRecentEndpoint(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/recent", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp response
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+}
+
+func TestRecentEndpointWithLimit(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/recent?limit=1", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestPageWriteValidationEndpoint(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	// Missing tags — should return 400
+	body := "---\ntitle: Bad Page\ndate: 2026-01-01\n---\n\nContent.\n"
+	r := httptest.NewRequest(http.MethodPut, "/api/pages/bad-page.md", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		b, _ := io.ReadAll(w.Body)
+		t.Fatalf("expected 400 for invalid frontmatter, got %d: %s", w.Code, string(b))
+	}
+}
+
 func TestSearchEndpoint(t *testing.T) {
 	mux, _ := setupTestMux(t)
 

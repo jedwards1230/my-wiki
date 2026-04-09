@@ -12,7 +12,7 @@ func newDirectoryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "directory",
 		Short: "List all wiki pages with metadata",
-		Long:  "Show all wiki pages grouped by tag, with titles and descriptions.",
+		Long:  "Show all wiki pages with their titles and descriptions.",
 		RunE:  runDirectory,
 	}
 
