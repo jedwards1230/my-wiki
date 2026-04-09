@@ -9,7 +9,7 @@ import (
 	"github.com/jedwards1230/home-wiki/internal/vault"
 )
 
-func setupQueueVault(t *testing.T) *vault.Vault {
+func setupIngestVault(t *testing.T) *vault.Vault {
 	t.Helper()
 	dir := t.TempDir()
 
@@ -28,9 +28,9 @@ func setupQueueVault(t *testing.T) *vault.Vault {
 	return vault.New(dir)
 }
 
-func TestQueueService_List(t *testing.T) {
-	v := setupQueueVault(t)
-	svc := NewQueueService(v)
+func TestIngestService_List(t *testing.T) {
+	v := setupIngestVault(t)
+	svc := NewIngestService(v)
 
 	items, err := svc.List()
 	if err != nil {
@@ -56,13 +56,13 @@ func TestQueueService_List(t *testing.T) {
 	}
 }
 
-func TestQueueService_ListEmpty(t *testing.T) {
+func TestIngestService_ListEmpty(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(dir, "raw"), 0o755)
 	_ = os.WriteFile(filepath.Join(dir, "raw/done.md"), []byte("---\ntitle: Done\ningested: true\n---\n"), 0o644)
 
 	v := vault.New(dir)
-	svc := NewQueueService(v)
+	svc := NewIngestService(v)
 
 	items, err := svc.List()
 	if err != nil {
@@ -74,9 +74,9 @@ func TestQueueService_ListEmpty(t *testing.T) {
 	}
 }
 
-func TestQueueService_Generate(t *testing.T) {
-	v := setupQueueVault(t)
-	svc := NewQueueService(v)
+func TestIngestService_Generate(t *testing.T) {
+	v := setupIngestVault(t)
+	svc := NewIngestService(v)
 
 	path, count, err := svc.Generate()
 	if err != nil {

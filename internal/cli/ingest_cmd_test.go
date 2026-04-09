@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func setupQueueVault(t *testing.T) string {
+func setupIngestVault(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
@@ -26,8 +26,8 @@ func setupQueueVault(t *testing.T) string {
 	return dir
 }
 
-func TestQueueList(t *testing.T) {
-	dir := setupQueueVault(t)
+func TestIngestList(t *testing.T) {
+	dir := setupIngestVault(t)
 
 	// Capture stdout
 	old := os.Stdout
@@ -35,7 +35,7 @@ func TestQueueList(t *testing.T) {
 	os.Stdout = w
 
 	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"--vault", dir, "queue"})
+	cmd.SetArgs([]string{"--vault", dir, "ingest"})
 	err := cmd.Execute()
 
 	_ = w.Close()
@@ -62,15 +62,15 @@ func TestQueueList(t *testing.T) {
 	}
 }
 
-func TestQueueCount(t *testing.T) {
-	dir := setupQueueVault(t)
+func TestIngestCount(t *testing.T) {
+	dir := setupIngestVault(t)
 
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
 	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"--vault", dir, "queue", "--count"})
+	cmd.SetArgs([]string{"--vault", dir, "ingest", "--count"})
 	err := cmd.Execute()
 
 	_ = w.Close()
@@ -89,11 +89,11 @@ func TestQueueCount(t *testing.T) {
 	}
 }
 
-func TestQueueGenerate(t *testing.T) {
-	dir := setupQueueVault(t)
+func TestIngestGenerate(t *testing.T) {
+	dir := setupIngestVault(t)
 
 	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"--vault", dir, "queue", "--generate"})
+	cmd.SetArgs([]string{"--vault", dir, "ingest", "--generate"})
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestQueueGenerate(t *testing.T) {
 	}
 }
 
-func TestQueueEmpty(t *testing.T) {
+func TestIngestEmpty(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(dir, "raw"), 0o755)
 
@@ -129,7 +129,7 @@ func TestQueueEmpty(t *testing.T) {
 	os.Stdout = w
 
 	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"--vault", dir, "queue"})
+	cmd.SetArgs([]string{"--vault", dir, "ingest"})
 	err := cmd.Execute()
 
 	_ = w.Close()
