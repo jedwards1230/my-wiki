@@ -31,7 +31,11 @@ COPY quartz/quartz.layout.ts ./quartz.layout.ts
 COPY quartz/components/RawLink.tsx ./quartz/components/RawLink.tsx
 RUN echo 'export { default as RawLink } from "./RawLink"' >> ./quartz/components/index.ts
 ARG BUILD_VERSION=dev
-RUN sed -i "s/%%BUILD_VERSION%%/v${BUILD_VERSION}/" ./quartz.layout.ts
+ARG BASE_URL=wiki.example.com
+ARG REPO_URL=https://github.com/home-wiki/home-wiki/releases
+RUN sed -i "s/%%BUILD_VERSION%%/v${BUILD_VERSION}/" ./quartz.layout.ts && \
+    sed -i "s|%%BASE_URL%%|${BASE_URL}|" ./quartz.config.ts && \
+    sed -i "s|%%REPO_URL%%|${REPO_URL}|" ./quartz.layout.ts
 
 # Copy Go binary from builder (parallel stage — doesn't block Node layers)
 COPY --from=go-builder /wiki-server /usr/local/bin/wiki-server
