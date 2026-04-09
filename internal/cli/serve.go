@@ -12,7 +12,9 @@ import (
 
 	"github.com/jedwards1230/home-wiki/internal/api"
 	"github.com/jedwards1230/home-wiki/internal/mcpserver"
+	"github.com/jedwards1230/home-wiki/internal/search"
 	"github.com/jedwards1230/home-wiki/internal/server"
+	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/jedwards1230/home-wiki/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -84,9 +86,19 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	publicFS := os.DirFS(publicDir)
 	vaultFS := os.DirFS(vaultDir)
 
-	// Build API handler
+	// Build API handler with search engines
 	v := vault.New(vaultDir)
-	apiHandler := api.NewHandler(v)
+
+	sub := search.NewSubstringSearcher(v)
+	idx := search.NewIndexSearcher(v)
+	if err := idx.Build(); err != nil {
+		logger.Warn("search index build failed, index engine unavailable", "error", err)
+	} else {
+		logger.Info("search index built")
+	}
+	searchSvc := service.NewSearchService(sub, idx)
+
+	apiHandler := api.NewHandler(v, searchSvc)
 
 	srv := server.New(cfg, publicFS, vaultFS, logger,
 		server.WithAPIRoutes(apiHandler.RegisterRoutes),
@@ -95,6 +107,9 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// Graceful shutdown on SIGTERM/SIGINT
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+
+	// Start periodic search index rebuild
+	idx.StartAutoRebuild(ctx, 5*time.Minute)
 
 	// Poll for readiness with cancellation
 	go func() {
@@ -134,7 +149,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 
 	// Optionally start MCP server in the same process
 	if mcpPort > 0 {
-		mcpSrv := mcpserver.New(v)
+		mcpSrv := mcpserver.New(v, searchSvc)
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 		mux := http.NewServeMux()
@@ -197,7 +212,7 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	v := vault.New(vaultDir)
-	mcpSrv := mcpserver.New(v)
+	mcpSrv := mcpserver.New(v, nil)
 	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 	mux := http.NewServeMux()
