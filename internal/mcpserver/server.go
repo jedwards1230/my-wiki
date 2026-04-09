@@ -8,7 +8,8 @@ import (
 )
 
 // New creates a configured MCP server with all wiki tools registered.
-func New(v *vault.Vault) *server.MCPServer {
+// searchSvc may be nil if search is not configured.
+func New(v *vault.Vault, searchSvc *service.SearchService) *server.MCPServer {
 	s := server.NewMCPServer(
 		"home-wiki",
 		"0.1.0",
@@ -24,7 +25,7 @@ func New(v *vault.Vault) *server.MCPServer {
 	pages := service.NewPageService(v.Dir)
 	recent := service.NewRecentService(v)
 
-	registerTools(s, lint, ingest, directory, logSvc, activity, pages, recent)
+	registerTools(s, lint, ingest, directory, logSvc, activity, pages, recent, searchSvc)
 
 	return s
 }
@@ -45,6 +46,7 @@ func registerTools(
 	activity *service.ActivityService,
 	pages *service.PageService,
 	recent *service.RecentService,
+	searchSvc *service.SearchService,
 ) {
 	s.AddTool(
 		mcp.NewTool("wiki_lint",
@@ -316,4 +318,29 @@ func registerTools(
 		),
 		recentListHandler(recent),
 	)
+
+	if searchSvc != nil {
+		s.AddTool(
+			mcp.NewTool("wiki_search",
+				mcp.WithTitleAnnotation("Search Wiki"),
+				mcp.WithDescription("Full-text search across wiki pages. Matches against title, tags, and content. Returns results ranked by relevance with snippets and timing. Use engine='all' to compare search backends side-by-side."),
+				mcp.WithReadOnlyHintAnnotation(true),
+				mcp.WithDestructiveHintAnnotation(false),
+				mcp.WithIdempotentHintAnnotation(true),
+				mcp.WithOpenWorldHintAnnotation(false),
+				mcp.WithString("query",
+					mcp.Required(),
+					mcp.Description("Search query (minimum 2 characters)."),
+				),
+				mcp.WithNumber("limit",
+					mcp.Description("Maximum results per engine. Default: 20."),
+				),
+				mcp.WithString("engine",
+					mcp.Enum("substring", "index", "all"),
+					mcp.Description("Search engine: 'substring' (default, walks files), 'index' (inverted index with TF-IDF), 'all' (run both, compare timing)."),
+				),
+			),
+			searchHandler(searchSvc),
+		)
+	}
 }

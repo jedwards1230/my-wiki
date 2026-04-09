@@ -50,3 +50,20 @@ type PatchOp struct {
 	Find    string `json:"find"`
 	Replace string `json:"replace"`
 }
+
+// SearchResponse is the result of a search across one or more engines.
+type SearchResponse struct {
+	Results   []SearchResult     `json:"results"`
+	Engines   []string           `json:"engines"`
+	ElapsedMs map[string]float64 `json:"elapsed_ms"`
+}
+
+// SearchResult is a single search hit (mirrors search.Result for JSON output).
+type SearchResult struct {
+	Path    string  `json:"path"`
+	Title   string  `json:"title"`
+	Score   float64 `json:"score"`
+	Snippet string  `json:"snippet"`
+	Match   string  `json:"match"`
+	Engine  string  `json:"engine"`
+}
