@@ -9,7 +9,7 @@ const config: QuartzConfig = {
     enablePopovers: true,
     analytics: null,
     locale: "en-US",
-    baseUrl: "wiki.lilbro.cloud",
+    baseUrl: "%%BASE_URL%%",
     ignorePatterns: ["private", ".obsidian", "raw"],
     defaultDateType: "modified",
     theme: {

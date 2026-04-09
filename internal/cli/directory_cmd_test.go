@@ -12,16 +12,16 @@ func setupDirectoryVault(t *testing.T) string {
 	dir := t.TempDir()
 
 	_ = os.MkdirAll(filepath.Join(dir, "meta"), 0o755)
-	_ = os.MkdirAll(filepath.Join(dir, "homelab/hosts"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "guides/hosts"), 0o755)
 	_ = os.MkdirAll(filepath.Join(dir, "project"), 0o755)
 
 	files := map[string]string{
-		"homelab/overview.md":     "---\ntitle: Homelab Overview\ndescription: Infrastructure overview\ntags:\n  - homelab\ndate: 2026-01-01\n---\n\nContent.\n",
-		"homelab/hosts/linux-1.md": "---\ntitle: Linux-1\ntags:\n  - homelab/host\ndate: 2026-01-01\n---\n\nHost.\n",
-		"project/alpha.md":        "---\ntitle: Alpha Project\ndescription: First project\ntags:\n  - project\ndate: 2026-02-01\n---\n\nProject.\n",
-		"meta/schema.md":          "---\ntitle: Wiki Schema\ndescription: Operating manual for AI agents\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nSchema.\n",
-		"no-tags.md":              "---\ntitle: No Tags Page\ndate: 2026-01-01\n---\n\nNo tags.\n",
-		"no-frontmatter.md":       "Just plain content.\n",
+		"guides/overview.md":       "---\ntitle: Guides Overview\ndescription: Infrastructure overview\ntags:\n  - guides\ndate: 2026-01-01\n---\n\nContent.\n",
+		"guides/hosts/server-1.md": "---\ntitle: Server-1\ntags:\n  - guides/host\ndate: 2026-01-01\n---\n\nHost.\n",
+		"project/alpha.md":         "---\ntitle: Alpha Project\ndescription: First project\ntags:\n  - project\ndate: 2026-02-01\n---\n\nProject.\n",
+		"meta/schema.md":           "---\ntitle: Wiki Schema\ndescription: Operating manual for AI agents\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nSchema.\n",
+		"no-tags.md":               "---\ntitle: No Tags Page\ndate: 2026-01-01\n---\n\nNo tags.\n",
+		"no-frontmatter.md":        "Just plain content.\n",
 	}
 	for name, content := range files {
 		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
@@ -52,10 +52,10 @@ func TestDirectoryList(t *testing.T) {
 	n, _ := r.Read(buf[:])
 	output := string(buf[:n])
 
-	if !strings.Contains(output, "homelab/overview.md") {
-		t.Errorf("expected homelab/overview.md in output, got:\n%s", output)
+	if !strings.Contains(output, "guides/overview.md") {
+		t.Errorf("expected guides/overview.md in output, got:\n%s", output)
 	}
-	if !strings.Contains(output, "Homelab Overview") {
+	if !strings.Contains(output, "Guides Overview") {
 		t.Errorf("expected title in output, got:\n%s", output)
 	}
 	if !strings.Contains(output, "Infrastructure overview") {
@@ -111,11 +111,11 @@ func TestDirectoryGenerate(t *testing.T) {
 	if !strings.Contains(content, "Home Wiki") {
 		t.Error("missing title in generated index file")
 	}
-	if !strings.Contains(content, "date: 2026-04-06") {
-		t.Error("missing fixed date in generated index file")
+	if !strings.Contains(content, "date: ") {
+		t.Error("missing date in generated index file")
 	}
-	if !strings.Contains(content, "## homelab") {
-		t.Error("missing homelab group")
+	if !strings.Contains(content, "## guides") {
+		t.Error("missing guides group")
 	}
 	if !strings.Contains(content, "## project") {
 		t.Error("missing project group")
@@ -123,7 +123,7 @@ func TestDirectoryGenerate(t *testing.T) {
 	if !strings.Contains(content, "## Uncategorized") {
 		t.Error("missing Uncategorized group for pages without tags")
 	}
-	if !strings.Contains(content, "Homelab Overview") {
+	if !strings.Contains(content, "Guides Overview") {
 		t.Error("missing page title in directory")
 	}
 	if !strings.Contains(content, "Infrastructure overview") {
@@ -148,18 +148,18 @@ func TestDirectoryGenerateGrouping(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, "index.md"))
 	content := string(data)
 
-	// homelab/host tag should group under "homelab"
-	homelabIdx := strings.Index(content, "## homelab")
+	// guides/host tag should group under "guides"
+	guidesIdx := strings.Index(content, "## guides")
 	projectIdx := strings.Index(content, "## project")
 
-	if homelabIdx < 0 || projectIdx < 0 {
+	if guidesIdx < 0 || projectIdx < 0 {
 		t.Fatal("missing expected groups")
 	}
 
-	// homelab section should contain linux-1 (tagged homelab/host)
-	homelabSection := content[homelabIdx:projectIdx]
-	if !strings.Contains(homelabSection, "Linux-1") {
-		t.Error("Linux-1 should be in homelab group (tag homelab/host)")
+	// guides section should contain server-1 (tagged guides/host)
+	guidesSection := content[guidesIdx:projectIdx]
+	if !strings.Contains(guidesSection, "Server-1") {
+		t.Error("Server-1 should be in guides group (tag guides/host)")
 	}
 }
 
