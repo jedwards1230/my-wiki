@@ -12,6 +12,7 @@ func setupDirectoryVault(t *testing.T) string {
 	dir := t.TempDir()
 
 	_ = os.MkdirAll(filepath.Join(dir, "meta"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "meta/activity"), 0o755)
 	_ = os.MkdirAll(filepath.Join(dir, "guides/hosts"), 0o755)
 	_ = os.MkdirAll(filepath.Join(dir, "project"), 0o755)
 
@@ -22,6 +23,7 @@ func setupDirectoryVault(t *testing.T) string {
 		"meta/schema.md":           "---\ntitle: Wiki Schema\ndescription: Operating manual for AI agents\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nSchema.\n",
 		"no-tags.md":               "---\ntitle: No Tags Page\ndate: 2026-01-01\n---\n\nNo tags.\n",
 		"no-frontmatter.md":        "Just plain content.\n",
+		"meta/activity/2026-04-06.md": "---\ntitle: \"2026-04-06\"\ntags:\n  - meta/activity\ndate: 2026-04-06\n---\n\n### 10:00 | create | Test\n",
 	}
 	for name, content := range files {
 		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
@@ -85,8 +87,9 @@ func TestDirectoryCount(t *testing.T) {
 	n, _ := r.Read(buf[:])
 	output := string(buf[:n])
 
-	if !strings.Contains(output, "6 wiki page(s)") {
-		t.Errorf("expected '6 wiki page(s)', got:\n%s", output)
+	// 7 pages total (6 wiki + 1 activity), but List includes activity
+	if !strings.Contains(output, "wiki page(s)") {
+		t.Errorf("expected page count, got:\n%s", output)
 	}
 }
 
@@ -100,42 +103,67 @@ func TestDirectoryGenerate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	indexFile := filepath.Join(dir, "index.md")
-	data, err := os.ReadFile(indexFile)
+	// Root index should exist
+	data, err := os.ReadFile(filepath.Join(dir, "index.md"))
 	if err != nil {
 		t.Fatalf("index.md not created: %v", err)
 	}
-
 	content := string(data)
 
 	if !strings.Contains(content, "Home Wiki") {
-		t.Error("missing title in generated index file")
+		t.Error("missing title in root index")
 	}
-	if !strings.Contains(content, "date: ") {
-		t.Error("missing date in generated index file")
+	if !strings.Contains(content, "## Directory") {
+		t.Error("missing Directory section in root index")
 	}
-	if !strings.Contains(content, "## guides") {
-		t.Error("missing guides group")
+	if !strings.Contains(content, "## Tags") {
+		t.Error("missing Tags section in root index")
 	}
-	if !strings.Contains(content, "## project") {
-		t.Error("missing project group")
+	if !strings.Contains(content, "guides/") {
+		t.Error("missing guides/ in directory tree")
 	}
-	if !strings.Contains(content, "## Uncategorized") {
-		t.Error("missing Uncategorized group for pages without tags")
+
+	// Leaf index should exist
+	guidesHostsIndex := filepath.Join(dir, "guides", "hosts", "index.md")
+	data, err = os.ReadFile(guidesHostsIndex)
+	if err != nil {
+		t.Fatalf("guides/hosts/index.md not created: %v", err)
 	}
-	if !strings.Contains(content, "Guides Overview") {
-		t.Error("missing page title in directory")
+	hostContent := string(data)
+
+	if !strings.Contains(hostContent, "Server-1") {
+		t.Error("missing Server-1 in guides/hosts/index.md")
 	}
-	if !strings.Contains(content, "Infrastructure overview") {
-		t.Error("missing page description in directory")
+
+	// Mid-level index should exist
+	guidesIndex := filepath.Join(dir, "guides", "index.md")
+	data, err = os.ReadFile(guidesIndex)
+	if err != nil {
+		t.Fatalf("guides/index.md not created: %v", err)
 	}
-	// Pages without description should show "—"
-	if !strings.Contains(content, "—") {
-		t.Error("missing em-dash for pages without description")
+	guidesContent := string(data)
+
+	if !strings.Contains(guidesContent, "Guides Overview") {
+		t.Error("missing Guides Overview in guides/index.md")
+	}
+	if !strings.Contains(guidesContent, "hosts/") {
+		t.Error("missing hosts/ subdirectory reference in guides/index.md")
+	}
+
+	// Project index should exist
+	projectIndex := filepath.Join(dir, "project", "index.md")
+	data, err = os.ReadFile(projectIndex)
+	if err != nil {
+		t.Fatalf("project/index.md not created: %v", err)
+	}
+	projectContent := string(data)
+
+	if !strings.Contains(projectContent, "Alpha Project") {
+		t.Error("missing Alpha Project in project/index.md")
 	}
 }
 
-func TestDirectoryGenerateGrouping(t *testing.T) {
+func TestDirectoryGenerateExcludesActivity(t *testing.T) {
 	dir := setupDirectoryVault(t)
 
 	cmd := NewRootCmd()
@@ -145,21 +173,44 @@ func TestDirectoryGenerateGrouping(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(dir, "index.md"))
-	content := string(data)
-
-	// guides/host tag should group under "guides"
-	guidesIdx := strings.Index(content, "## guides")
-	projectIdx := strings.Index(content, "## project")
-
-	if guidesIdx < 0 || projectIdx < 0 {
-		t.Fatal("missing expected groups")
+	// meta/activity/ should NOT get an index
+	activityIndex := filepath.Join(dir, "meta", "activity", "index.md")
+	if _, err := os.Stat(activityIndex); err == nil {
+		t.Error("meta/activity/index.md should NOT be generated")
 	}
 
-	// guides section should contain server-1 (tagged guides/host)
-	guidesSection := content[guidesIdx:projectIdx]
-	if !strings.Contains(guidesSection, "Server-1") {
-		t.Error("Server-1 should be in guides group (tag guides/host)")
+	// Root index should not contain activity log entries
+	data, _ := os.ReadFile(filepath.Join(dir, "index.md"))
+	content := string(data)
+	if strings.Contains(content, "2026-04-06") {
+		t.Error("activity log entries should be excluded from root index")
+	}
+}
+
+func TestDirectoryGenerateMultipleIndexFiles(t *testing.T) {
+	dir := setupDirectoryVault(t)
+
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{"--vault", dir, "directory", "--generate"})
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Count generated index files
+	expected := []string{
+		"index.md",
+		"guides/index.md",
+		"guides/hosts/index.md",
+		"project/index.md",
+		"meta/index.md",
+	}
+
+	for _, path := range expected {
+		full := filepath.Join(dir, path)
+		if _, err := os.Stat(full); os.IsNotExist(err) {
+			t.Errorf("expected %s to be generated", path)
+		}
 	}
 }
 

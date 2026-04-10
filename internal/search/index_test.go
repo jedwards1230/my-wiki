@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -212,6 +213,26 @@ func TestIndexExcludesActivityLogs(t *testing.T) {
 	for _, r := range results {
 		if r.Path == "meta/activity/2026-04-06.md" {
 			t.Error("activity log files should be excluded from index")
+		}
+	}
+}
+
+func TestIndexExcludesIndexFiles(t *testing.T) {
+	v := setupTestVault(t)
+	idx := NewIndexSearcher(v)
+
+	if err := idx.Build(); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := idx.Search("Auto-generated index", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, r := range results {
+		if filepath.Base(r.Path) == "index.md" {
+			t.Errorf("generated index files should be excluded from search, found: %s", r.Path)
 		}
 	}
 }

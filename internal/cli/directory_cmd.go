@@ -39,11 +39,11 @@ func runDirectory(cmd *cobra.Command, _ []string) error {
 		}
 		fmt.Printf("%d wiki page(s)\n", len(entries))
 	case generate:
-		path, count, err := svc.Generate()
+		_, count, err := svc.Generate()
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Generated %s (%d page(s))\n", path, count)
+		fmt.Printf("Generated index files (%d page(s) indexed)\n", count)
 	default:
 		entries, err := svc.List()
 		if err != nil {

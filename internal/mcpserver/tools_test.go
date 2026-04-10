@@ -124,14 +124,11 @@ func TestDirectoryGenerateHandler(t *testing.T) {
 	}
 
 	text := getTextContent(result)
-	if !strings.Contains(text, "path") {
-		t.Errorf("expected path in result, got:\n%s", text)
-	}
-	if !strings.Contains(text, "count") {
-		t.Errorf("expected count in result, got:\n%s", text)
+	if !strings.Contains(text, "pages_indexed") {
+		t.Errorf("expected pages_indexed in result, got:\n%s", text)
 	}
 
-	// Verify file was created
+	// Verify root index was created
 	indexFile := filepath.Join(v.Dir, "index.md")
 	if _, err := os.Stat(indexFile); os.IsNotExist(err) {
 		t.Error("expected index.md to be created by directory generate")

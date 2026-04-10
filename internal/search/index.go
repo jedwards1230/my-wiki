@@ -80,6 +80,11 @@ func (s *IndexSearcher) Build() error {
 			continue
 		}
 
+		// Skip generated index files
+		if filepath.Base(rel) == "index.md" {
+			continue
+		}
+
 		data, err := os.ReadFile(absPath)
 		if err != nil {
 			continue
