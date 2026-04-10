@@ -3,6 +3,7 @@
 // Hide FolderPage's auto-generated page listing on folder index pages.
 // Our wiki-server generates comprehensive index.md files with directory
 // trees and page tables — the FolderPage listing duplicates this content.
-.page-listing {
+// Scoped to non-tag pages so tag listings remain visible.
+body:not([data-slug^="tags/"]) .page-listing {
   display: none;
 }
