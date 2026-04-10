@@ -310,11 +310,7 @@ func renderRootIndex(b *strings.Builder, root *dirNode, allPages []DirectoryEntr
 	tags := collectTags(allPages)
 	if len(tags) > 0 {
 		b.WriteString("\n## Tags\n\n")
-		b.WriteString("| Tag | Count |\n")
-		b.WriteString("|-----|-------|\n")
-		for _, tc := range tags {
-			fmt.Fprintf(b, "| %s | %d |\n", tc.Tag, tc.Count)
-		}
+		renderTagList(b, tags)
 	}
 }
 
@@ -342,11 +338,7 @@ func renderMidIndex(b *strings.Builder, node *dirNode) {
 	tags := collectTags(allBelow)
 	if len(tags) > 0 {
 		b.WriteString("\n## Tags\n\n")
-		b.WriteString("| Tag | Count |\n")
-		b.WriteString("|-----|-------|\n")
-		for _, tc := range tags {
-			fmt.Fprintf(b, "| %s | %d |\n", tc.Tag, tc.Count)
-		}
+		renderTagList(b, tags)
 	}
 }
 
@@ -374,6 +366,17 @@ func renderPageTable(b *strings.Builder, pages []DirectoryEntry) {
 		tags = strings.ReplaceAll(tags, ",", ", ")
 		fmt.Fprintf(b, "| %s | %s | %s |\n", wikilink, desc, tags)
 	}
+}
+
+// renderTagList writes tags as a compact inline list: `tag (count) · tag (count) · ...`
+func renderTagList(b *strings.Builder, tags []tagCount) {
+	for i, tc := range tags {
+		if i > 0 {
+			b.WriteString(" · ")
+		}
+		fmt.Fprintf(b, "#%s (%d)", tc.Tag, tc.Count)
+	}
+	b.WriteString("\n")
 }
 
 // renderTreeWikilinks writes a directory tree using markdown lists with wikilinks,
