@@ -87,9 +87,9 @@ func TestDirectoryCount(t *testing.T) {
 	n, _ := r.Read(buf[:])
 	output := string(buf[:n])
 
-	// 7 pages total (6 wiki + 1 activity), but List includes activity
-	if !strings.Contains(output, "wiki page(s)") {
-		t.Errorf("expected page count, got:\n%s", output)
+	// 7 total: 6 wiki pages + 1 activity log (List includes all)
+	if !strings.Contains(output, "7 wiki page(s)") {
+		t.Errorf("expected '7 wiki page(s)', got:\n%s", output)
 	}
 }
 
