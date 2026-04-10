@@ -13,14 +13,13 @@ func (h *Handler) handleDirectoryList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDirectoryGenerate(w http.ResponseWriter, r *http.Request) {
-	path, count, err := h.directory.Generate()
+	_, count, err := h.directory.Generate()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"path":  path,
-		"count": count,
+		"pages_indexed": count,
 	})
 }

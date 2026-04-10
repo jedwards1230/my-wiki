@@ -99,12 +99,12 @@ func directoryListHandler(svc *service.DirectoryService) server.ToolHandlerFunc 
 
 func directoryGenerateHandler(svc *service.DirectoryService) server.ToolHandlerFunc {
 	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path, count, err := svc.Generate()
+		_, count, err := svc.Generate()
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		result := map[string]any{"path": path, "count": count}
+		result := map[string]any{"pages_indexed": count}
 		return mcp.NewToolResultText(toJSON(result)), nil
 	}
 }
