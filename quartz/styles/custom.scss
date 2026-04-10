@@ -1,0 +1,8 @@
+@use "./base.scss";
+
+// Hide FolderPage's auto-generated page listing on folder index pages.
+// Our wiki-server generates comprehensive index.md files with directory
+// trees and page tables — the FolderPage listing duplicates this content.
+.page-listing {
+  display: none;
+}
