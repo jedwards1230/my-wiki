@@ -17,7 +17,7 @@ func newDirectoryCmd() *cobra.Command {
 	}
 
 	cmd.Flags().Bool("count", false, "just print the count")
-	cmd.Flags().Bool("generate", false, "regenerate meta/directory.md")
+	cmd.Flags().Bool("generate", false, "regenerate index.md files across the vault")
 
 	return cmd
 }
