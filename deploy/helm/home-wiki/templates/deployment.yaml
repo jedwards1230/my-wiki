@@ -110,6 +110,9 @@ spec:
                 sed -i "s|%%REPO_URL%%|$escaped|" quartz.layout.ts
               fi
 
+              echo "Generating index files..."
+              wiki-server --vault /data/vault directory --generate
+
               echo "Building Quartz..."
               npx quartz build --output /data/public --directory ../vault
               echo "Quartz build complete."
