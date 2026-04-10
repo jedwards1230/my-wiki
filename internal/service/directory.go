@@ -304,9 +304,7 @@ func renderRootIndex(b *strings.Builder, root *dirNode, allPages []DirectoryEntr
 
 	// Directory tree
 	b.WriteString("\n## Directory\n\n")
-	b.WriteString("```\n")
-	renderTree(b, root, "", 0, 2)
-	b.WriteString("```\n")
+	renderTreeWikilinks(b, root, 0, 2)
 
 	// Tag overview
 	tags := collectTags(allPages)
@@ -378,39 +376,26 @@ func renderPageTable(b *strings.Builder, pages []DirectoryEntry) {
 	}
 }
 
-// renderTree writes a tree-style directory listing, capped at maxDepth levels.
-func renderTree(b *strings.Builder, node *dirNode, prefix string, depth, maxDepth int) {
-	for i, child := range node.children {
-		isLast := i == len(node.children)-1
-		connector := "├── "
-		childPrefix := prefix + "│   "
-		if isLast {
-			connector = "└── "
-			childPrefix = prefix + "    "
-		}
+// renderTreeWikilinks writes a directory tree using markdown lists with wikilinks,
+// capped at maxDepth levels.
+func renderTreeWikilinks(b *strings.Builder, node *dirNode, depth, maxDepth int) {
+	indent := strings.Repeat("  ", depth)
 
-		childName := filepath.Base(child.rel) + "/"
+	// Show direct pages at this level
+	for _, p := range node.pages {
+		wikilink := makeWikilink(p.Path, p.Title)
+		fmt.Fprintf(b, "%s- %s\n", indent, wikilink)
+	}
+
+	// Show child directories
+	for _, child := range node.children {
+		childName := filepath.Base(child.rel)
 		childCount := countPages(child)
-		fmt.Fprintf(b, "%s%s%s (%d pages)\n", prefix, connector, childName, childCount)
+		// Link to the child's index
+		fmt.Fprintf(b, "%s- [[%s/index\\|%s/]] (%d pages)\n", indent, child.rel, childName, childCount)
 
-		if depth+1 >= maxDepth {
-			continue
-		}
-
-		// Show direct pages in this child
-		for j, p := range child.pages {
-			pageIsLast := j == len(child.pages)-1 && len(child.children) == 0
-			pageConnector := "├── "
-			if pageIsLast {
-				pageConnector = "└── "
-			}
-			pageName := strings.TrimSuffix(filepath.Base(p.Path), ".md")
-			fmt.Fprintf(b, "%s%s%s\n", childPrefix, pageConnector, pageName)
-		}
-
-		// Show subdirectories
-		if len(child.children) > 0 {
-			renderTree(b, child, childPrefix, depth+1, maxDepth)
+		if depth+1 < maxDepth {
+			renderTreeWikilinks(b, child, depth+1, maxDepth)
 		}
 	}
 }
