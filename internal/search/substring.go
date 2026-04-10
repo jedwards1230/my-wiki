@@ -44,6 +44,11 @@ func (s *SubstringSearcher) Search(query string, limit int) ([]Result, error) {
 			continue
 		}
 
+		// Skip generated index files
+		if filepath.Base(rel) == "index.md" {
+			continue
+		}
+
 		data, err := os.ReadFile(absPath)
 		if err != nil {
 			continue
