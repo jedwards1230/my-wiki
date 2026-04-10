@@ -1,0 +1,97 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+Home Wiki is a Go server (`wiki-server`) that serves an Obsidian vault as a website. It combines:
+- **Quartz v4** static site generation (Node.js) for rendered HTML
+- **Go HTTP server** for static serving, markdown delivery, REST API, and MCP protocol
+- **obsidian-headless** for Obsidian Sync integration
+
+The server exposes three content paths: `/path` (Quartz HTML), `/path.md` (plain markdown from vault), `/raw/path` (native source files with directory listing).
+
+## Commands
+
+```bash
+# Build
+go build -o wiki-server ./cmd/wiki-server
+
+# Test
+go test ./...
+go test -v -race -coverprofile=coverage.out ./...
+
+# Test a single package
+go test -v ./internal/search/
+
+# Lint
+go vet ./...
+golangci-lint run ./...
+
+# Format
+gofmt -w .
+
+# Run locally (needs vault dir and Quartz public output)
+./wiki-server serve --vault /path/to/vault --public-dir /path/to/quartz/public --port 8080
+
+# Run MCP server standalone
+./wiki-server serve mcp --vault /path/to/vault --port 8081
+
+# CLI subcommands (operate on vault directly)
+./wiki-server lint --vault /path/to/vault
+./wiki-server ingest --vault /path/to/vault
+./wiki-server directory --vault /path/to/vault
+./wiki-server log --vault /path/to/vault
+./wiki-server activity --vault /path/to/vault
+```
+
+## Architecture
+
+```
+cmd/wiki-server/main.go    Entry point — delegates to cli package
+internal/
+  cli/                     Cobra command tree (serve, lint, ingest, directory, log, activity)
+  server/                  HTTP server setup, static/markdown/raw handlers, middleware chain
+  api/                     REST API handler — registers routes on /api/*, delegates to services
+  mcpserver/               MCP server (mcp-go) — registers wiki_* tools, streamable-http transport
+  service/                 Business logic layer — one service per domain (lint, pages, search, etc.)
+  vault/                   Vault filesystem operations — page discovery, frontmatter parsing, wikilinks
+  search/                  Search backends: Searcher interface, SubstringSearcher, IndexSearcher (TF-IDF)
+  middleware/              HTTP middleware: gzip, logging, metrics (Prometheus), cache headers
+```
+
+**Key patterns:**
+- `vault.Vault` is the core abstraction — wraps a directory path and provides page discovery, frontmatter parsing, slug indexing, wikilink extraction
+- `service/` types implement domain logic, consumed by both `api/` (REST) and `mcpserver/` (MCP tools)
+- The MCP server and HTTP server can run together (`--mcp-port`) or independently (`serve mcp`)
+- Search has a `Searcher` interface with two backends: substring (file walk) and index (inverted index with TF-IDF, auto-rebuilds every 5 minutes)
+
+## Docker Image
+
+Multi-stage build: Go binary built in `golang:1.25-alpine`, then copied into `node:24-alpine` which has Quartz and obsidian-headless. Custom Quartz config/components in `quartz/` are overlaid at build time.
+
+## Helm Chart
+
+Located at `deploy/helm/home-wiki/`. Published to `oci://ghcr.io/jedwards1230/charts/home-wiki`. Chart version is auto-bumped by the release workflow.
+
+## CI/CD
+
+- **CI** (`.github/workflows/ci.yml`): test (race detector + coverage), lint (go vet + golangci-lint + mod tidy check), build verification
+- **Release** (`.github/workflows/release.yml`): auto-semver on push to main (PR labels `semver:patch/minor/major`), builds Docker image to GHCR, publishes Helm chart OCI artifact, creates GitHub release
+
+## Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `WIKI_VAULT_DIR` | `/data/vault` | Path to Obsidian vault |
+| `WIKI_PORT` | `8080` | HTTP server port |
+| `WIKI_PUBLIC_DIR` | `/data/public` | Quartz static output directory |
+| `WIKI_MCP_PORT` | (disabled) | MCP server port (enables when non-zero) |
+
+## Vault Conventions
+
+- `raw/` — source documents served natively, excluded from wiki page listing
+- `private/` — excluded from sync and page listing
+- `.obsidian/` — Obsidian config, excluded from page listing
+- Pages have YAML frontmatter with `title`, `tags`, `date` fields
+- Wikilinks (`[[target]]`) are parsed for link checking
