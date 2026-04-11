@@ -5,15 +5,28 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/jedwards1230/home-wiki/internal/middleware"
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// mcpLog sends a structured log message to the current MCP client session.
+// mcpLog sends a structured log message to the current MCP client session, enriching
+// it with the authenticated user's identity (from the request context) when present.
 // It is best-effort: errors are silently ignored (the client may not support logging,
 // or the session may be stateless).
 func mcpLog(ctx context.Context, s *server.MCPServer, level mcp.LoggingLevel, logger string, data map[string]any) {
+	if user := middleware.UserFromContext(ctx); user != nil {
+		if data == nil {
+			data = map[string]any{}
+		}
+		if user.Subject != "" {
+			data["user_sub"] = user.Subject
+		}
+		if user.Username != "" {
+			data["user"] = user.Username
+		}
+	}
 	_ = s.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(level, logger, data))
 }
 

@@ -1,18 +1,24 @@
 package middleware
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/coreos/go-oidc/v3/oidc/oidctest"
+)
+
+const (
+	testKeyID    = "test-key-1"
+	testAudience = "wiki"
 )
 
 func TestExtractBearerToken(t *testing.T) {
@@ -38,215 +44,255 @@ func TestExtractBearerToken(t *testing.T) {
 	}
 }
 
-func TestAuthMissingToken(t *testing.T) {
-	auth := Auth(AuthConfig{
-		IssuerURL: "https://auth.example.com/application/o/wiki/",
-		Audience:  "wiki",
-	})
-
-	handler := auth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
+func TestUserFromContextNil(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, r)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", w.Code)
+	if user := UserFromContext(r.Context()); user != nil {
+		t.Error("expected nil user from empty context")
 	}
 }
 
-func TestAuthAllowAnonymous(t *testing.T) {
-	auth := Auth(AuthConfig{
-		IssuerURL:      "https://auth.example.com/application/o/wiki/",
-		Audience:       "wiki",
-		AllowAnonymous: true,
-	})
-
-	var user *UserInfo
-	handler := auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user = UserFromContext(r.Context())
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	r := httptest.NewRequest("GET", "/", nil)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-	if user != nil {
-		t.Error("expected nil user for anonymous request")
+func TestWithUserRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	want := &UserInfo{Subject: "u", Username: "u", Email: "u@e", Groups: []string{"g"}}
+	got := UserFromContext(WithUser(ctx, want))
+	if got != want {
+		t.Errorf("round-trip: got %v, want %v", got, want)
 	}
 }
 
-func TestAuthMalformedToken(t *testing.T) {
-	auth := Auth(AuthConfig{
-		IssuerURL: "https://auth.example.com/application/o/wiki/",
-		Audience:  "wiki",
-	})
+func TestNewAuthValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     AuthConfig
+		wantErr string
+	}{
+		{"missing issuer", AuthConfig{Audience: "x"}, "IssuerURL is required"},
+		{"missing audience", AuthConfig{IssuerURL: "https://example.com"}, "Audience is required"},
+		{"http non-loopback", AuthConfig{IssuerURL: "http://example.com", Audience: "x"}, "https://"},
+		{"ftp scheme", AuthConfig{IssuerURL: "ftp://example.com", Audience: "x"}, "https://"},
+	}
 
-	handler := auth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("Authorization", "Bearer not-a-jwt")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, r)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", w.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewAuth(context.Background(), tt.cfg)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("got error %q, want contains %q", err.Error(), tt.wantErr)
+			}
+		})
 	}
 }
 
-func TestValidateTokenWithRealJWT(t *testing.T) {
-	// Generate an RSA key pair for testing
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+func TestNewAuthHTTPSLoopbackAllowed(t *testing.T) {
+	// Loopback http:// is allowed for tests. NewProvider will still fail because
+	// there's no server at that port, but the scheme validation should have passed.
+	_, err := NewAuth(context.Background(), AuthConfig{
+		IssuerURL: "http://127.0.0.1:1/",
+		Audience:  "x",
+	})
+	if err == nil {
+		t.Fatal("expected OIDC discovery failure, got nil")
+	}
+	if strings.Contains(err.Error(), "https://") {
+		t.Errorf("loopback http should not fail scheme check: %v", err)
+	}
+}
+
+// --- End-to-end tests using oidctest ---
+
+type testOIDC struct {
+	srv    *httptest.Server
+	key    *rsa.PrivateKey
+	issuer string
+}
+
+func newTestOIDC(t *testing.T) *testOIDC {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
+	ts := &oidctest.Server{
+		PublicKeys: []oidctest.PublicKey{{
+			PublicKey: key.Public(),
+			KeyID:     testKeyID,
+			Algorithm: oidc.RS256,
+		}},
+	}
+	srv := httptest.NewServer(ts)
+	ts.SetIssuer(srv.URL)
+	t.Cleanup(srv.Close)
+	return &testOIDC{srv: srv, key: key, issuer: srv.URL}
+}
 
-	kid := "test-key-1"
-
-	// Start a fake JWKS server
-	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		resp := jwksResponse{
-			Keys: []jwksKey{{
-				Kid: kid,
-				Kty: "RSA",
-				Alg: "RS256",
-				N:   base64.RawURLEncoding.EncodeToString(privateKey.PublicKey.N.Bytes()),
-				E:   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(privateKey.PublicKey.E)).Bytes()),
-			}},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer jwksServer.Close()
-
-	// Build a JWT
-	issuer := "https://auth.example.com/application/o/wiki/"
-	token := buildTestJWT(t, privateKey, kid, map[string]any{
-		"iss":                issuer,
+func (o *testOIDC) signToken(t *testing.T, overrides map[string]any) string {
+	t.Helper()
+	claims := map[string]any{
+		"iss":                o.issuer,
+		"aud":                testAudience,
 		"sub":                "user-123",
-		"aud":                "wiki",
-		"exp":                float64(time.Now().Add(1 * time.Hour).Unix()),
+		"exp":                time.Now().Add(1 * time.Hour).Unix(),
+		"iat":                time.Now().Unix(),
 		"preferred_username": "justin",
 		"email":              "justin@example.com",
 		"name":               "Justin Edwards",
 		"groups":             []string{"admins"},
-	})
-
-	cache := &jwksCache{url: jwksServer.URL}
-	user, err := validateToken(token, cache, issuer, "wiki")
+	}
+	for k, v := range overrides {
+		if v == nil {
+			delete(claims, k)
+		} else {
+			claims[k] = v
+		}
+	}
+	raw, err := json.Marshal(claims)
 	if err != nil {
-		t.Fatalf("validateToken: %v", err)
+		t.Fatal(err)
 	}
+	return oidctest.SignIDToken(o.key, testKeyID, oidc.RS256, string(raw))
+}
 
-	if user.Subject != "user-123" {
-		t.Errorf("subject = %q, want user-123", user.Subject)
+func runAuth(t *testing.T, cfg AuthConfig, token string) (*httptest.ResponseRecorder, *UserInfo) {
+	t.Helper()
+	mw, err := NewAuth(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("NewAuth: %v", err)
 	}
-	if user.Username != "justin" {
-		t.Errorf("username = %q, want justin", user.Username)
+	var captured *UserInfo
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = UserFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+	r := httptest.NewRequest("GET", "/", nil)
+	if token != "" {
+		r.Header.Set("Authorization", "Bearer "+token)
 	}
-	if user.Email != "justin@example.com" {
-		t.Errorf("email = %q, want justin@example.com", user.Email)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	return w, captured
+}
+
+func TestAuthValidToken(t *testing.T) {
+	o := newTestOIDC(t)
+	token := o.signToken(t, nil)
+
+	w, user := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, token)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if user.Name != "Justin Edwards" {
-		t.Errorf("name = %q, want Justin Edwards", user.Name)
+	if user == nil {
+		t.Fatal("expected user in context")
+	}
+	if user.Subject != "user-123" || user.Username != "justin" || user.Email != "justin@example.com" {
+		t.Errorf("unexpected user: %+v", user)
 	}
 	if len(user.Groups) != 1 || user.Groups[0] != "admins" {
 		t.Errorf("groups = %v, want [admins]", user.Groups)
 	}
 }
 
-func TestValidateTokenExpired(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+func TestAuthMissingToken(t *testing.T) {
+	o := newTestOIDC(t)
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, "")
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestAuthMalformedToken(t *testing.T) {
+	o := newTestOIDC(t)
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, "not-a-jwt")
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestAuthExpiredToken(t *testing.T) {
+	o := newTestOIDC(t)
+	token := o.signToken(t, map[string]any{"exp": time.Now().Add(-1 * time.Hour).Unix()})
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, token)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for expired, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuthWrongIssuer(t *testing.T) {
+	o := newTestOIDC(t)
+	token := o.signToken(t, map[string]any{"iss": "https://evil.example.com"})
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, token)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for wrong issuer, got %d", w.Code)
+	}
+}
+
+func TestAuthWrongAudience(t *testing.T) {
+	o := newTestOIDC(t)
+	token := o.signToken(t, map[string]any{"aud": "other-app"})
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, token)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for wrong audience, got %d", w.Code)
+	}
+}
+
+func TestAuthGroupAllowlistMatch(t *testing.T) {
+	o := newTestOIDC(t)
+	token := o.signToken(t, map[string]any{"groups": []string{"devs", "admins"}})
+	cfg := AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowedGroups: []string{"admins"}}
+	w, user := runAuth(t, cfg, token)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	if user == nil {
+		t.Fatal("expected user in context")
+	}
+}
+
+func TestAuthGroupAllowlistMiss(t *testing.T) {
+	o := newTestOIDC(t)
+	token := o.signToken(t, map[string]any{"groups": []string{"visitors"}})
+	cfg := AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowedGroups: []string{"admins"}}
+	w, _ := runAuth(t, cfg, token)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuthGroupAllowlistEmptyUserGroups(t *testing.T) {
+	o := newTestOIDC(t)
+	token := o.signToken(t, map[string]any{"groups": []string{}})
+	cfg := AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowedGroups: []string{"admins"}}
+	w, _ := runAuth(t, cfg, token)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 when user has no groups but allowlist set, got %d", w.Code)
+	}
+}
+
+func TestAuthEmptyAllowlistAllowsAny(t *testing.T) {
+	o := newTestOIDC(t)
+	token := o.signToken(t, map[string]any{"groups": []string{"whoever"}})
+	cfg := AuthConfig{IssuerURL: o.issuer, Audience: testAudience} // no AllowedGroups
+	w, _ := runAuth(t, cfg, token)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 with empty allowlist, got %d", w.Code)
+	}
+}
+
+func TestAuthBadSignature(t *testing.T) {
+	o := newTestOIDC(t)
+	// Sign with a different key — should fail verification against the server's JWKS.
+	otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
+	claims := fmt.Sprintf(`{"iss":%q,"aud":%q,"sub":"u","exp":%d}`,
+		o.issuer, testAudience, time.Now().Add(1*time.Hour).Unix())
+	token := oidctest.SignIDToken(otherKey, testKeyID, oidc.RS256, claims)
 
-	kid := "test-key-1"
-
-	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		resp := jwksResponse{
-			Keys: []jwksKey{{
-				Kid: kid,
-				Kty: "RSA",
-				Alg: "RS256",
-				N:   base64.RawURLEncoding.EncodeToString(privateKey.PublicKey.N.Bytes()),
-				E:   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(privateKey.PublicKey.E)).Bytes()),
-			}},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer jwksServer.Close()
-
-	token := buildTestJWT(t, privateKey, kid, map[string]any{
-		"iss": "https://auth.example.com/",
-		"sub": "user-123",
-		"exp": float64(time.Now().Add(-1 * time.Hour).Unix()),
-	})
-
-	cache := &jwksCache{url: jwksServer.URL}
-	_, err = validateToken(token, cache, "https://auth.example.com/", "")
-	if err == nil {
-		t.Fatal("expected error for expired token")
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, token)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for bad signature, got %d", w.Code)
 	}
-	if !strings.Contains(err.Error(), "expired") {
-		t.Errorf("expected expiry error, got: %v", err)
-	}
-}
-
-func TestAudienceUnmarshal(t *testing.T) {
-	tests := []struct {
-		input string
-		want  audience
-	}{
-		{`"wiki"`, audience{"wiki"}},
-		{`["wiki","other"]`, audience{"wiki", "other"}},
-	}
-
-	for _, tt := range tests {
-		var a audience
-		if err := json.Unmarshal([]byte(tt.input), &a); err != nil {
-			t.Errorf("unmarshal %s: %v", tt.input, err)
-			continue
-		}
-		if len(a) != len(tt.want) {
-			t.Errorf("unmarshal %s: got %v, want %v", tt.input, a, tt.want)
-		}
-	}
-}
-
-func TestUserFromContextNil(t *testing.T) {
-	r := httptest.NewRequest("GET", "/", nil)
-	user := UserFromContext(r.Context())
-	if user != nil {
-		t.Error("expected nil user from empty context")
-	}
-}
-
-// buildTestJWT creates a signed RS256 JWT for testing.
-func buildTestJWT(t *testing.T, key *rsa.PrivateKey, kid string, claims map[string]any) string {
-	t.Helper()
-
-	header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": kid, "typ": "JWT"})
-	payload, _ := json.Marshal(claims)
-
-	headerB64 := base64.RawURLEncoding.EncodeToString(header)
-	payloadB64 := base64.RawURLEncoding.EncodeToString(payload)
-	signingInput := headerB64 + "." + payloadB64
-
-	hashed := sha256.Sum256([]byte(signingInput))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, key, 0x05, hashed[:]) // 0x05 = crypto.SHA256
-	if err != nil {
-		t.Fatalf("sign: %v", err)
-	}
-
-	return fmt.Sprintf("%s.%s", signingInput, base64.RawURLEncoding.EncodeToString(sig))
 }
