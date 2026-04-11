@@ -45,14 +45,25 @@ type AuthConfig struct {
 	// Audience is the expected "aud" claim. Typically the OAuth2 client ID. Required.
 	Audience string
 
-	// AllowedGroups, if non-empty, is a list of group names; the token's "groups" claim
-	// must contain at least one entry from this list. Empty allows any authenticated user.
+	// AllowedGroups is a list of group names; the token's "groups" claim must contain
+	// at least one entry from this list. When empty, NewAuth rejects the config unless
+	// AllowAnyUser is true — this prevents accidentally granting every authenticated
+	// token full write access to the vault.
 	AllowedGroups []string
+
+	// AllowAnyUser must be set to true to explicitly opt out of the group allowlist
+	// requirement. Only set this if you trust every user your OIDC provider will
+	// issue a token for (e.g. a single-tenant Authentik instance with one application).
+	AllowAnyUser bool
 }
 
 // NewAuth builds a JWT validation middleware backed by go-oidc. It performs OIDC
 // discovery against cfg.IssuerURL at call time; on failure it returns an error so
 // callers can fail fast at startup.
+//
+// NewAuth fails closed: if AllowedGroups is empty and AllowAnyUser is false, it
+// returns an error. Operators must either restrict access to specific groups or
+// explicitly acknowledge the wider access by setting AllowAnyUser.
 //
 // The returned middleware:
 //   - Extracts a Bearer token from the Authorization header (401 on missing)
@@ -68,6 +79,9 @@ func NewAuth(ctx context.Context, cfg AuthConfig) (func(http.Handler) http.Handl
 	}
 	if cfg.Audience == "" {
 		return nil, errors.New("auth: Audience is required")
+	}
+	if len(cfg.AllowedGroups) == 0 && !cfg.AllowAnyUser {
+		return nil, errors.New("auth: AllowedGroups is empty; set AllowedGroups or AllowAnyUser=true to explicitly permit any authenticated user")
 	}
 	if err := validateIssuerScheme(cfg.IssuerURL); err != nil {
 		return nil, err

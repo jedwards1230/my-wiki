@@ -1,0 +1,71 @@
+package cli
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestAuthConfigFromEnvUnset(t *testing.T) {
+	t.Setenv("WIKI_AUTH_ISSUER", "")
+	t.Setenv("WIKI_AUTH_AUDIENCE", "")
+	t.Setenv("WIKI_AUTH_ALLOWED_GROUPS", "")
+	t.Setenv("WIKI_AUTH_ALLOW_ANY_USER", "")
+	if cfg := authConfigFromEnv(); cfg != nil {
+		t.Errorf("expected nil when WIKI_AUTH_ISSUER is unset, got %+v", cfg)
+	}
+}
+
+func TestAuthConfigFromEnvBasic(t *testing.T) {
+	t.Setenv("WIKI_AUTH_ISSUER", "https://auth.example.com")
+	t.Setenv("WIKI_AUTH_AUDIENCE", "wiki")
+	t.Setenv("WIKI_AUTH_ALLOWED_GROUPS", "admins, wiki-editors ,")
+	t.Setenv("WIKI_AUTH_ALLOW_ANY_USER", "")
+
+	cfg := authConfigFromEnv()
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.IssuerURL != "https://auth.example.com" {
+		t.Errorf("IssuerURL = %q", cfg.IssuerURL)
+	}
+	if cfg.Audience != "wiki" {
+		t.Errorf("Audience = %q", cfg.Audience)
+	}
+	want := []string{"admins", "wiki-editors"}
+	if !reflect.DeepEqual(cfg.AllowedGroups, want) {
+		t.Errorf("AllowedGroups = %v, want %v", cfg.AllowedGroups, want)
+	}
+	if cfg.AllowAnyUser {
+		t.Error("AllowAnyUser should default to false")
+	}
+}
+
+func TestAuthConfigFromEnvAllowAnyUser(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"true", true},
+		{"TRUE", true},
+		{"True", true},
+		{"false", false},
+		{"", false},
+		{"1", false}, // only accept "true" (case-insensitive); explicit opt-in
+		{"yes", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("WIKI_AUTH_ISSUER", "https://auth.example.com")
+			t.Setenv("WIKI_AUTH_AUDIENCE", "wiki")
+			t.Setenv("WIKI_AUTH_ALLOWED_GROUPS", "")
+			t.Setenv("WIKI_AUTH_ALLOW_ANY_USER", tc.value)
+			cfg := authConfigFromEnv()
+			if cfg == nil {
+				t.Fatal("expected non-nil config")
+			}
+			if cfg.AllowAnyUser != tc.want {
+				t.Errorf("AllowAnyUser = %v, want %v (env=%q)", cfg.AllowAnyUser, tc.want, tc.value)
+			}
+		})
+	}
+}

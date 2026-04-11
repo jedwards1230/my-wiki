@@ -87,9 +87,10 @@ Located at `deploy/helm/home-wiki/`. Published to `oci://ghcr.io/jedwards1230/ch
 | `WIKI_PORT` | `8080` | HTTP server port |
 | `WIKI_PUBLIC_DIR` | `/data/public` | Quartz static output directory |
 | `WIKI_MCP_PORT` | (disabled) | MCP server port (enables when non-zero) |
-| `WIKI_AUTH_ISSUER` | (disabled) | OIDC issuer URL for MCP JWT auth (e.g. Authentik); enables auth when set |
+| `WIKI_AUTH_ISSUER` | (disabled) | OIDC issuer URL for MCP JWT auth (e.g. Authentik); enables auth when set. Requires `WIKI_MCP_PORT` set; startup fails otherwise. |
 | `WIKI_AUTH_AUDIENCE` | — | Expected JWT `aud` claim; required when `WIKI_AUTH_ISSUER` is set |
-| `WIKI_AUTH_ALLOWED_GROUPS` | (any authenticated user) | Comma-separated group names; token must contain at least one |
+| `WIKI_AUTH_ALLOWED_GROUPS` | — | Comma-separated group names; token's `groups` claim must contain at least one. Required unless `WIKI_AUTH_ALLOW_ANY_USER=true`. |
+| `WIKI_AUTH_ALLOW_ANY_USER` | `false` | Explicit opt-in to permit any authenticated user when `WIKI_AUTH_ALLOWED_GROUPS` is empty (fail-closed default). |
 
 ## Vault Conventions
 
