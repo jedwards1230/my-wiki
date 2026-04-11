@@ -1,3 +1,9 @@
+{{- if and .Values.auth.enabled (not .Values.mcp.enabled) -}}
+{{- fail "auth.enabled requires mcp.enabled — the auth middleware only guards the MCP endpoint. Enable mcp or disable auth." -}}
+{{- end -}}
+{{- if and .Values.auth.enabled (not .Values.auth.allowedGroups) (not .Values.auth.allowAnyUser) -}}
+{{- fail "auth.enabled with empty auth.allowedGroups requires auth.allowAnyUser=true to explicitly opt in to granting any authenticated user full write access." -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -174,6 +180,20 @@ spec:
               value: "/data/vault"
             - name: WIKI_PORT
               value: "8080"
+            {{- if .Values.auth.enabled }}
+            - name: WIKI_AUTH_ISSUER
+              value: {{ required "auth.issuer is required when auth.enabled=true" .Values.auth.issuer | quote }}
+            - name: WIKI_AUTH_AUDIENCE
+              value: {{ required "auth.audience is required when auth.enabled=true" .Values.auth.audience | quote }}
+            {{- if .Values.auth.allowedGroups }}
+            - name: WIKI_AUTH_ALLOWED_GROUPS
+              value: {{ join "," .Values.auth.allowedGroups | quote }}
+            {{- end }}
+            {{- if .Values.auth.allowAnyUser }}
+            - name: WIKI_AUTH_ALLOW_ANY_USER
+              value: "true"
+            {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080
