@@ -174,6 +174,16 @@ spec:
               value: "/data/vault"
             - name: WIKI_PORT
               value: "8080"
+            {{- if .Values.auth.enabled }}
+            - name: WIKI_AUTH_ISSUER
+              value: {{ required "auth.issuer is required when auth.enabled=true" .Values.auth.issuer | quote }}
+            - name: WIKI_AUTH_AUDIENCE
+              value: {{ required "auth.audience is required when auth.enabled=true" .Values.auth.audience | quote }}
+            {{- if .Values.auth.allowedGroups }}
+            - name: WIKI_AUTH_ALLOWED_GROUPS
+              value: {{ join "," .Values.auth.allowedGroups | quote }}
+            {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080
