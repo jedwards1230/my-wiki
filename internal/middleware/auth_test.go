@@ -66,10 +66,11 @@ func TestNewAuthValidation(t *testing.T) {
 		cfg     AuthConfig
 		wantErr string
 	}{
-		{"missing issuer", AuthConfig{Audience: "x"}, "IssuerURL is required"},
-		{"missing audience", AuthConfig{IssuerURL: "https://example.com"}, "Audience is required"},
-		{"http non-loopback", AuthConfig{IssuerURL: "http://example.com", Audience: "x"}, "https://"},
-		{"ftp scheme", AuthConfig{IssuerURL: "ftp://example.com", Audience: "x"}, "https://"},
+		{"missing issuer", AuthConfig{Audience: "x", AllowAnyUser: true}, "IssuerURL is required"},
+		{"missing audience", AuthConfig{IssuerURL: "https://example.com", AllowAnyUser: true}, "Audience is required"},
+		{"empty allowlist without AllowAnyUser", AuthConfig{IssuerURL: "https://example.com", Audience: "x"}, "AllowedGroups is empty"},
+		{"http non-loopback", AuthConfig{IssuerURL: "http://example.com", Audience: "x", AllowAnyUser: true}, "https://"},
+		{"ftp scheme", AuthConfig{IssuerURL: "ftp://example.com", Audience: "x", AllowAnyUser: true}, "https://"},
 	}
 
 	for _, tt := range tests {
@@ -85,12 +86,29 @@ func TestNewAuthValidation(t *testing.T) {
 	}
 }
 
+func TestNewAuthAllowAnyUserSatisfiesEmptyAllowlist(t *testing.T) {
+	// AllowAnyUser=true should let NewAuth progress past the empty-allowlist guard.
+	// Discovery will fail (no server at that port) but the guard must not reject it.
+	_, err := NewAuth(context.Background(), AuthConfig{
+		IssuerURL:    "http://127.0.0.1:1/",
+		Audience:     "x",
+		AllowAnyUser: true,
+	})
+	if err == nil {
+		t.Fatal("expected OIDC discovery failure, got nil")
+	}
+	if strings.Contains(err.Error(), "AllowedGroups is empty") {
+		t.Errorf("AllowAnyUser=true should satisfy empty-allowlist guard: %v", err)
+	}
+}
+
 func TestNewAuthHTTPSLoopbackAllowed(t *testing.T) {
 	// Loopback http:// is allowed for tests. NewProvider will still fail because
 	// there's no server at that port, but the scheme validation should have passed.
 	_, err := NewAuth(context.Background(), AuthConfig{
-		IssuerURL: "http://127.0.0.1:1/",
-		Audience:  "x",
+		IssuerURL:    "http://127.0.0.1:1/",
+		Audience:     "x",
+		AllowAnyUser: true,
 	})
 	if err == nil {
 		t.Fatal("expected OIDC discovery failure, got nil")
@@ -178,7 +196,7 @@ func TestAuthValidToken(t *testing.T) {
 	o := newTestOIDC(t)
 	token := o.signToken(t, nil)
 
-	w, user := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, token)
+	w, user := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowAnyUser: true}, token)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -196,7 +214,7 @@ func TestAuthValidToken(t *testing.T) {
 
 func TestAuthMissingToken(t *testing.T) {
 	o := newTestOIDC(t)
-	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, "")
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowAnyUser: true}, "")
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", w.Code)
 	}
@@ -204,7 +222,7 @@ func TestAuthMissingToken(t *testing.T) {
 
 func TestAuthMalformedToken(t *testing.T) {
 	o := newTestOIDC(t)
-	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, "not-a-jwt")
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowAnyUser: true}, "not-a-jwt")
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", w.Code)
 	}
@@ -213,7 +231,7 @@ func TestAuthMalformedToken(t *testing.T) {
 func TestAuthExpiredToken(t *testing.T) {
 	o := newTestOIDC(t)
 	token := o.signToken(t, map[string]any{"exp": time.Now().Add(-1 * time.Hour).Unix()})
-	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, token)
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowAnyUser: true}, token)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 for expired, got %d: %s", w.Code, w.Body.String())
 	}
@@ -222,7 +240,7 @@ func TestAuthExpiredToken(t *testing.T) {
 func TestAuthWrongIssuer(t *testing.T) {
 	o := newTestOIDC(t)
 	token := o.signToken(t, map[string]any{"iss": "https://evil.example.com"})
-	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, token)
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowAnyUser: true}, token)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 for wrong issuer, got %d", w.Code)
 	}
@@ -231,7 +249,7 @@ func TestAuthWrongIssuer(t *testing.T) {
 func TestAuthWrongAudience(t *testing.T) {
 	o := newTestOIDC(t)
 	token := o.signToken(t, map[string]any{"aud": "other-app"})
-	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, token)
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowAnyUser: true}, token)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 for wrong audience, got %d", w.Code)
 	}
@@ -270,13 +288,14 @@ func TestAuthGroupAllowlistEmptyUserGroups(t *testing.T) {
 	}
 }
 
-func TestAuthEmptyAllowlistAllowsAny(t *testing.T) {
+func TestAuthEmptyAllowlistWithAllowAnyUser(t *testing.T) {
 	o := newTestOIDC(t)
 	token := o.signToken(t, map[string]any{"groups": []string{"whoever"}})
-	cfg := AuthConfig{IssuerURL: o.issuer, Audience: testAudience} // no AllowedGroups
+	// Empty AllowedGroups is only permitted when AllowAnyUser is true (fail-closed default).
+	cfg := AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowAnyUser: true}
 	w, _ := runAuth(t, cfg, token)
 	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 with empty allowlist, got %d", w.Code)
+		t.Errorf("expected 200 with AllowAnyUser=true, got %d", w.Code)
 	}
 }
 
@@ -291,7 +310,7 @@ func TestAuthBadSignature(t *testing.T) {
 		o.issuer, testAudience, time.Now().Add(1*time.Hour).Unix())
 	token := oidctest.SignIDToken(otherKey, testKeyID, oidc.RS256, claims)
 
-	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience}, token)
+	w, _ := runAuth(t, AuthConfig{IssuerURL: o.issuer, Audience: testAudience, AllowAnyUser: true}, token)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 for bad signature, got %d", w.Code)
 	}

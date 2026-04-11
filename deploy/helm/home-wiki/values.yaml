@@ -91,15 +91,20 @@ mcp:
 # OIDC JWT auth for the MCP /mcp endpoint. When enabled, the wiki-server
 # performs OIDC discovery at startup against issuer and verifies incoming
 # bearer tokens (signature, iss, aud, exp) against the provider's JWKS.
-# Optionally restricts access to members of allowedGroups.
+# Requires mcp.enabled=true (the auth middleware only guards /mcp).
 auth:
   enabled: false
   # Must exactly match the iss claim emitted by your OIDC provider (e.g. Authentik).
   issuer: ""
   # OAuth2 client ID / expected aud claim.
   audience: ""
-  # Optional group allowlist. Empty = any authenticated user.
+  # Group allowlist — the token's groups claim must contain at least one entry.
+  # Leaving this empty requires allowAnyUser=true as an explicit opt-in.
   allowedGroups: []
+  # Fail-closed default: when allowedGroups is empty, the server refuses to start
+  # unless this is set to true. Only enable when you trust every user your OIDC
+  # provider will issue a token for (e.g. a single-tenant Authentik instance).
+  allowAnyUser: false
 
 metrics:
   enabled: false

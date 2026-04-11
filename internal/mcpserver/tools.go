@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/jedwards1230/home-wiki/internal/middleware"
 	"github.com/jedwards1230/home-wiki/internal/service"
@@ -11,10 +12,13 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// mcpLog sends a structured log message to the current MCP client session, enriching
-// it with the authenticated user's identity (from the request context) when present.
-// It is best-effort: errors are silently ignored (the client may not support logging,
-// or the session may be stateless).
+// mcpLog sends a structured log message to the current MCP client session and tees
+// the same event to slog.Default() so there is a durable server-side audit trail
+// regardless of whether the client is subscribed to MCP log notifications (the
+// streamable-http transport is stateless and the client may not be listening).
+//
+// Authenticated user identity (from the request context) is added to both sinks.
+// MCP delivery errors are silently ignored since the slog tee already recorded it.
 func mcpLog(ctx context.Context, s *server.MCPServer, level mcp.LoggingLevel, logger string, data map[string]any) {
 	if user := middleware.UserFromContext(ctx); user != nil {
 		if data == nil {
@@ -27,6 +31,26 @@ func mcpLog(ctx context.Context, s *server.MCPServer, level mcp.LoggingLevel, lo
 			data["user"] = user.Username
 		}
 	}
+
+	// Tee to slog with component=logger and the data map as attributes so the
+	// audit record survives even when no MCP client is subscribed to log events.
+	attrs := make([]any, 0, 2+2*len(data))
+	attrs = append(attrs, "component", logger)
+	for k, v := range data {
+		attrs = append(attrs, k, v)
+	}
+	msg := fmt.Sprintf("mcp %s", logger)
+	switch level {
+	case mcp.LoggingLevelError, mcp.LoggingLevelCritical, mcp.LoggingLevelAlert, mcp.LoggingLevelEmergency:
+		slog.Default().Error(msg, attrs...)
+	case mcp.LoggingLevelWarning:
+		slog.Default().Warn(msg, attrs...)
+	case mcp.LoggingLevelDebug:
+		slog.Default().Debug(msg, attrs...)
+	default:
+		slog.Default().Info(msg, attrs...)
+	}
+
 	_ = s.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(level, logger, data))
 }
 

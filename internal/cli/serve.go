@@ -71,8 +71,9 @@ func authConfigFromEnv() *middleware.AuthConfig {
 		return nil
 	}
 	cfg := &middleware.AuthConfig{
-		IssuerURL: issuer,
-		Audience:  os.Getenv("WIKI_AUTH_AUDIENCE"),
+		IssuerURL:    issuer,
+		Audience:     os.Getenv("WIKI_AUTH_AUDIENCE"),
+		AllowAnyUser: strings.EqualFold(os.Getenv("WIKI_AUTH_ALLOW_ANY_USER"), "true"),
 	}
 	if groups := os.Getenv("WIKI_AUTH_ALLOWED_GROUPS"); groups != "" {
 		for _, g := range strings.Split(groups, ",") {
@@ -96,11 +97,16 @@ func wrapAuth(handler http.Handler, mw func(http.Handler) http.Handler) http.Han
 // buildAuthMiddleware constructs the JWT middleware at startup. Returns (nil, nil) when
 // auth is disabled (cfg nil). On OIDC discovery failure the error is surfaced so the
 // server fails fast rather than silently starting without auth.
+//
+// OIDC discovery is bounded by a 30s timeout so a slow or unreachable provider cannot
+// hang startup indefinitely (e.g. when Authentik is down during a rolling deploy).
 func buildAuthMiddleware(ctx context.Context, logger *slog.Logger, cfg *middleware.AuthConfig) (func(http.Handler) http.Handler, error) {
 	if cfg == nil {
 		return nil, nil
 	}
-	mw, err := middleware.NewAuth(ctx, *cfg)
+	discoveryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	mw, err := middleware.NewAuth(discoveryCtx, *cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -108,9 +114,10 @@ func buildAuthMiddleware(ctx context.Context, logger *slog.Logger, cfg *middlewa
 		"issuer", cfg.IssuerURL,
 		"audience", cfg.Audience,
 		"allowed_groups", cfg.AllowedGroups,
+		"allow_any_user", cfg.AllowAnyUser,
 	)
-	if len(cfg.AllowedGroups) == 0 {
-		logger.Warn("MCP auth enabled without group allowlist; any authenticated token has full write access. Set WIKI_AUTH_ALLOWED_GROUPS to restrict.")
+	if cfg.AllowAnyUser {
+		logger.Warn("MCP auth enabled with AllowAnyUser=true; every authenticated token has full write access. Set WIKI_AUTH_ALLOWED_GROUPS to restrict.")
 	}
 	return mw, nil
 }
@@ -129,6 +136,15 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	// Set as default so MCP handlers (and any future library code) emit
+	// structured logs on the same JSON stream as the server.
+	slog.SetDefault(logger)
+
+	// Fail fast when auth is configured but the MCP server is disabled — the
+	// auth env vars would otherwise silently no-op, giving a false sense of security.
+	if mcpPort == 0 && authConfigFromEnv() != nil {
+		return fmt.Errorf("WIKI_AUTH_ISSUER is set but MCP server is disabled; set --mcp-port or WIKI_MCP_PORT to enable /mcp with auth, or unset WIKI_AUTH_ISSUER")
+	}
 
 	cfg := server.Config{
 		PublicDir: publicDir,
@@ -273,6 +289,7 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 
 	v := vault.New(vaultDir)
 	mcpSrv := mcpserver.New(v, nil)
