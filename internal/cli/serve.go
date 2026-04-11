@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -69,18 +70,49 @@ func authConfigFromEnv() *middleware.AuthConfig {
 	if issuer == "" {
 		return nil
 	}
-	return &middleware.AuthConfig{
+	cfg := &middleware.AuthConfig{
 		IssuerURL: issuer,
 		Audience:  os.Getenv("WIKI_AUTH_AUDIENCE"),
 	}
+	if groups := os.Getenv("WIKI_AUTH_ALLOWED_GROUPS"); groups != "" {
+		for _, g := range strings.Split(groups, ",") {
+			if g = strings.TrimSpace(g); g != "" {
+				cfg.AllowedGroups = append(cfg.AllowedGroups, g)
+			}
+		}
+	}
+	return cfg
 }
 
-// wrapAuth wraps an http.Handler with JWT auth middleware if cfg is non-nil.
-func wrapAuth(handler http.Handler, cfg *middleware.AuthConfig) http.Handler {
-	if cfg == nil {
+// wrapAuth wraps an http.Handler with the given auth middleware. When mw is nil
+// it returns the handler unchanged (auth disabled).
+func wrapAuth(handler http.Handler, mw func(http.Handler) http.Handler) http.Handler {
+	if mw == nil {
 		return handler
 	}
-	return middleware.Auth(*cfg)(handler)
+	return mw(handler)
+}
+
+// buildAuthMiddleware constructs the JWT middleware at startup. Returns (nil, nil) when
+// auth is disabled (cfg nil). On OIDC discovery failure the error is surfaced so the
+// server fails fast rather than silently starting without auth.
+func buildAuthMiddleware(ctx context.Context, logger *slog.Logger, cfg *middleware.AuthConfig) (func(http.Handler) http.Handler, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	mw, err := middleware.NewAuth(ctx, *cfg)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("MCP auth enabled",
+		"issuer", cfg.IssuerURL,
+		"audience", cfg.Audience,
+		"allowed_groups", cfg.AllowedGroups,
+	)
+	if len(cfg.AllowedGroups) == 0 {
+		logger.Warn("MCP auth enabled without group allowlist; any authenticated token has full write access. Set WIKI_AUTH_ALLOWED_GROUPS to restrict.")
+	}
+	return mw, nil
 }
 
 func runServeHTTP(cmd *cobra.Command, _ []string) error {
@@ -178,13 +210,13 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		mcpSrv := mcpserver.New(v, searchSvc)
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
-		authCfg := authConfigFromEnv()
-		if authCfg != nil {
-			logger.Info("MCP auth enabled", "issuer", authCfg.IssuerURL)
+		authMW, err := buildAuthMiddleware(context.Background(), logger, authConfigFromEnv())
+		if err != nil {
+			return fmt.Errorf("MCP auth setup: %w", err)
 		}
 
 		mux := http.NewServeMux()
-		mux.Handle("/mcp", wrapAuth(httpTransport, authCfg))
+		mux.Handle("/mcp", wrapAuth(httpTransport, authMW))
 		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = w.Write([]byte("ok"))
@@ -246,13 +278,13 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	mcpSrv := mcpserver.New(v, nil)
 	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
-	authCfg := authConfigFromEnv()
-	if authCfg != nil {
-		logger.Info("MCP auth enabled", "issuer", authCfg.IssuerURL)
+	authMW, err := buildAuthMiddleware(context.Background(), logger, authConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("MCP auth setup: %w", err)
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", wrapAuth(httpTransport, authCfg))
+	mux.Handle("/mcp", wrapAuth(httpTransport, authMW))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok"))
