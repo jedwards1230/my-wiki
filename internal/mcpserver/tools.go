@@ -10,6 +10,13 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// mcpLog sends a structured log message to the current MCP client session.
+// It is best-effort: errors are silently ignored (the client may not support logging,
+// or the session may be stateless).
+func mcpLog(ctx context.Context, s *server.MCPServer, level mcp.LoggingLevel, logger string, data map[string]any) {
+	_ = s.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(level, logger, data))
+}
+
 func getStringArg(req mcp.CallToolRequest, key string) string {
 	args := req.GetArguments()
 	if v, ok := args[key]; ok {
@@ -97,13 +104,16 @@ func directoryListHandler(svc *service.DirectoryService) server.ToolHandlerFunc 
 	}
 }
 
-func directoryGenerateHandler(svc *service.DirectoryService) server.ToolHandlerFunc {
-	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func directoryGenerateHandler(s *server.MCPServer, svc *service.DirectoryService) server.ToolHandlerFunc {
+	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		_, count, err := svc.Generate()
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+			"action": "directory_generate", "pages_indexed": count,
+		})
 		result := map[string]any{"pages_indexed": count}
 		return mcp.NewToolResultText(toJSON(result)), nil
 	}
@@ -120,13 +130,16 @@ func ingestListHandler(svc *service.IngestService) server.ToolHandlerFunc {
 	}
 }
 
-func ingestGenerateHandler(svc *service.IngestService) server.ToolHandlerFunc {
-	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func ingestGenerateHandler(s *server.MCPServer, svc *service.IngestService) server.ToolHandlerFunc {
+	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path, count, err := svc.Generate()
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+			"action": "ingest_generate", "path": path, "count": count,
+		})
 		result := map[string]any{"path": path, "count": count}
 		return mcp.NewToolResultText(toJSON(result)), nil
 	}
@@ -174,8 +187,8 @@ func logLintHandler(svc *service.LogService) server.ToolHandlerFunc {
 	}
 }
 
-func activityHandler(svc *service.ActivityService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func activityHandler(s *server.MCPServer, svc *service.ActivityService) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		touched := getStringArrayArg(req, "touched")
 		entry := service.ActivityEntry{
 			Type:    getStringArg(req, "type"),
@@ -189,6 +202,9 @@ func activityHandler(svc *service.ActivityService) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		mcpLog(ctx, s, mcp.LoggingLevelInfo, "activity", map[string]any{
+			"action": "log", "type": entry.Type, "title": entry.Title,
+		})
 		return mcp.NewToolResultText("Activity logged successfully"), nil
 	}
 }
@@ -209,8 +225,8 @@ func readPageHandler(svc *service.PageService) server.ToolHandlerFunc {
 	}
 }
 
-func createPageHandler(svc *service.PageService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func createPageHandler(s *server.MCPServer, svc *service.PageService) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		content := getStringArg(req, "content")
 
@@ -231,12 +247,15 @@ func createPageHandler(svc *service.PageService) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+			"action": "create_page", "path": path,
+		})
 		return mcp.NewToolResultText(fmt.Sprintf("Created page: %s", path)), nil
 	}
 }
 
-func updatePageHandler(svc *service.PageService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func updatePageHandler(s *server.MCPServer, svc *service.PageService) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		content := getStringArg(req, "content")
 
@@ -257,12 +276,15 @@ func updatePageHandler(svc *service.PageService) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+			"action": "update_page", "path": path,
+		})
 		return mcp.NewToolResultText(fmt.Sprintf("Updated page: %s", path)), nil
 	}
 }
 
-func deletePageHandler(svc *service.PageService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func deletePageHandler(s *server.MCPServer, svc *service.PageService) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		if path == "" {
 			return mcp.NewToolResultError("path is required"), nil
@@ -272,12 +294,15 @@ func deletePageHandler(svc *service.PageService) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		mcpLog(ctx, s, mcp.LoggingLevelWarning, "vault", map[string]any{
+			"action": "delete_page", "path": path,
+		})
 		return mcp.NewToolResultText(fmt.Sprintf("deleted: %s", path)), nil
 	}
 }
 
-func patchPageHandler(svc *service.PageService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func patchPageHandler(s *server.MCPServer, svc *service.PageService) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		if path == "" {
 			return mcp.NewToolResultError("path is required"), nil
@@ -297,6 +322,9 @@ func patchPageHandler(svc *service.PageService) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+			"action": "patch_page", "path": path, "operations": len(ops),
+		})
 		return mcp.NewToolResultText(content), nil
 	}
 }

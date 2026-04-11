@@ -1,6 +1,8 @@
 package mcpserver
 
 import (
+	"context"
+
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/jedwards1230/home-wiki/internal/vault"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -14,7 +16,9 @@ func New(v *vault.Vault, searchSvc *service.SearchService) *server.MCPServer {
 		"home-wiki",
 		"0.1.0",
 		server.WithToolCapabilities(false),
-		server.WithInstructions("Home wiki backed by an Obsidian vault. Read meta/schema with wiki_read_page before making changes. Log all work with wiki_activity when done."),
+		server.WithResourceCapabilities(false, false),
+		server.WithLogging(),
+		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Log all work with wiki_activity when done."),
 	)
 
 	lint := service.NewLintService(v)
@@ -25,9 +29,35 @@ func New(v *vault.Vault, searchSvc *service.SearchService) *server.MCPServer {
 	pages := service.NewPageService(v.Dir)
 	recent := service.NewRecentService(v)
 
+	registerResources(s, pages)
 	registerTools(s, lint, ingest, directory, logSvc, activity, pages, recent, searchSvc)
 
 	return s
+}
+
+// registerResources exposes wiki content as MCP resources.
+func registerResources(s *server.MCPServer, pages *service.PageService) {
+	s.AddResource(
+		mcp.NewResource(
+			"wiki://schema",
+			"Wiki Schema",
+			mcp.WithResourceDescription("Operating manual for AI agents — page conventions, frontmatter rules, tag taxonomy, ingestion workflows, and activity logging format."),
+			mcp.WithMIMEType("text/markdown"),
+		),
+		func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			content, err := pages.Read("meta/schema")
+			if err != nil {
+				return nil, err
+			}
+			return []mcp.ResourceContents{
+				mcp.TextResourceContents{
+					URI:      "wiki://schema",
+					MIMEType: "text/markdown",
+					Text:     content,
+				},
+			}, nil
+		},
+	)
 }
 
 // NewStreamableHTTPServer creates a stateless streamable HTTP transport.
@@ -97,7 +127,7 @@ func registerTools(
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 		),
-		directoryGenerateHandler(directory),
+		directoryGenerateHandler(s, directory),
 	)
 
 	s.AddTool(
@@ -109,7 +139,7 @@ func registerTools(
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 		),
-		ingestGenerateHandler(ingest),
+		ingestGenerateHandler(s, ingest),
 	)
 
 	s.AddTool(
@@ -186,7 +216,7 @@ func registerTools(
 				mcp.Items(map[string]any{"type": "string"}),
 			),
 		),
-		activityHandler(activity),
+		activityHandler(s, activity),
 	)
 
 	s.AddTool(
@@ -222,7 +252,7 @@ func registerTools(
 				mcp.Description("Full markdown content. Should include YAML frontmatter with title, tags, and date fields."),
 			),
 		),
-		createPageHandler(pages),
+		createPageHandler(s, pages),
 	)
 
 	s.AddTool(
@@ -242,7 +272,7 @@ func registerTools(
 				mcp.Description("Complete replacement markdown content including YAML frontmatter."),
 			),
 		),
-		updatePageHandler(pages),
+		updatePageHandler(s, pages),
 	)
 
 	s.AddTool(
@@ -258,7 +288,7 @@ func registerTools(
 				mcp.Description("Relative path to the page to delete (e.g., project/old-page or project/old-page.md). The .md extension is added if omitted."),
 			),
 		),
-		deletePageHandler(pages),
+		deletePageHandler(s, pages),
 	)
 
 	s.AddTool(
@@ -286,7 +316,7 @@ func registerTools(
 				}),
 			),
 		),
-		patchPageHandler(pages),
+		patchPageHandler(s, pages),
 	)
 
 	s.AddTool(
