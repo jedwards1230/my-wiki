@@ -12,6 +12,7 @@ import (
 
 	"github.com/jedwards1230/home-wiki/internal/api"
 	"github.com/jedwards1230/home-wiki/internal/mcpserver"
+	"github.com/jedwards1230/home-wiki/internal/middleware"
 	"github.com/jedwards1230/home-wiki/internal/search"
 	"github.com/jedwards1230/home-wiki/internal/server"
 	"github.com/jedwards1230/home-wiki/internal/service"
@@ -60,6 +61,26 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// authConfigFromEnv returns an AuthConfig if WIKI_AUTH_ISSUER is set, nil otherwise.
+func authConfigFromEnv() *middleware.AuthConfig {
+	issuer := os.Getenv("WIKI_AUTH_ISSUER")
+	if issuer == "" {
+		return nil
+	}
+	return &middleware.AuthConfig{
+		IssuerURL: issuer,
+		Audience:  os.Getenv("WIKI_AUTH_AUDIENCE"),
+	}
+}
+
+// wrapAuth wraps an http.Handler with JWT auth middleware if cfg is non-nil.
+func wrapAuth(handler http.Handler, cfg *middleware.AuthConfig) http.Handler {
+	if cfg == nil {
+		return handler
+	}
+	return middleware.Auth(*cfg)(handler)
 }
 
 func runServeHTTP(cmd *cobra.Command, _ []string) error {
@@ -157,8 +178,13 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		mcpSrv := mcpserver.New(v, searchSvc)
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
+		authCfg := authConfigFromEnv()
+		if authCfg != nil {
+			logger.Info("MCP auth enabled", "issuer", authCfg.IssuerURL)
+		}
+
 		mux := http.NewServeMux()
-		mux.Handle("/mcp", httpTransport)
+		mux.Handle("/mcp", wrapAuth(httpTransport, authCfg))
 		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = w.Write([]byte("ok"))
@@ -220,8 +246,13 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	mcpSrv := mcpserver.New(v, nil)
 	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
+	authCfg := authConfigFromEnv()
+	if authCfg != nil {
+		logger.Info("MCP auth enabled", "issuer", authCfg.IssuerURL)
+	}
+
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", httpTransport)
+	mux.Handle("/mcp", wrapAuth(httpTransport, authCfg))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok"))

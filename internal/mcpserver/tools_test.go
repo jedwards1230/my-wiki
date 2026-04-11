@@ -11,6 +11,7 @@ import (
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/jedwards1230/home-wiki/internal/vault"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 func setupTestVault(t *testing.T) *vault.Vault {
@@ -46,6 +47,10 @@ func makeReq(args map[string]any) mcp.CallToolRequest {
 			Arguments: args,
 		},
 	}
+}
+
+func testServer() *server.MCPServer {
+	return server.NewMCPServer("test", "0.0.0", server.WithLogging())
 }
 
 func getTextContent(result *mcp.CallToolResult) string {
@@ -116,7 +121,7 @@ func TestDirectoryListHandler(t *testing.T) {
 func TestDirectoryGenerateHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewDirectoryService(v)
-	handler := directoryGenerateHandler(svc)
+	handler := directoryGenerateHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(nil))
 	if err != nil {
@@ -204,7 +209,7 @@ func TestLogDayHandlerMissing(t *testing.T) {
 func TestActivityHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewActivityService(v.Dir)
-	handler := activityHandler(svc)
+	handler := activityHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"type":  "note",
@@ -224,7 +229,7 @@ func TestActivityHandler(t *testing.T) {
 func TestActivityHandlerInvalidType(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewActivityService(v.Dir)
-	handler := activityHandler(svc)
+	handler := activityHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"type":  "invalid",
@@ -273,7 +278,7 @@ func TestReadPageHandlerNotFound(t *testing.T) {
 func TestCreatePageHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := createPageHandler(svc)
+	handler := createPageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "new-page.md",
@@ -292,7 +297,7 @@ func TestCreatePageHandler(t *testing.T) {
 func TestCreatePageHandlerAlreadyExists(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := createPageHandler(svc)
+	handler := createPageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "index.md",
@@ -310,7 +315,7 @@ func TestCreatePageHandlerAlreadyExists(t *testing.T) {
 func TestCreatePageHandlerEmptyContent(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := createPageHandler(svc)
+	handler := createPageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "empty-page.md",
@@ -328,7 +333,7 @@ func TestCreatePageHandlerEmptyContent(t *testing.T) {
 func TestUpdatePageHandlerNonExistent(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := updatePageHandler(svc)
+	handler := updatePageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "does-not-exist.md",
@@ -350,7 +355,7 @@ func TestUpdatePageHandlerNonExistent(t *testing.T) {
 func TestUpdatePageHandlerEmptyContent(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := updatePageHandler(svc)
+	handler := updatePageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "index.md",
@@ -384,7 +389,7 @@ func TestListPagesHandler(t *testing.T) {
 func TestDeletePageHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := deletePageHandler(svc)
+	handler := deletePageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
 	if err != nil {
@@ -410,7 +415,7 @@ func TestDeletePageHandler(t *testing.T) {
 func TestDeletePageHandlerNotFound(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := deletePageHandler(svc)
+	handler := deletePageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{"path": "nonexistent"}))
 	if err != nil {
@@ -425,7 +430,7 @@ func TestDeletePageHandlerNotFound(t *testing.T) {
 func TestDeletePageHandlerEmptyPath(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := deletePageHandler(svc)
+	handler := deletePageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{}))
 	if err != nil {
@@ -440,7 +445,7 @@ func TestDeletePageHandlerEmptyPath(t *testing.T) {
 func TestPatchPageHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := patchPageHandler(svc)
+	handler := patchPageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "project/alpha",
@@ -472,7 +477,7 @@ func TestPatchPageHandler(t *testing.T) {
 func TestPatchPageHandlerFindNotFound(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := patchPageHandler(svc)
+	handler := patchPageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "project/alpha",
@@ -492,7 +497,7 @@ func TestPatchPageHandlerFindNotFound(t *testing.T) {
 func TestPatchPageHandlerEmptyPath(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := patchPageHandler(svc)
+	handler := patchPageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"operations": []interface{}{
@@ -511,7 +516,7 @@ func TestPatchPageHandlerEmptyPath(t *testing.T) {
 func TestPatchPageHandlerEmptyOperations(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := patchPageHandler(svc)
+	handler := patchPageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":       "project/alpha",
@@ -529,7 +534,7 @@ func TestPatchPageHandlerEmptyOperations(t *testing.T) {
 func TestPatchPageHandlerPageNotFound(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Dir)
-	handler := patchPageHandler(svc)
+	handler := patchPageHandler(testServer(), svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "nonexistent",
