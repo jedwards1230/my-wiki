@@ -55,6 +55,11 @@ type AuthConfig struct {
 	// requirement. Only set this if you trust every user your OIDC provider will
 	// issue a token for (e.g. a single-tenant Authentik instance with one application).
 	AllowAnyUser bool
+
+	// ResourceMetadataURL is the RFC 9728 Protected Resource Metadata URL.
+	// When set, 401 responses include a WWW-Authenticate header pointing clients
+	// to this URL for OAuth discovery (required by MCP spec 2025-06-18).
+	ResourceMetadataURL string
 }
 
 // NewAuth builds a JWT validation middleware backed by go-oidc. It performs OIDC
@@ -96,34 +101,110 @@ func NewAuth(ctx context.Context, cfg AuthConfig) (func(http.Handler) http.Handl
 		ClientID: cfg.Audience,
 	})
 
+	// Build the WWW-Authenticate header value once at startup.
+	wwwAuth := "Bearer"
+	if cfg.ResourceMetadataURL != "" {
+		wwwAuth = fmt.Sprintf(`Bearer resource_metadata=%q`, cfg.ResourceMetadataURL)
+	}
+
+	writeUnauthorized := func(w http.ResponseWriter) {
+		w.Header().Set("WWW-Authenticate", wwwAuth)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprintln(w, "unauthorized")
+	}
+
+	writeForbidden := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprintln(w, "forbidden")
+	}
+
+	return newAuthHandler(verifier, cfg.AllowedGroups, writeUnauthorized, writeForbidden), nil
+}
+
+// NewAuthJSON returns an auth middleware that writes error responses as JSON,
+// matching the REST API's envelope format. Use this for API routes so 401/403
+// responses are consistent with the rest of the API.
+func NewAuthJSON(ctx context.Context, cfg AuthConfig) (func(http.Handler) http.Handler, error) {
+	if cfg.IssuerURL == "" {
+		return nil, errors.New("auth: IssuerURL is required")
+	}
+	if cfg.Audience == "" {
+		return nil, errors.New("auth: Audience is required")
+	}
+	if len(cfg.AllowedGroups) == 0 && !cfg.AllowAnyUser {
+		return nil, errors.New("auth: AllowedGroups is empty; set AllowedGroups or AllowAnyUser=true to explicitly permit any authenticated user")
+	}
+	if err := validateIssuerScheme(cfg.IssuerURL); err != nil {
+		return nil, err
+	}
+
+	provider, err := oidc.NewProvider(ctx, cfg.IssuerURL)
+	if err != nil {
+		return nil, fmt.Errorf("auth: OIDC discovery failed: %w", err)
+	}
+
+	verifier := provider.Verifier(&oidc.Config{
+		ClientID: cfg.Audience,
+	})
+
+	wwwAuth := "Bearer"
+	if cfg.ResourceMetadataURL != "" {
+		wwwAuth = fmt.Sprintf(`Bearer resource_metadata=%q`, cfg.ResourceMetadataURL)
+	}
+
+	writeUnauthorized := func(w http.ResponseWriter) {
+		w.Header().Set("WWW-Authenticate", wwwAuth)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprintln(w, `{"error":"unauthorized"}`)
+	}
+
+	writeForbidden := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprintln(w, `{"error":"forbidden"}`)
+	}
+
+	return newAuthHandler(verifier, cfg.AllowedGroups, writeUnauthorized, writeForbidden), nil
+}
+
+// newAuthHandler builds the core auth handler logic shared by NewAuth and NewAuthJSON.
+func newAuthHandler(
+	verifier *oidc.IDTokenVerifier,
+	allowedGroups []string,
+	writeUnauthorized func(http.ResponseWriter),
+	writeForbidden func(http.ResponseWriter),
+) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw := extractBearerToken(r)
 			if raw == "" {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				writeUnauthorized(w)
 				return
 			}
 
 			tok, err := verifier.Verify(r.Context(), raw)
 			if err != nil {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				writeUnauthorized(w)
 				return
 			}
 
 			var claims struct {
-				Subject           string   `json:"sub"`
+				Subject          string   `json:"sub"`
 				PreferredUsername string   `json:"preferred_username"`
-				Email             string   `json:"email"`
-				Name              string   `json:"name"`
-				Groups            []string `json:"groups"`
+				Email            string   `json:"email"`
+				Name             string   `json:"name"`
+				Groups           []string `json:"groups"`
 			}
 			if err := tok.Claims(&claims); err != nil {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				writeUnauthorized(w)
 				return
 			}
 
-			if len(cfg.AllowedGroups) > 0 && !hasAllowedGroup(claims.Groups, cfg.AllowedGroups) {
-				http.Error(w, "forbidden", http.StatusForbidden)
+			if len(allowedGroups) > 0 && !hasAllowedGroup(claims.Groups, allowedGroups) {
+				writeForbidden(w)
 				return
 			}
 
@@ -136,7 +217,7 @@ func NewAuth(ctx context.Context, cfg AuthConfig) (func(http.Handler) http.Handl
 			}
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), user)))
 		})
-	}, nil
+	}
 }
 
 // validateIssuerScheme requires https:// for the issuer URL, with an allow-list
