@@ -14,6 +14,7 @@ import (
 	"github.com/jedwards1230/home-wiki/internal/api"
 	"github.com/jedwards1230/home-wiki/internal/mcpserver"
 	"github.com/jedwards1230/home-wiki/internal/middleware"
+	"github.com/jedwards1230/home-wiki/internal/notify"
 	"github.com/jedwards1230/home-wiki/internal/search"
 	"github.com/jedwards1230/home-wiki/internal/server"
 	"github.com/jedwards1230/home-wiki/internal/service"
@@ -186,10 +187,36 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	}
 	searchSvc := service.NewSearchService(engines...)
 
+	// Build services needed by the rebuild notifier
+	directorySvc := service.NewDirectoryService(v)
+	ingestSvc := service.NewIngestService(v)
+
+	// Debounced post-mutation hook: regenerate computed pages and touch
+	// dirty files so chokidar reliably triggers a Quartz rebuild.
+	notifier := notify.New(2*time.Second, func(paths []string) {
+		now := time.Now()
+		if _, _, err := directorySvc.Generate(); err != nil {
+			logger.Warn("rebuild notifier: directory generate failed", "error", err)
+		}
+		if _, _, err := ingestSvc.Generate(); err != nil {
+			logger.Warn("rebuild notifier: ingest generate failed", "error", err)
+		}
+		for _, p := range paths {
+			if err := os.Chtimes(p, now, now); err != nil {
+				// File may have been deleted — skip silently
+				if !os.IsNotExist(err) {
+					logger.Warn("rebuild notifier: touch failed", "path", p, "error", err)
+				}
+			}
+		}
+		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
+	})
+
 	var apiOpts []api.HandlerOption
 	if authMWs != nil {
 		apiOpts = append(apiOpts, api.WithAuthMiddleware(authMWs.api))
 	}
+	apiOpts = append(apiOpts, api.WithRebuildNotifier(notifier))
 	apiHandler := api.NewHandler(v, searchSvc, apiOpts...)
 
 	srv := server.New(cfg, publicFS, vaultFS, logger,
@@ -243,7 +270,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 
 	// Optionally start MCP server in the same process
 	if mcpPort > 0 {
-		mcpSrv := mcpserver.New(v, searchSvc)
+		mcpSrv := mcpserver.New(v, searchSvc, mcpserver.WithRebuildNotifier(notifier))
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 		mux := http.NewServeMux()
@@ -278,6 +305,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	}
 
 	logger.Info("shutting down")
+	notifier.Close()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -311,7 +339,29 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	slog.SetDefault(logger)
 
 	v := vault.New(vaultDir)
-	mcpSrv := mcpserver.New(v, nil)
+
+	directorySvc := service.NewDirectoryService(v)
+	ingestSvc := service.NewIngestService(v)
+
+	mcpNotifier := notify.New(2*time.Second, func(paths []string) {
+		now := time.Now()
+		if _, _, err := directorySvc.Generate(); err != nil {
+			logger.Warn("rebuild notifier: directory generate failed", "error", err)
+		}
+		if _, _, err := ingestSvc.Generate(); err != nil {
+			logger.Warn("rebuild notifier: ingest generate failed", "error", err)
+		}
+		for _, p := range paths {
+			if err := os.Chtimes(p, now, now); err != nil {
+				if !os.IsNotExist(err) {
+					logger.Warn("rebuild notifier: touch failed", "path", p, "error", err)
+				}
+			}
+		}
+		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
+	})
+
+	mcpSrv := mcpserver.New(v, nil, mcpserver.WithRebuildNotifier(mcpNotifier))
 	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 	authMWs, err := buildAuthMiddlewares(context.Background(), logger, authConfigFromEnv())
@@ -354,6 +404,7 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	}
 
 	logger.Info("shutting down MCP server")
+	mcpNotifier.Close()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return httpSrv.Shutdown(shutdownCtx)

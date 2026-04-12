@@ -3,7 +3,10 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
+	"strings"
 
+	"github.com/jedwards1230/home-wiki/internal/notify"
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/jedwards1230/home-wiki/internal/vault"
 )
@@ -19,8 +22,17 @@ func WithAuthMiddleware(mw func(http.Handler) http.Handler) HandlerOption {
 	}
 }
 
+// WithRebuildNotifier sets a notifier that is called after successful vault
+// mutations to trigger Quartz rebuilds.
+func WithRebuildNotifier(n *notify.RebuildNotifier) HandlerOption {
+	return func(h *Handler) {
+		h.notifier = n
+	}
+}
+
 // Handler holds all API services and registers routes.
 type Handler struct {
+	vaultDir  string
 	lint      *service.LintService
 	ingest    *service.IngestService
 	directory *service.DirectoryService
@@ -30,12 +42,14 @@ type Handler struct {
 	recent    *service.RecentService
 	search    *service.SearchService
 	authMW    func(http.Handler) http.Handler
+	notifier  *notify.RebuildNotifier
 }
 
 // NewHandler creates an API handler with services built from the given vault.
 // searchSvc may be nil if search is not configured.
 func NewHandler(v *vault.Vault, searchSvc *service.SearchService, opts ...HandlerOption) *Handler {
 	h := &Handler{
+		vaultDir:  v.Dir,
 		lint:      service.NewLintService(v),
 		ingest:    service.NewIngestService(v),
 		directory: service.NewDirectoryService(v),
@@ -83,6 +97,19 @@ func (h *Handler) wrapMutating(handler http.Handler) http.Handler {
 		return handler
 	}
 	return h.authMW(handler)
+}
+
+// markDirty notifies the rebuild notifier about a mutated vault path.
+// path is a relative path within the vault; the .md extension is added if missing.
+// No-op when the notifier is not configured.
+func (h *Handler) markDirty(relPath string) {
+	if h.notifier == nil {
+		return
+	}
+	if !strings.HasSuffix(relPath, ".md") {
+		relPath += ".md"
+	}
+	h.notifier.MarkDirty(filepath.Join(h.vaultDir, relPath))
 }
 
 // response is the JSON envelope for API responses.

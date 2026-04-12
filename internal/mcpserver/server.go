@@ -3,15 +3,34 @@ package mcpserver
 import (
 	"context"
 
+	"github.com/jedwards1230/home-wiki/internal/notify"
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/jedwards1230/home-wiki/internal/vault"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// Option configures optional MCP server behavior.
+type Option func(*options)
+
+type options struct {
+	notifier *notify.RebuildNotifier
+}
+
+// WithRebuildNotifier sets a notifier called after successful vault mutations.
+func WithRebuildNotifier(n *notify.RebuildNotifier) Option {
+	return func(o *options) {
+		o.notifier = n
+	}
+}
+
 // New creates a configured MCP server with all wiki tools registered.
 // searchSvc may be nil if search is not configured.
-func New(v *vault.Vault, searchSvc *service.SearchService) *server.MCPServer {
+func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *server.MCPServer {
+	var cfg options
+	for _, o := range opts {
+		o(&cfg)
+	}
 	s := server.NewMCPServer(
 		"home-wiki",
 		"0.1.0",
@@ -30,7 +49,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService) *server.MCPServer {
 	recent := service.NewRecentService(v)
 
 	registerResources(s, pages)
-	registerTools(s, lint, ingest, directory, logSvc, activity, pages, recent, searchSvc)
+	registerTools(s, v.Dir, cfg.notifier, lint, ingest, directory, logSvc, activity, pages, recent, searchSvc)
 
 	return s
 }
@@ -69,6 +88,8 @@ func NewStreamableHTTPServer(s *server.MCPServer) *server.StreamableHTTPServer {
 
 func registerTools(
 	s *server.MCPServer,
+	vaultDir string,
+	notifier *notify.RebuildNotifier,
 	lint *service.LintService,
 	ingest *service.IngestService,
 	directory *service.DirectoryService,
@@ -216,7 +237,7 @@ func registerTools(
 				mcp.Items(map[string]any{"type": "string"}),
 			),
 		),
-		activityHandler(s, activity),
+		activityHandler(s, activity, vaultDir, notifier),
 	)
 
 	s.AddTool(
@@ -252,7 +273,7 @@ func registerTools(
 				mcp.Description("Full markdown content. Should include YAML frontmatter with title, tags, and date fields."),
 			),
 		),
-		createPageHandler(s, pages),
+		createPageHandler(s, pages, vaultDir, notifier),
 	)
 
 	s.AddTool(
@@ -272,7 +293,7 @@ func registerTools(
 				mcp.Description("Complete replacement markdown content including YAML frontmatter."),
 			),
 		),
-		updatePageHandler(s, pages),
+		updatePageHandler(s, pages, vaultDir, notifier),
 	)
 
 	s.AddTool(
@@ -288,7 +309,7 @@ func registerTools(
 				mcp.Description("Relative path to the page to delete (e.g., project/old-page or project/old-page.md). The .md extension is added if omitted."),
 			),
 		),
-		deletePageHandler(s, pages),
+		deletePageHandler(s, pages, vaultDir, notifier),
 	)
 
 	s.AddTool(
@@ -316,7 +337,7 @@ func registerTools(
 				}),
 			),
 		),
-		patchPageHandler(s, pages),
+		patchPageHandler(s, pages, vaultDir, notifier),
 	)
 
 	s.AddTool(
