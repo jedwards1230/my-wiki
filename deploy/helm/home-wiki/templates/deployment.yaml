@@ -16,9 +16,6 @@
 {{- if and .Values.mcp.ingress.enabled (not .Values.auth.jwt.enabled) (not .Values.mcp.ingress.middleware) -}}
 {{- fail "mcp.ingress.enabled without auth exposes full write access — set auth.jwt.enabled or mcp.ingress.middleware." -}}
 {{- end -}}
-{{- if and .Values.auth.jwt.enabled (not .Values.mcp.enabled) -}}
-{{- fail "auth.jwt.enabled requires mcp.enabled — the auth middleware only guards the MCP endpoint. Enable mcp or disable auth." -}}
-{{- end -}}
 {{- if and .Values.auth.jwt.enabled (not .Values.auth.jwt.allowedGroups) (not .Values.auth.jwt.allowAnyUser) -}}
 {{- fail "auth.jwt.enabled with empty auth.jwt.allowedGroups requires auth.jwt.allowAnyUser=true to explicitly opt in to granting any authenticated user full write access." -}}
 {{- end -}}
