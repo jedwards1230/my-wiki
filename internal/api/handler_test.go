@@ -619,3 +619,114 @@ func TestAPIBypassesReadinessGate(t *testing.T) {
 	// Verify in the server test that /api/ routes work when not ready
 	// This is a documentation test - the actual bypass is in server.go
 }
+
+// --- Auth middleware integration tests ---
+
+// fakeAuthMW returns a middleware that rejects requests without a specific header.
+// This simulates JWT auth without needing a real OIDC provider.
+func fakeAuthMW() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func setupTestMuxWithAuth(t *testing.T) *http.ServeMux {
+	t.Helper()
+	v := setupTestVault(t)
+	sub := search.NewSubstringSearcher(v)
+	idx := search.NewIndexSearcher(v)
+	_ = idx.Build()
+	searchSvc := service.NewSearchService(sub, idx)
+	h := NewHandler(v, searchSvc, WithAuthMiddleware(fakeAuthMW()))
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	return mux
+}
+
+func TestAuthMutatingRoutesRequireAuth(t *testing.T) {
+	mux := setupTestMuxWithAuth(t)
+
+	mutatingRequests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{"PUT", "/api/pages/test-page.md", "---\ntitle: Test\ntags:\n  - test\ndate: 2026-01-01\n---\n\nContent.\n"},
+		{"DELETE", "/api/pages/about.md", ""},
+		{"PATCH", "/api/pages/project/alpha.md", `{"operations":[{"find":"Content.","replace":"New."}]}`},
+		{"POST", "/api/activity", `{"type":"note","title":"Test","time":"15:00"}`},
+		{"POST", "/api/ingest/generate", ""},
+		{"POST", "/api/directory/generate", ""},
+	}
+
+	for _, tc := range mutatingRequests {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			var body *strings.Reader
+			if tc.body != "" {
+				body = strings.NewReader(tc.body)
+			} else {
+				body = strings.NewReader("")
+			}
+			r := httptest.NewRequest(tc.method, tc.path, body)
+			if tc.body != "" && (tc.method == "PATCH" || tc.method == "POST") {
+				r.Header.Set("Content-Type", "application/json")
+			}
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, r)
+
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("expected 401 without auth, got %d", w.Code)
+			}
+		})
+	}
+}
+
+func TestAuthReadRoutesRemainOpen(t *testing.T) {
+	mux := setupTestMuxWithAuth(t)
+
+	readRequests := []struct {
+		path string
+	}{
+		{"/api/pages/index.md"},
+		{"/api/pages"},
+		{"/api/lint"},
+		{"/api/ingest"},
+		{"/api/directory"},
+		{"/api/log"},
+		{"/api/recent"},
+		{"/api/search?q=Alpha"},
+	}
+
+	for _, tc := range readRequests {
+		t.Run("GET "+tc.path, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, r)
+
+			if w.Code == http.StatusUnauthorized {
+				t.Errorf("GET %s should not require auth, got 401", tc.path)
+			}
+		})
+	}
+}
+
+func TestAuthMutatingRoutesPassWithAuth(t *testing.T) {
+	mux := setupTestMuxWithAuth(t)
+
+	// PUT with valid auth header should succeed
+	body := "---\ntitle: Auth Test\ntags:\n  - test\ndate: 2026-01-01\n---\n\nContent.\n"
+	r := httptest.NewRequest(http.MethodPut, "/api/pages/auth-test.md", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer fake-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code == http.StatusUnauthorized {
+		t.Errorf("PUT with auth should not get 401, got %d", w.Code)
+	}
+}

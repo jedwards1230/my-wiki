@@ -40,6 +40,38 @@ func TestAuthConfigFromEnvBasic(t *testing.T) {
 	}
 }
 
+func TestAuthConfigFromEnvResourceMetadataURL(t *testing.T) {
+	t.Setenv("WIKI_AUTH_ISSUER", "https://auth.example.com")
+	t.Setenv("WIKI_AUTH_AUDIENCE", "wiki")
+	t.Setenv("WIKI_AUTH_ALLOWED_GROUPS", "admins")
+	t.Setenv("WIKI_AUTH_ALLOW_ANY_USER", "")
+	t.Setenv("WIKI_AUTH_RESOURCE_METADATA_URL", "https://wiki.example.com/.well-known/oauth-protected-resource")
+
+	cfg := authConfigFromEnv()
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.ResourceMetadataURL != "https://wiki.example.com/.well-known/oauth-protected-resource" {
+		t.Errorf("ResourceMetadataURL = %q", cfg.ResourceMetadataURL)
+	}
+}
+
+func TestAuthConfigFromEnvResourceMetadataURLEmpty(t *testing.T) {
+	t.Setenv("WIKI_AUTH_ISSUER", "https://auth.example.com")
+	t.Setenv("WIKI_AUTH_AUDIENCE", "wiki")
+	t.Setenv("WIKI_AUTH_ALLOWED_GROUPS", "admins")
+	t.Setenv("WIKI_AUTH_ALLOW_ANY_USER", "")
+	t.Setenv("WIKI_AUTH_RESOURCE_METADATA_URL", "")
+
+	cfg := authConfigFromEnv()
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.ResourceMetadataURL != "" {
+		t.Errorf("ResourceMetadataURL should be empty, got %q", cfg.ResourceMetadataURL)
+	}
+}
+
 func TestAuthConfigFromEnvAllowAnyUser(t *testing.T) {
 	cases := []struct {
 		value string

@@ -55,6 +55,11 @@ type AuthConfig struct {
 	// requirement. Only set this if you trust every user your OIDC provider will
 	// issue a token for (e.g. a single-tenant Authentik instance with one application).
 	AllowAnyUser bool
+
+	// ResourceMetadataURL is the RFC 9728 Protected Resource Metadata URL.
+	// When set, 401 responses include a WWW-Authenticate header pointing clients
+	// to this URL for OAuth discovery (required by MCP spec 2025-06-18).
+	ResourceMetadataURL string
 }
 
 // NewAuth builds a JWT validation middleware backed by go-oidc. It performs OIDC
@@ -96,17 +101,28 @@ func NewAuth(ctx context.Context, cfg AuthConfig) (func(http.Handler) http.Handl
 		ClientID: cfg.Audience,
 	})
 
+	// Build the WWW-Authenticate header value once at startup.
+	wwwAuth := "Bearer"
+	if cfg.ResourceMetadataURL != "" {
+		wwwAuth = fmt.Sprintf(`Bearer resource_metadata=%q`, cfg.ResourceMetadataURL)
+	}
+
+	unauthorized := func(w http.ResponseWriter) {
+		w.Header().Set("WWW-Authenticate", wwwAuth)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw := extractBearerToken(r)
 			if raw == "" {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				unauthorized(w)
 				return
 			}
 
 			tok, err := verifier.Verify(r.Context(), raw)
 			if err != nil {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				unauthorized(w)
 				return
 			}
 
@@ -118,7 +134,7 @@ func NewAuth(ctx context.Context, cfg AuthConfig) (func(http.Handler) http.Handl
 				Groups            []string `json:"groups"`
 			}
 			if err := tok.Claims(&claims); err != nil {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				unauthorized(w)
 				return
 			}
 
