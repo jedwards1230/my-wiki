@@ -109,7 +109,7 @@ func (h *Handler) markDirty(relPath string) {
 	if !strings.HasSuffix(relPath, ".md") {
 		relPath += ".md"
 	}
-	h.notifier.MarkDirty(filepath.Join(h.vaultDir, relPath))
+	h.notifier.MarkDirty(filepath.Clean(filepath.Join(h.vaultDir, relPath)))
 }
 
 // response is the JSON envelope for API responses.

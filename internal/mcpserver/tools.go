@@ -25,7 +25,7 @@ func markDirty(notifier *notify.RebuildNotifier, vaultDir, relPath string) {
 	if !strings.HasSuffix(relPath, ".md") {
 		relPath += ".md"
 	}
-	notifier.MarkDirty(filepath.Join(vaultDir, relPath))
+	notifier.MarkDirty(filepath.Clean(filepath.Join(vaultDir, relPath)))
 }
 
 // mcpLog sends a structured log message to the current MCP client session and tees
@@ -352,7 +352,9 @@ func deletePageHandler(s *server.MCPServer, svc *service.PageService, vaultDir s
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		// Mark the parent directory dirty (file is gone, but index needs regeneration)
+		// Mark deleted path dirty to trigger index regeneration.
+		// os.Chtimes will no-op (IsNotExist ignored in flush),
+		// but the flush still regenerates directory index and ingest queue.
 		markDirty(notifier, vaultDir, path)
 		mcpLog(ctx, s, mcp.LoggingLevelWarning, "vault", map[string]any{
 			"action": "delete_page", "path": path,

@@ -211,6 +211,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		}
 		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
 	})
+	defer notifier.Close()
 
 	var apiOpts []api.HandlerOption
 	if authMWs != nil {
@@ -360,6 +361,7 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 		}
 		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
 	})
+	defer mcpNotifier.Close()
 
 	mcpSrv := mcpserver.New(v, nil, mcpserver.WithRebuildNotifier(mcpNotifier))
 	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
