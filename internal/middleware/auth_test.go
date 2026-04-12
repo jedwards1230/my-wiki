@@ -315,3 +315,72 @@ func TestAuthBadSignature(t *testing.T) {
 		t.Errorf("expected 401 for bad signature, got %d", w.Code)
 	}
 }
+
+// --- WWW-Authenticate header tests ---
+
+func TestAuthWWWAuthenticateHeaderWithResourceMetadata(t *testing.T) {
+	o := newTestOIDC(t)
+	metaURL := "https://wiki.lilbro.cloud/.well-known/oauth-protected-resource"
+	cfg := AuthConfig{
+		IssuerURL:           o.issuer,
+		Audience:            testAudience,
+		AllowAnyUser:        true,
+		ResourceMetadataURL: metaURL,
+	}
+
+	// Missing token — should get WWW-Authenticate with resource_metadata
+	w, _ := runAuth(t, cfg, "")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+	got := w.Header().Get("WWW-Authenticate")
+	want := fmt.Sprintf(`Bearer resource_metadata=%q`, metaURL)
+	if got != want {
+		t.Errorf("WWW-Authenticate = %q, want %q", got, want)
+	}
+
+	// Invalid token — same header
+	w2, _ := runAuth(t, cfg, "bad-token")
+	got2 := w2.Header().Get("WWW-Authenticate")
+	if got2 != want {
+		t.Errorf("WWW-Authenticate on invalid token = %q, want %q", got2, want)
+	}
+}
+
+func TestAuthWWWAuthenticateHeaderWithoutResourceMetadata(t *testing.T) {
+	o := newTestOIDC(t)
+	cfg := AuthConfig{
+		IssuerURL:    o.issuer,
+		Audience:     testAudience,
+		AllowAnyUser: true,
+		// ResourceMetadataURL not set
+	}
+
+	w, _ := runAuth(t, cfg, "")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+	got := w.Header().Get("WWW-Authenticate")
+	if got != "Bearer" {
+		t.Errorf("WWW-Authenticate = %q, want %q", got, "Bearer")
+	}
+}
+
+func TestAuthWWWAuthenticateHeaderAbsentOnSuccess(t *testing.T) {
+	o := newTestOIDC(t)
+	token := o.signToken(t, nil)
+	cfg := AuthConfig{
+		IssuerURL:           o.issuer,
+		Audience:            testAudience,
+		AllowAnyUser:        true,
+		ResourceMetadataURL: "https://example.com/.well-known/oauth-protected-resource",
+	}
+
+	w, _ := runAuth(t, cfg, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); got != "" {
+		t.Errorf("WWW-Authenticate should be absent on success, got %q", got)
+	}
+}
