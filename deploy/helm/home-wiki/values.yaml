@@ -87,24 +87,46 @@ resources:
 mcp:
   enabled: false
   port: 8081
+  # Separate Ingress resource for /mcp path.
+  ingress:
+    enabled: false
+    middleware: ""  # Traefik middleware (e.g., kube-system-redirect-lan-auth@kubernetescrd)
 
-# OIDC JWT auth for the MCP /mcp endpoint. When enabled, the wiki-server
-# performs OIDC discovery at startup against issuer and verifies incoming
-# bearer tokens (signature, iss, aud, exp) against the provider's JWKS.
-# Requires mcp.enabled=true (the auth middleware only guards /mcp).
 auth:
-  enabled: false
-  # Must exactly match the iss claim emitted by your OIDC provider (e.g. Authentik).
-  issuer: ""
-  # OAuth2 client ID / expected aud claim.
-  audience: ""
-  # Group allowlist — the token's groups claim must contain at least one entry.
-  # Leaving this empty requires allowAnyUser=true as an explicit opt-in.
-  allowedGroups: []
-  # Fail-closed default: when allowedGroups is empty, the server refuses to start
-  # unless this is set to true. Only enable when you trust every user your OIDC
-  # provider will issue a token for (e.g. a single-tenant Authentik instance).
-  allowAnyUser: false
+  # Server-level JWT validation (Go middleware).
+  # Protects /mcp and mutating /api/ routes.
+  jwt:
+    enabled: false
+    # Must exactly match the iss claim emitted by your OIDC provider (e.g. Authentik).
+    issuer: ""
+    # OAuth2 client ID / expected aud claim.
+    audience: ""
+    # Group allowlist — the token's groups claim must contain at least one entry.
+    # Leaving this empty requires allowAnyUser=true as an explicit opt-in.
+    allowedGroups: []
+    # Fail-closed default: when allowedGroups is empty, the server refuses to start
+    # unless this is set to true. Only enable when you trust every user your OIDC
+    # provider will issue a token for (e.g. a single-tenant Authentik instance).
+    allowAnyUser: false
+    # RFC 9728 Protected Resource Metadata URL — when set, 401 responses include
+    # WWW-Authenticate header for MCP OAuth discovery.
+    resourceMetadataUrl: ""
+
+  # OAuth discovery sidecar (nginx serving RFC 9728 + 8414 metadata).
+  # Required for Claude Desktop / Custom Connectors to discover how to auth.
+  discovery:
+    enabled: false
+    providerSlug: ""        # Authentik provider slug (e.g., "home-wiki")
+    resourceUrl: ""         # External URL (e.g., "https://wiki.lilbro.cloud")
+    authentikInternalUrl: "http://authentik-server.web-services.svc.cluster.local:9000"
+    authentikExternalHost: "auth.lilbro.cloud"
+    resources:
+      requests:
+        cpu: 5m
+        memory: 16Mi
+      limits:
+        cpu: 50m
+        memory: 32Mi
 
 metrics:
   enabled: false
