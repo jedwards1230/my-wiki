@@ -11,7 +11,7 @@ metadata:
 data:
   nginx.conf: |
     # Resolver for proxy_pass with variables
-    resolver 10.43.0.10 valid=30s;  # CoreDNS
+    resolver kube-dns.kube-system.svc.cluster.local valid=30s;
 
     # Rate limiting for /token endpoint (credential-stuffing protection)
     limit_req_zone $binary_remote_addr zone=token_limit:1m rate=10r/s;
@@ -20,7 +20,7 @@ data:
         listen 8090;
 
         # RFC 9728: Protected Resource Metadata
-        location /.well-known/oauth-protected-resource {
+        location = /.well-known/oauth-protected-resource {
             default_type application/json;
             alias /etc/nginx/metadata/resource-server.json;
             add_header Access-Control-Allow-Origin "*";
@@ -38,7 +38,7 @@ data:
         }
 
         # RFC 8414: Authorization Server Metadata
-        location /.well-known/oauth-authorization-server {
+        location = /.well-known/oauth-authorization-server {
             default_type application/json;
             alias /etc/nginx/metadata/authorization-server.json;
             add_header Access-Control-Allow-Origin "*";
@@ -65,14 +65,13 @@ data:
             add_header Access-Control-Allow-Origin "*";
         }
 
-        # JWKS endpoint — proxy to Authentik
+        # JWKS endpoint — proxy to Authentik (no CORS — server-side validation only)
         location /application/o/{{ .Values.auth.discovery.providerSlug }}/jwks/ {
             proxy_pass {{ .Values.auth.discovery.authentikInternalUrl }}/application/o/{{ .Values.auth.discovery.providerSlug }}/jwks/;
             proxy_set_header Host {{ .Values.auth.discovery.authentikExternalHost }};
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto https;
-            add_header Access-Control-Allow-Origin "*";
             add_header Cache-Control "max-age=3600";
         }
 
@@ -100,11 +99,17 @@ data:
         }
     }
 
+  # RFC 9728: Protected Resource Metadata
+  # authorization_servers uses the resourceUrl (wiki domain) because the wiki serves
+  # AS metadata via its nginx sidecar proxy. This is a proxy pattern — the actual
+  # token issuer is Authentik (auth.jwt.issuer). Claude Desktop follows the
+  # authorization_servers URL to discover endpoints, which the sidecar proxies to
+  # Authentik. See the design doc for the known limitation around issuer mismatch.
   resource-server.json: |
     {
-      "resource": {{ .Values.auth.discovery.resourceUrl | quote }},
+      "resource": {{ .Values.auth.discovery.resourceUrl | trimSuffix "/" | quote }},
       "authorization_servers": [
-        {{ printf "%s/" .Values.auth.discovery.resourceUrl | quote }}
+        {{ printf "%s/" (.Values.auth.discovery.resourceUrl | trimSuffix "/") | quote }}
       ],
       "scopes_supported": [
         "openid",
@@ -120,11 +125,16 @@ data:
       ]
     }
 
+  # RFC 8414: Authorization Server Metadata
+  # issuer uses the resourceUrl (wiki domain) because this metadata is served from
+  # that domain. Per RFC 8414 Section 3, the issuer MUST match the domain the metadata
+  # is retrieved from. The actual JWT iss claim comes from Authentik — this is a known
+  # proxy pattern limitation (see design doc).
   authorization-server.json: |
     {
-      "issuer": {{ printf "%s/" .Values.auth.discovery.resourceUrl | quote }},
-      "authorization_endpoint": {{ printf "%s/authorize" .Values.auth.discovery.resourceUrl | quote }},
-      "token_endpoint": {{ printf "%s/token" .Values.auth.discovery.resourceUrl | quote }},
+      "issuer": {{ printf "%s/" (.Values.auth.discovery.resourceUrl | trimSuffix "/") | quote }},
+      "authorization_endpoint": {{ printf "%s/authorize" (.Values.auth.discovery.resourceUrl | trimSuffix "/") | quote }},
+      "token_endpoint": {{ printf "%s/token" (.Values.auth.discovery.resourceUrl | trimSuffix "/") | quote }},
       "jwks_uri": {{ printf "https://%s/application/o/%s/jwks/" .Values.auth.discovery.authentikExternalHost .Values.auth.discovery.providerSlug | quote }},
       "scopes_supported": ["openid", "profile", "email", "groups"],
       "response_types_supported": ["code"],
