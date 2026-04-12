@@ -71,9 +71,10 @@ func authConfigFromEnv() *middleware.AuthConfig {
 		return nil
 	}
 	cfg := &middleware.AuthConfig{
-		IssuerURL:    issuer,
-		Audience:     os.Getenv("WIKI_AUTH_AUDIENCE"),
-		AllowAnyUser: strings.EqualFold(os.Getenv("WIKI_AUTH_ALLOW_ANY_USER"), "true"),
+		IssuerURL:           issuer,
+		Audience:            os.Getenv("WIKI_AUTH_AUDIENCE"),
+		AllowAnyUser:        strings.EqualFold(os.Getenv("WIKI_AUTH_ALLOW_ANY_USER"), "true"),
+		ResourceMetadataURL: os.Getenv("WIKI_AUTH_RESOURCE_METADATA_URL"),
 	}
 	if groups := os.Getenv("WIKI_AUTH_ALLOWED_GROUPS"); groups != "" {
 		for _, g := range strings.Split(groups, ",") {
@@ -110,14 +111,15 @@ func buildAuthMiddleware(ctx context.Context, logger *slog.Logger, cfg *middlewa
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("MCP auth enabled",
+	logger.Info("auth enabled",
 		"issuer", cfg.IssuerURL,
 		"audience", cfg.Audience,
 		"allowed_groups", cfg.AllowedGroups,
 		"allow_any_user", cfg.AllowAnyUser,
+		"resource_metadata_url", cfg.ResourceMetadataURL,
 	)
 	if cfg.AllowAnyUser {
-		logger.Warn("MCP auth enabled with AllowAnyUser=true; every authenticated token has full write access. Set WIKI_AUTH_ALLOWED_GROUPS to restrict.")
+		logger.Warn("auth enabled with AllowAnyUser=true; every authenticated token has full write access. Set WIKI_AUTH_ALLOWED_GROUPS to restrict.")
 	}
 	return mw, nil
 }
@@ -140,10 +142,10 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// structured logs on the same JSON stream as the server.
 	slog.SetDefault(logger)
 
-	// Fail fast when auth is configured but the MCP server is disabled — the
-	// auth env vars would otherwise silently no-op, giving a false sense of security.
-	if mcpPort == 0 && authConfigFromEnv() != nil {
-		return fmt.Errorf("WIKI_AUTH_ISSUER is set but MCP server is disabled; set --mcp-port or WIKI_MCP_PORT to enable /mcp with auth, or unset WIKI_AUTH_ISSUER")
+	// Build auth middleware early — it protects both the REST API and MCP server.
+	authMW, err := buildAuthMiddleware(context.Background(), logger, authConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("auth setup: %w", err)
 	}
 
 	cfg := server.Config{
@@ -170,7 +172,11 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	}
 	searchSvc := service.NewSearchService(engines...)
 
-	apiHandler := api.NewHandler(v, searchSvc)
+	var apiOpts []api.HandlerOption
+	if authMW != nil {
+		apiOpts = append(apiOpts, api.WithAuthMiddleware(authMW))
+	}
+	apiHandler := api.NewHandler(v, searchSvc, apiOpts...)
 
 	srv := server.New(cfg, publicFS, vaultFS, logger,
 		server.WithAPIRoutes(apiHandler.RegisterRoutes),
@@ -225,11 +231,6 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	if mcpPort > 0 {
 		mcpSrv := mcpserver.New(v, searchSvc)
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
-
-		authMW, err := buildAuthMiddleware(context.Background(), logger, authConfigFromEnv())
-		if err != nil {
-			return fmt.Errorf("MCP auth setup: %w", err)
-		}
 
 		mux := http.NewServeMux()
 		mux.Handle("/mcp", wrapAuth(httpTransport, authMW))
