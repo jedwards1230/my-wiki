@@ -52,6 +52,7 @@ func (h *Handler) handlePageWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.markDirty(path)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
 		"path":   path,
@@ -70,6 +71,7 @@ func (h *Handler) handlePageDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.markDirty(path)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -111,6 +113,7 @@ func (h *Handler) handlePagePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.markDirty(path)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"path":    path,
 		"content": content,

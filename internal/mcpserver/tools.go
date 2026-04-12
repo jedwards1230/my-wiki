@@ -5,12 +5,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/jedwards1230/home-wiki/internal/middleware"
+	"github.com/jedwards1230/home-wiki/internal/notify"
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+// markDirty notifies the rebuild notifier about a mutated vault path.
+// relPath is relative to vaultDir; .md extension is added if missing.
+func markDirty(notifier *notify.RebuildNotifier, vaultDir, relPath string) {
+	if notifier == nil {
+		return
+	}
+	if !strings.HasSuffix(relPath, ".md") {
+		relPath += ".md"
+	}
+	notifier.MarkDirty(filepath.Clean(filepath.Join(vaultDir, relPath)))
+}
 
 // mcpLog sends a structured log message to the current MCP client session and tees
 // the same event to slog.Default() so there is a durable server-side audit trail
@@ -224,7 +240,7 @@ func logLintHandler(svc *service.LogService) server.ToolHandlerFunc {
 	}
 }
 
-func activityHandler(s *server.MCPServer, svc *service.ActivityService) server.ToolHandlerFunc {
+func activityHandler(s *server.MCPServer, svc *service.ActivityService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		touched := getStringArrayArg(req, "touched")
 		entry := service.ActivityEntry{
@@ -239,6 +255,9 @@ func activityHandler(s *server.MCPServer, svc *service.ActivityService) server.T
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		today := time.Now().Format("2006-01-02")
+		markDirty(notifier, vaultDir, fmt.Sprintf("meta/activity/%s", today))
+		markDirty(notifier, vaultDir, "meta/log")
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "activity", map[string]any{
 			"action": "log", "type": entry.Type, "title": entry.Title,
 		})
@@ -262,7 +281,7 @@ func readPageHandler(svc *service.PageService) server.ToolHandlerFunc {
 	}
 }
 
-func createPageHandler(s *server.MCPServer, svc *service.PageService) server.ToolHandlerFunc {
+func createPageHandler(s *server.MCPServer, svc *service.PageService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		content := getStringArg(req, "content")
@@ -284,6 +303,7 @@ func createPageHandler(s *server.MCPServer, svc *service.PageService) server.Too
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		markDirty(notifier, vaultDir, path)
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
 			"action": "create_page", "path": path,
 		})
@@ -291,7 +311,7 @@ func createPageHandler(s *server.MCPServer, svc *service.PageService) server.Too
 	}
 }
 
-func updatePageHandler(s *server.MCPServer, svc *service.PageService) server.ToolHandlerFunc {
+func updatePageHandler(s *server.MCPServer, svc *service.PageService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		content := getStringArg(req, "content")
@@ -313,6 +333,7 @@ func updatePageHandler(s *server.MCPServer, svc *service.PageService) server.Too
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		markDirty(notifier, vaultDir, path)
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
 			"action": "update_page", "path": path,
 		})
@@ -320,7 +341,7 @@ func updatePageHandler(s *server.MCPServer, svc *service.PageService) server.Too
 	}
 }
 
-func deletePageHandler(s *server.MCPServer, svc *service.PageService) server.ToolHandlerFunc {
+func deletePageHandler(s *server.MCPServer, svc *service.PageService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		if path == "" {
@@ -331,6 +352,10 @@ func deletePageHandler(s *server.MCPServer, svc *service.PageService) server.Too
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		// Mark deleted path dirty to trigger index regeneration.
+		// os.Chtimes will no-op (IsNotExist ignored in flush),
+		// but the flush still regenerates directory index and ingest queue.
+		markDirty(notifier, vaultDir, path)
 		mcpLog(ctx, s, mcp.LoggingLevelWarning, "vault", map[string]any{
 			"action": "delete_page", "path": path,
 		})
@@ -338,7 +363,7 @@ func deletePageHandler(s *server.MCPServer, svc *service.PageService) server.Too
 	}
 }
 
-func patchPageHandler(s *server.MCPServer, svc *service.PageService) server.ToolHandlerFunc {
+func patchPageHandler(s *server.MCPServer, svc *service.PageService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		if path == "" {
@@ -359,6 +384,7 @@ func patchPageHandler(s *server.MCPServer, svc *service.PageService) server.Tool
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		markDirty(notifier, vaultDir, path)
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
 			"action": "patch_page", "path": path, "operations": len(ops),
 		})
