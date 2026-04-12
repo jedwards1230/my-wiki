@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -628,7 +629,9 @@ func fakeAuthMW() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("Authorization") == "" {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = fmt.Fprintln(w, `{"error":"unauthorized"}`)
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -682,6 +685,10 @@ func TestAuthMutatingRoutesRequireAuth(t *testing.T) {
 
 			if w.Code != http.StatusUnauthorized {
 				t.Errorf("expected 401 without auth, got %d", w.Code)
+			}
+			ct := w.Header().Get("Content-Type")
+			if !strings.Contains(ct, "application/json") {
+				t.Errorf("expected JSON content-type on 401, got %q", ct)
 			}
 		})
 	}
