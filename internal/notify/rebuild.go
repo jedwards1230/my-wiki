@@ -12,13 +12,18 @@ type RebuildNotifier struct {
 	mu       sync.Mutex
 	dirty    map[string]struct{}
 	timer    *time.Timer
+	gen      uint64 // generation counter — stale timer callbacks no-op
 	debounce time.Duration
 	onFlush  func(paths []string)
 }
 
 // New creates a RebuildNotifier that calls onFlush with all dirty paths
 // after debounce duration of inactivity following the last MarkDirty call.
+// Panics if onFlush is nil.
 func New(debounce time.Duration, onFlush func(paths []string)) *RebuildNotifier {
+	if onFlush == nil {
+		panic("notify: onFlush must not be nil")
+	}
 	return &RebuildNotifier{
 		dirty:    make(map[string]struct{}),
 		debounce: debounce,
@@ -33,10 +38,28 @@ func (n *RebuildNotifier) MarkDirty(path string) {
 
 	n.dirty[path] = struct{}{}
 
+	// Increment generation so any in-flight timer callback becomes stale.
+	n.gen++
+	curGen := n.gen
+
 	if n.timer != nil {
 		n.timer.Stop()
 	}
-	n.timer = time.AfterFunc(n.debounce, n.flush)
+	n.timer = time.AfterFunc(n.debounce, func() {
+		n.flushIfCurrent(curGen)
+	})
+}
+
+// flushIfCurrent runs flush only if the generation matches (no newer MarkDirty
+// calls have been made since this callback was scheduled).
+func (n *RebuildNotifier) flushIfCurrent(gen uint64) {
+	n.mu.Lock()
+	if n.gen != gen {
+		n.mu.Unlock()
+		return
+	}
+	n.mu.Unlock()
+	n.flush()
 }
 
 // flush collects dirty paths, clears the set, and calls onFlush.
@@ -64,6 +87,7 @@ func (n *RebuildNotifier) Close() {
 		n.timer.Stop()
 		n.timer = nil
 	}
+	n.gen++ // invalidate any in-flight callbacks
 	n.mu.Unlock()
 
 	n.flush()
