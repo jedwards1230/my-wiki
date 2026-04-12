@@ -1,8 +1,23 @@
-{{- if and .Values.auth.enabled (not .Values.mcp.enabled) -}}
-{{- fail "auth.enabled requires mcp.enabled — the auth middleware only guards the MCP endpoint. Enable mcp or disable auth." -}}
+{{- if and .Values.auth.discovery.enabled (not .Values.auth.jwt.enabled) -}}
+{{- fail "auth.discovery.enabled requires auth.jwt.enabled — cannot advertise OAuth protection without enforcing it." -}}
 {{- end -}}
-{{- if and .Values.auth.enabled (not .Values.auth.allowedGroups) (not .Values.auth.allowAnyUser) -}}
-{{- fail "auth.enabled with empty auth.allowedGroups requires auth.allowAnyUser=true to explicitly opt in to granting any authenticated user full write access." -}}
+{{- if and .Values.auth.discovery.enabled (not .Values.mcp.enabled) -}}
+{{- fail "auth.discovery.enabled requires mcp.enabled — discovery sidecar serves MCP OAuth metadata; enable mcp first." -}}
+{{- end -}}
+{{- if and .Values.auth.discovery.enabled (not .Values.ingress.enabled) -}}
+{{- fail "auth.discovery.enabled requires ingress.enabled — discovery endpoints need a public domain to serve from." -}}
+{{- end -}}
+{{- if and .Values.auth.discovery.enabled (not .Values.auth.jwt.resourceMetadataUrl) -}}
+{{- fail "auth.discovery.enabled requires auth.jwt.resourceMetadataUrl — discovery sidecar requires it for RFC 9728 compliance." -}}
+{{- end -}}
+{{- if and .Values.mcp.ingress.enabled (not .Values.mcp.enabled) -}}
+{{- fail "mcp.ingress.enabled requires mcp.enabled — MCP ingress requires mcp.enabled." -}}
+{{- end -}}
+{{- if and .Values.mcp.ingress.enabled (not .Values.auth.jwt.enabled) (not .Values.mcp.ingress.middleware) -}}
+{{- fail "mcp.ingress.enabled without auth exposes full write access — set auth.jwt.enabled or mcp.ingress.middleware." -}}
+{{- end -}}
+{{- if and .Values.auth.jwt.enabled (not .Values.auth.jwt.allowedGroups) (not .Values.auth.jwt.allowAnyUser) -}}
+{{- fail "auth.jwt.enabled with empty auth.jwt.allowedGroups requires auth.jwt.allowAnyUser=true to explicitly opt in to granting any authenticated user full write access." -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -180,18 +195,22 @@ spec:
               value: "/data/vault"
             - name: WIKI_PORT
               value: "8080"
-            {{- if .Values.auth.enabled }}
+            {{- if .Values.auth.jwt.enabled }}
             - name: WIKI_AUTH_ISSUER
-              value: {{ required "auth.issuer is required when auth.enabled=true" .Values.auth.issuer | quote }}
+              value: {{ required "auth.jwt.issuer is required when auth.jwt.enabled=true" .Values.auth.jwt.issuer | quote }}
             - name: WIKI_AUTH_AUDIENCE
-              value: {{ required "auth.audience is required when auth.enabled=true" .Values.auth.audience | quote }}
-            {{- if .Values.auth.allowedGroups }}
+              value: {{ required "auth.jwt.audience is required when auth.jwt.enabled=true" .Values.auth.jwt.audience | quote }}
+            {{- if .Values.auth.jwt.allowedGroups }}
             - name: WIKI_AUTH_ALLOWED_GROUPS
-              value: {{ join "," .Values.auth.allowedGroups | quote }}
+              value: {{ join "," .Values.auth.jwt.allowedGroups | quote }}
             {{- end }}
-            {{- if .Values.auth.allowAnyUser }}
+            {{- if .Values.auth.jwt.allowAnyUser }}
             - name: WIKI_AUTH_ALLOW_ANY_USER
               value: "true"
+            {{- end }}
+            {{- if .Values.auth.jwt.resourceMetadataUrl }}
+            - name: WIKI_AUTH_RESOURCE_METADATA_URL
+              value: {{ .Values.auth.jwt.resourceMetadataUrl | quote }}
             {{- end }}
             {{- end }}
           ports:
@@ -223,6 +242,44 @@ spec:
           resources:
             {{- toYaml .Values.resources.wikiServer | nindent 12 }}
 
+        {{- if .Values.auth.discovery.enabled }}
+        - name: oauth-metadata
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - name: oauth
+              containerPort: 8090
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: oauth-metadata-conf
+              mountPath: /etc/nginx/conf.d
+            - name: oauth-metadata-json
+              mountPath: /etc/nginx/metadata
+            - name: nginx-tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.auth.discovery.resources | nindent 12 }}
+        {{- end }}
+
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -240,3 +297,25 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.auth.discovery.enabled }}
+        - name: oauth-metadata-conf
+          configMap:
+            name: {{ .Release.Name }}-oauth-metadata
+            items:
+              - key: nginx.conf
+                path: default.conf
+        - name: oauth-metadata-json
+          configMap:
+            name: {{ .Release.Name }}-oauth-metadata
+            items:
+              - key: resource-server.json
+                path: resource-server.json
+              - key: authorization-server.json
+                path: authorization-server.json
+        - name: nginx-tmp
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        {{- end }}
