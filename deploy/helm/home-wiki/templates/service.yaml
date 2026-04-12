@@ -20,6 +20,12 @@ spec:
       protocol: TCP
       name: mcp
     {{- end }}
+    {{- if .Values.auth.discovery.enabled }}
+    - port: 8090
+      targetPort: oauth
+      protocol: TCP
+      name: oauth-metadata
+    {{- end }}
   selector:
     app.kubernetes.io/name: wiki
     app.kubernetes.io/instance: {{ .Release.Name }}
