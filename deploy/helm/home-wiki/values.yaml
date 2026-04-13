@@ -28,7 +28,7 @@ obsidian:
 quartz:
   concurrency: 4
   baseUrl: "wiki.example.com"
-  repoUrl: "https://github.com/home-wiki/home-wiki/releases"
+  repoUrl: "https://github.com/jedwards1230/home-wiki/releases"
 
 persistence:
   enabled: true
