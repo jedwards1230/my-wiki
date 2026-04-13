@@ -321,21 +321,8 @@ func renderRootIndex(b *strings.Builder, root *dirNode, allPages []DirectoryEntr
 func renderMidIndex(b *strings.Builder, node *dirNode) {
 	allBelow := collectPages(node)
 
-	// Direct pages in this dir
-	if len(node.pages) > 0 {
-		b.WriteString("\n## Pages\n\n")
-		renderPageTable(b, node.pages)
-	}
-
-	// Subdirectories
-	if len(node.children) > 0 {
-		b.WriteString("\n## Subdirectories\n\n")
-		for _, child := range node.children {
-			childCount := countPages(child)
-			childName := filepath.Base(child.rel)
-			fmt.Fprintf(b, "- [[%s/index|%s/]] (%d pages)\n", child.rel, childName, childCount)
-		}
-	}
+	b.WriteString("\n## Directory\n\n")
+	renderSubdirTree(b, node, 0, 1)
 
 	// Scoped tags
 	tags := collectTags(allBelow)
@@ -346,26 +333,43 @@ func renderMidIndex(b *strings.Builder, node *dirNode) {
 }
 
 func renderLeafIndex(b *strings.Builder, node *dirNode) {
-	renderPageTable(b, node.pages)
+	b.WriteString("\n## Directory\n\n")
+	renderSubdirTree(b, node, 0, 0)
+
+	// Scoped tags
+	tags := collectTags(node.pages)
+	if len(tags) > 0 {
+		b.WriteString("\n## Tags\n\n")
+		renderTagList(b, tags)
+	}
 }
 
-func renderPageTable(b *strings.Builder, pages []DirectoryEntry) {
-	b.WriteString("| Page | Description | Tags |\n")
-	b.WriteString("|------|-------------|------|\n")
-	for _, e := range pages {
-		wikilink := makeWikilink(e.Path, e.Title)
-		desc := e.Description
-		if desc == "" {
-			desc = "—"
+// renderSubdirTree writes a bullet list of pages and subdirectories for
+// subdirectory index files. Pages are listed first, then child directories.
+// maxDepth controls how many levels of children to expand (0 = pages only).
+func renderSubdirTree(b *strings.Builder, node *dirNode, depth, maxDepth int) {
+	indent := strings.Repeat("  ", depth)
+
+	// Pages first
+	for _, p := range node.pages {
+		wikilink := makeWikilink(p.Path, p.Title)
+		if p.Description != "" {
+			description := strings.Join(strings.Fields(p.Description), " ")
+			fmt.Fprintf(b, "%s- %s — %s\n", indent, wikilink, description)
+		} else {
+			fmt.Fprintf(b, "%s- %s\n", indent, wikilink)
 		}
-		desc = strings.ReplaceAll(desc, "|", "\\|")
-		desc = strings.ReplaceAll(desc, "\n", " ")
-		tags := e.Tags
-		if tags == "" {
-			tags = "—"
+	}
+
+	// Child directories
+	for _, child := range node.children {
+		childName := filepath.Base(child.rel)
+		childCount := countPages(child)
+		fmt.Fprintf(b, "%s- [[%s/index\\|%s/]] (%d pages)\n", indent, child.rel, childName, childCount)
+
+		if depth < maxDepth {
+			renderSubdirTree(b, child, depth+1, maxDepth)
 		}
-		tags = strings.ReplaceAll(tags, ",", ", ")
-		fmt.Fprintf(b, "| %s | %s | %s |\n", wikilink, desc, tags)
 	}
 }
 
