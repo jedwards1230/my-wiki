@@ -39,7 +39,12 @@ func (h *Handler) handlePageWrite(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read body (max 10MB)")
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large (max 10MB)")
+		} else {
+			writeError(w, http.StatusBadRequest, "failed to read body")
+		}
 		return
 	}
 
