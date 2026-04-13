@@ -283,7 +283,9 @@ func renderIndex(node *dirNode, allPages []DirectoryEntry, today string) string 
 
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "title: %s\n", title)
-	b.WriteString("tags:\n  - meta\n")
+	if !isRoot {
+		b.WriteString("tags:\n  - meta\n")
+	}
 	fmt.Fprintf(&b, "date: %s\n", today)
 	fmt.Fprintf(&b, "description: %s\n", desc)
 	fmt.Fprintf(&b, "pages: %d\n", pageCount)
@@ -303,8 +305,7 @@ func renderIndex(node *dirNode, allPages []DirectoryEntry, today string) string 
 
 func renderRootIndex(b *strings.Builder, root *dirNode, allPages []DirectoryEntry) {
 	b.WriteString("A shared knowledge base — maintained by humans and AI agents.\n\n")
-	b.WriteString("See [[meta/schema]] for the operating manual. See [[meta/log]] for recent activity.\n\n")
-	fmt.Fprintf(b, "%d directories.\n", len(root.children))
+	b.WriteString("See [[meta/schema]] for the operating manual. See [[meta/log]] for recent activity.\n")
 
 	// Directory tree
 	b.WriteString("\n## Directory\n\n")
