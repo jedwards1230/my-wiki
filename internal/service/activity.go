@@ -2,7 +2,7 @@ package service
 
 import (
 	"bufio"
-	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -153,7 +153,7 @@ func (s *ActivityService) updateLogIndex(dailyFile, today, title string) error {
 		}
 	}
 
-	hash := fmt.Sprintf("%x", md5.Sum(data))[:6]
+	hash := fmt.Sprintf("%x", sha256.Sum256(data))[:6]
 	indexLine := fmt.Sprintf("## [[meta/activity/%s|%s]] %d changes | `%s` | %s", today, today, entryCount, hash, title)
 
 	// Ensure log index exists
