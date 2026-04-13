@@ -17,12 +17,12 @@ func setupDirectoryVault(t *testing.T) string {
 	_ = os.MkdirAll(filepath.Join(dir, "project"), 0o755)
 
 	files := map[string]string{
-		"guides/overview.md":       "---\ntitle: Guides Overview\ndescription: Infrastructure overview\ntags:\n  - guides\ndate: 2026-01-01\n---\n\nContent.\n",
-		"guides/hosts/server-1.md": "---\ntitle: Server-1\ntags:\n  - guides/host\ndate: 2026-01-01\n---\n\nHost.\n",
-		"project/alpha.md":         "---\ntitle: Alpha Project\ndescription: First project\ntags:\n  - project\ndate: 2026-02-01\n---\n\nProject.\n",
-		"meta/schema.md":           "---\ntitle: Wiki Schema\ndescription: Operating manual for AI agents\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nSchema.\n",
-		"no-tags.md":               "---\ntitle: No Tags Page\ndate: 2026-01-01\n---\n\nNo tags.\n",
-		"no-frontmatter.md":        "Just plain content.\n",
+		"guides/overview.md":          "---\ntitle: Guides Overview\ndescription: Infrastructure overview\ntags:\n  - guides\ndate: 2026-01-01\n---\n\nContent.\n",
+		"guides/hosts/server-1.md":    "---\ntitle: Server-1\ntags:\n  - guides/host\ndate: 2026-01-01\n---\n\nHost.\n",
+		"project/alpha.md":            "---\ntitle: Alpha Project\ndescription: First project\ntags:\n  - project\ndate: 2026-02-01\n---\n\nProject.\n",
+		"meta/schema.md":              "---\ntitle: Wiki Schema\ndescription: Operating manual for AI agents\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nSchema.\n",
+		"no-tags.md":                  "---\ntitle: No Tags Page\ndate: 2026-01-01\n---\n\nNo tags.\n",
+		"no-frontmatter.md":           "Just plain content.\n",
 		"meta/activity/2026-04-06.md": "---\ntitle: \"2026-04-06\"\ntags:\n  - meta/activity\ndate: 2026-04-06\n---\n\n### 10:00 | create | Test\n",
 	}
 	for name, content := range files {
@@ -134,6 +134,9 @@ func TestDirectoryGenerate(t *testing.T) {
 	if !strings.Contains(hostContent, "Server-1") {
 		t.Error("missing Server-1 in guides/hosts/index.md")
 	}
+	if !strings.Contains(hostContent, "## Directory") {
+		t.Error("missing Directory section in guides/hosts/index.md")
+	}
 
 	// Mid-level index should exist
 	guidesIndex := filepath.Join(dir, "guides", "index.md")
@@ -160,6 +163,23 @@ func TestDirectoryGenerate(t *testing.T) {
 
 	if !strings.Contains(projectContent, "Alpha Project") {
 		t.Error("missing Alpha Project in project/index.md")
+	}
+
+	// Subdirectory indexes must use bullet lists, not tables
+	for _, sub := range []struct {
+		name    string
+		content string
+	}{
+		{"guides/index.md", guidesContent},
+		{"guides/hosts/index.md", hostContent},
+		{"project/index.md", projectContent},
+	} {
+		if strings.Contains(sub.content, "|---") {
+			t.Errorf("%s should not contain table markup, got table separators", sub.name)
+		}
+		if !strings.Contains(sub.content, "- [[") {
+			t.Errorf("%s should use bullet list format with wikilinks", sub.name)
+		}
 	}
 }
 
