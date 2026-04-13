@@ -354,7 +354,8 @@ func renderSubdirTree(b *strings.Builder, node *dirNode, depth, maxDepth int) {
 	for _, p := range node.pages {
 		wikilink := makeWikilink(p.Path, p.Title)
 		if p.Description != "" {
-			fmt.Fprintf(b, "%s- %s — %s\n", indent, wikilink, p.Description)
+			description := strings.Join(strings.Fields(p.Description), " ")
+			fmt.Fprintf(b, "%s- %s — %s\n", indent, wikilink, description)
 		} else {
 			fmt.Fprintf(b, "%s- %s\n", indent, wikilink)
 		}
