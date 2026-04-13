@@ -76,11 +76,21 @@ jobs:
             exit 0
           fi
 
-          # push event: check PR labels for semver override, default to patch
-          LABELS=$(gh pr list --state merged --base main --limit 100 \
-            --json labels,mergeCommit \
-            | jq -r --arg sha "$GITHUB_SHA" \
-              '.[] | select(.mergeCommit.oid == $sha) | .labels[].name' 2>/dev/null || echo "")
+          # push event: check PR labels for semver override, default to patch.
+          # Retry up to 3 times — GitHub API may not have the merge commit indexed
+          # immediately after the push event fires.
+          LABELS=""
+          for attempt in 1 2 3; do
+            LABELS=$(gh pr list --state merged --base main --limit 100 \
+              --json labels,mergeCommit \
+              | jq -r --arg sha "$GITHUB_SHA" \
+                '.[] | select(.mergeCommit.oid == $sha) | .labels[].name' 2>/dev/null || echo "")
+            if [ -n "$LABELS" ]; then
+              break
+            fi
+            echo "Attempt ${attempt}: no labels found for ${GITHUB_SHA}, retrying in 5s..."
+            sleep 5
+          done
 
           echo "Labels for commit ${GITHUB_SHA}: ${LABELS:-<none>}"
 
