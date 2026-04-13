@@ -11,19 +11,18 @@ body:not([data-slug^="tags/"]) .page-listing {
 // Sidebar toggle button — sits at left edge of right sidebar
 .sidebar-toggle {
   position: absolute;
-  left: -12px;
-  top: 50vh;
-  transform: translateY(-50%);
+  left: -16px;
+  top: 6.25rem;
   z-index: 100;
   background: var(--light);
-  border: 1px solid var(--lightgray);
+  border: 1.5px solid var(--gray);
   border-radius: 4px;
-  padding: 6px 3px;
+  padding: 10px 8px;
   cursor: pointer;
   color: var(--darkgray);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
-  opacity: 0.4;
+  opacity: 0.65;
   transition: opacity 0.15s;
 
   &:hover {
@@ -62,11 +61,17 @@ body:not([data-slug^="tags/"]) .page-listing {
       display: none;
     }
 
-    // Button anchors to right viewport edge when collapsed
+    // Anchored to right screen edge when collapsed
     & > .sidebar-toggle {
       position: fixed;
       left: auto;
       right: 0;
+      top: 6.25rem;
+      border-right: none;
+      border-radius: 4px 0 0 4px;
+      padding: 12px 8px 12px 10px;
+      font-size: 16px;
+      opacity: 0.7;
     }
   }
 }
