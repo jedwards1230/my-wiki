@@ -1,4 +1,7 @@
 {{- if and .Values.mcp.enabled .Values.mcp.networkPolicy.enabled }}
+{{- if not .Values.mcp.networkPolicy.allowedNamespaces }}
+{{- fail "mcp.networkPolicy.enabled requires at least one entry in mcp.networkPolicy.allowedNamespaces" }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

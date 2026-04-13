@@ -79,7 +79,7 @@ func NewHandler(v *vault.Vault, searchSvc *service.SearchService, opts ...Handle
 // they are also wrapped with the auth middleware. Mutating routes (PUT, DELETE,
 // PATCH, POST) are always wrapped with the auth middleware when configured.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	// Read-only routes — optionally auth-protected via WIKI_AUTH_READS
+	// Read-only routes — optionally auth-protected when read auth is enabled
 	mux.Handle("GET /api/lint", h.wrapRead(http.HandlerFunc(h.handleLint)))
 	mux.Handle("GET /api/ingest", h.wrapRead(http.HandlerFunc(h.handleIngestList)))
 	mux.Handle("GET /api/directory", h.wrapRead(http.HandlerFunc(h.handleDirectoryList)))

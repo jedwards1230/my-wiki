@@ -256,11 +256,12 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	}()
 
 	httpSrv := &http.Server{
-		Addr:         ":" + port,
-		Handler:      srv.Handler(),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              ":" + port,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Collect servers that need graceful shutdown
@@ -292,11 +293,12 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		})
 
 		mcpHTTPSrv := &http.Server{
-			Addr:         fmt.Sprintf(":%d", mcpPort),
-			Handler:      mux,
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 60 * time.Second,
-			IdleTimeout:  120 * time.Second,
+			Addr:              fmt.Sprintf(":%d", mcpPort),
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      60 * time.Second,
+			IdleTimeout:       120 * time.Second,
 		}
 		servers = append(servers, mcpHTTPSrv)
 
@@ -393,11 +395,12 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	})
 
 	httpSrv := &http.Server{
-		Addr:         ":" + port,
-		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
