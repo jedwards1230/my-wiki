@@ -57,6 +57,7 @@ internal/
   service/                 Business logic layer — one service per domain (lint, pages, search, etc.)
   vault/                   Vault filesystem operations — page discovery, frontmatter parsing, wikilinks
   search/                  Search backends: Searcher interface, SubstringSearcher, IndexSearcher (TF-IDF)
+  notify/                  Filesystem change debouncer — batches mutations and fires a callback
   middleware/              HTTP middleware: gzip, logging, metrics (Prometheus), cache headers
 ```
 
