@@ -29,8 +29,10 @@ RUN git clone --depth 1 https://github.com/jackyzha0/quartz.git . && \
 COPY quartz/quartz.config.ts ./quartz.config.ts
 COPY quartz/quartz.layout.ts ./quartz.layout.ts
 COPY quartz/components/RawLink.tsx ./quartz/components/RawLink.tsx
+COPY quartz/components/SidebarToggle.tsx ./quartz/components/SidebarToggle.tsx
 COPY quartz/styles/custom.scss ./quartz/styles/custom.scss
-RUN echo 'export { default as RawLink } from "./RawLink"' >> ./quartz/components/index.ts
+RUN echo 'export { default as RawLink } from "./RawLink"' >> ./quartz/components/index.ts && \
+    echo 'export { default as SidebarToggle } from "./SidebarToggle"' >> ./quartz/components/index.ts
 ARG BUILD_VERSION=dev
 ARG BASE_URL
 ARG REPO_URL
