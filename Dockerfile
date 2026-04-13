@@ -40,8 +40,8 @@ RUN sed -i "s/%%BUILD_VERSION%%/v${BUILD_VERSION}/" ./quartz.layout.ts && \
     if [ -n "${BASE_URL}" ]; then sed -i "s|%%BASE_URL%%|${BASE_URL}|" ./quartz.config.ts; fi && \
     if [ -n "${REPO_URL}" ]; then sed -i "s|%%REPO_URL%%|${REPO_URL}|" ./quartz.layout.ts; fi
 
-# Create non-root user
-RUN adduser -D -u 1000 wiki && mkdir -p /data && chown -R wiki:wiki /data
+# Create non-root user (uid 1001 — node:alpine already uses uid 1000 for 'node')
+RUN adduser -D -u 1001 wiki && mkdir -p /data && chown -R wiki:wiki /data
 
 # Copy Go binary from builder (parallel stage — doesn't block Node layers)
 COPY --from=go-builder /wiki-server /usr/local/bin/wiki-server
