@@ -47,4 +47,4 @@ RUN adduser -D -u 1001 wiki && mkdir -p /data && chown -R wiki:wiki /data
 COPY --from=go-builder /wiki-server /usr/local/bin/wiki-server
 
 WORKDIR /data
-USER wiki
+USER 1001
