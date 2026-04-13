@@ -22,6 +22,14 @@ func WithAuthMiddleware(mw func(http.Handler) http.Handler) HandlerOption {
 	}
 }
 
+// WithAuthReads enables authentication on read-only GET routes.
+// When false (default), GET routes are publicly accessible.
+func WithAuthReads(enabled bool) HandlerOption {
+	return func(h *Handler) {
+		h.authReads = enabled
+	}
+}
+
 // WithRebuildNotifier sets a notifier that is called after successful vault
 // mutations to trigger Quartz rebuilds.
 func WithRebuildNotifier(n *notify.RebuildNotifier) HandlerOption {
@@ -42,6 +50,7 @@ type Handler struct {
 	recent    *service.RecentService
 	search    *service.SearchService
 	authMW    func(http.Handler) http.Handler
+	authReads bool
 	notifier  *notify.RebuildNotifier
 }
 
@@ -66,20 +75,21 @@ func NewHandler(v *vault.Vault, searchSvc *service.SearchService, opts ...Handle
 }
 
 // RegisterRoutes registers all API routes on the given mux.
-// Read-only GET routes are always unauthenticated. Mutating routes (PUT, DELETE,
-// PATCH, POST) are wrapped with the auth middleware when configured.
+// Read-only GET routes are unauthenticated by default. When authReads is enabled,
+// they are also wrapped with the auth middleware. Mutating routes (PUT, DELETE,
+// PATCH, POST) are always wrapped with the auth middleware when configured.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	// Read-only routes — no auth required
-	mux.HandleFunc("GET /api/lint", h.handleLint)
-	mux.HandleFunc("GET /api/ingest", h.handleIngestList)
-	mux.HandleFunc("GET /api/directory", h.handleDirectoryList)
-	mux.HandleFunc("GET /api/log", h.handleLogIndex)
-	mux.HandleFunc("GET /api/log/lint", h.handleLogLint)
-	mux.HandleFunc("GET /api/log/{date}", h.handleLogDay)
-	mux.HandleFunc("GET /api/pages/{path...}", h.handlePageRead)
-	mux.HandleFunc("GET /api/pages", h.handlePageList)
-	mux.HandleFunc("GET /api/recent", h.handleRecentList)
-	mux.HandleFunc("GET /api/search", h.handleSearch)
+	// Read-only routes — optionally auth-protected via WIKI_AUTH_READS
+	mux.Handle("GET /api/lint", h.wrapRead(http.HandlerFunc(h.handleLint)))
+	mux.Handle("GET /api/ingest", h.wrapRead(http.HandlerFunc(h.handleIngestList)))
+	mux.Handle("GET /api/directory", h.wrapRead(http.HandlerFunc(h.handleDirectoryList)))
+	mux.Handle("GET /api/log", h.wrapRead(http.HandlerFunc(h.handleLogIndex)))
+	mux.Handle("GET /api/log/lint", h.wrapRead(http.HandlerFunc(h.handleLogLint)))
+	mux.Handle("GET /api/log/{date}", h.wrapRead(http.HandlerFunc(h.handleLogDay)))
+	mux.Handle("GET /api/pages/{path...}", h.wrapRead(http.HandlerFunc(h.handlePageRead)))
+	mux.Handle("GET /api/pages", h.wrapRead(http.HandlerFunc(h.handlePageList)))
+	mux.Handle("GET /api/recent", h.wrapRead(http.HandlerFunc(h.handleRecentList)))
+	mux.Handle("GET /api/search", h.wrapRead(http.HandlerFunc(h.handleSearch)))
 
 	// Mutating routes — protected by auth middleware when configured
 	mux.Handle("POST /api/ingest/generate", h.wrapMutating(http.HandlerFunc(h.handleIngestGenerate)))
@@ -94,6 +104,15 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // Returns the handler unchanged when auth is disabled.
 func (h *Handler) wrapMutating(handler http.Handler) http.Handler {
 	if h.authMW == nil {
+		return handler
+	}
+	return h.authMW(handler)
+}
+
+// wrapRead wraps a handler with the auth middleware only when both auth and
+// authReads are enabled. Returns the handler unchanged otherwise.
+func (h *Handler) wrapRead(handler http.Handler) http.Handler {
+	if h.authMW == nil || !h.authReads {
 		return handler
 	}
 	return h.authMW(handler)

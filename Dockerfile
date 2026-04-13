@@ -1,5 +1,5 @@
 # --- Go builder stage ---
-FROM golang:1.25-alpine AS go-builder
+FROM golang:1.25.6-alpine AS go-builder
 WORKDIR /src
 
 # Cache dependency downloads (layer busted only when go.mod/go.sum change)
@@ -40,7 +40,11 @@ RUN sed -i "s/%%BUILD_VERSION%%/v${BUILD_VERSION}/" ./quartz.layout.ts && \
     if [ -n "${BASE_URL}" ]; then sed -i "s|%%BASE_URL%%|${BASE_URL}|" ./quartz.config.ts; fi && \
     if [ -n "${REPO_URL}" ]; then sed -i "s|%%REPO_URL%%|${REPO_URL}|" ./quartz.layout.ts; fi
 
+# Create non-root user
+RUN adduser -D -u 1000 wiki && mkdir -p /data && chown -R wiki:wiki /data
+
 # Copy Go binary from builder (parallel stage — doesn't block Node layers)
 COPY --from=go-builder /wiki-server /usr/local/bin/wiki-server
 
 WORKDIR /data
+USER wiki

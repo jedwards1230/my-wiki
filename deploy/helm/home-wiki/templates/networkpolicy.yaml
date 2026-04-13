@@ -1,0 +1,39 @@
+{{- if and .Values.mcp.enabled .Values.mcp.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-mcp
+  labels:
+    app.kubernetes.io/name: wiki
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: wiki
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow HTTP (port 8080) from anywhere — serves the public site
+    - ports:
+        - port: 8080
+          protocol: TCP
+    # Allow MCP (port {{ .Values.mcp.port }}) only from specified namespaces
+    - from:
+        {{- range .Values.mcp.networkPolicy.allowedNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.mcp.port }}
+          protocol: TCP
+    {{- if .Values.auth.discovery.enabled }}
+    # Allow OAuth metadata sidecar port from anywhere (serves discovery docs)
+    - ports:
+        - port: 8090
+          protocol: TCP
+    {{- end }}
+{{- end }}
