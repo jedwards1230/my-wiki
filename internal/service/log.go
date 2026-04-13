@@ -2,7 +2,7 @@ package service
 
 import (
 	"bufio"
-	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -240,7 +240,7 @@ func (s *LogService) Lint() ([]LogLintIssue, error) {
 			continue
 		}
 
-		actualHash := fmt.Sprintf("%x", md5.Sum(data))[:6]
+		actualHash := fmt.Sprintf("%x", sha256.Sum256(data))[:6]
 		if storedHash != actualHash {
 			issues = append(issues, LogLintIssue{
 				Message: fmt.Sprintf("Hash mismatch for %s (index: %s, actual: %s)", date, storedHash, actualHash),

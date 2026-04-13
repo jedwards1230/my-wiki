@@ -97,6 +97,9 @@ spec:
                   key: OBSIDIAN_E2E_PASSWORD
           securityContext:
             allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /data
@@ -139,6 +142,9 @@ spec:
               echo "Quartz build complete."
           securityContext:
             allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /data
@@ -157,6 +163,9 @@ spec:
               ob sync --path /data/vault --continuous
           securityContext:
             allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /data
@@ -174,6 +183,9 @@ spec:
               npx quartz build --watch --concurrency {{ .Values.quartz.concurrency }} --output /data/public --directory ../vault
           securityContext:
             allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /data
@@ -212,6 +224,10 @@ spec:
             - name: WIKI_AUTH_RESOURCE_METADATA_URL
               value: {{ .Values.auth.jwt.resourceMetadataUrl | quote }}
             {{- end }}
+            {{- if .Values.auth.authReads }}
+            - name: WIKI_AUTH_READS
+              value: "true"
+            {{- end }}
             {{- end }}
           ports:
             - name: http
@@ -224,6 +240,10 @@ spec:
             {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           volumeMounts:
             - name: data
               mountPath: /data

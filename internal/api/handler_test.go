@@ -723,6 +723,50 @@ func TestAuthReadRoutesRemainOpen(t *testing.T) {
 	}
 }
 
+func TestAuthReadsProtectsGetRoutes(t *testing.T) {
+	v := setupTestVault(t)
+	sub := search.NewSubstringSearcher(v)
+	idx := search.NewIndexSearcher(v)
+	_ = idx.Build()
+	searchSvc := service.NewSearchService(sub, idx)
+	h := NewHandler(v, searchSvc, WithAuthMiddleware(fakeAuthMW()), WithAuthReads(true))
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	readPaths := []string{
+		"/api/pages/index.md",
+		"/api/pages",
+		"/api/lint",
+		"/api/ingest",
+		"/api/directory",
+		"/api/log",
+		"/api/recent",
+		"/api/search?q=Alpha",
+	}
+
+	for _, path := range readPaths {
+		t.Run("GET "+path, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, r)
+
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("expected 401 without auth when authReads enabled, got %d", w.Code)
+			}
+		})
+	}
+
+	// With auth header, reads should succeed
+	r := httptest.NewRequest(http.MethodGet, "/api/pages/index.md", nil)
+	r.Header.Set("Authorization", "Bearer fake-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code == http.StatusUnauthorized {
+		t.Errorf("GET with auth should not get 401, got %d", w.Code)
+	}
+}
+
 func TestAuthMutatingRoutesPassWithAuth(t *testing.T) {
 	mux := setupTestMuxWithAuth(t)
 
