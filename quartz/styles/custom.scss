@@ -8,24 +8,26 @@ body:not([data-slug^="tags/"]) .page-listing {
   display: none;
 }
 
-// Sidebar toggle button
+// Sidebar toggle button — sits at left edge of right sidebar
 .sidebar-toggle {
-  position: fixed;
-  right: 0;
-  top: 50%;
+  position: absolute;
+  left: -12px;
+  top: 50vh;
   transform: translateY(-50%);
   z-index: 100;
   background: var(--light);
   border: 1px solid var(--lightgray);
-  border-right: none;
-  border-radius: 4px 0 0 4px;
-  padding: 8px 4px;
+  border-radius: 4px;
+  padding: 6px 3px;
   cursor: pointer;
   color: var(--darkgray);
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
+  opacity: 0.4;
+  transition: opacity 0.15s;
 
   &:hover {
+    opacity: 1;
     color: var(--dark);
     background: var(--lightgray);
   }
@@ -36,11 +38,35 @@ body:not([data-slug^="tags/"]) .page-listing {
   }
 }
 
-// Collapsed state
-#quartz-body.right-sidebar-collapsed {
-  grid-template-columns: 320px auto !important;
+// Right sidebar needs position relative for the toggle button
+.sidebar.right {
+  position: relative;
+}
+
+// Collapsed state — hide sidebar content, keep toggle visible
+// .page > needed to match Quartz base specificity
+.page > #quartz-body.right-sidebar-collapsed {
+  grid-template-columns: 320px auto 0px !important;
 
   & > .sidebar.right {
-    display: none;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 0 !important;
+    min-width: 0 !important;
+
+    // Hide sidebar content components
+    & > .graph,
+    & > .toc,
+    & > .backlinks {
+      display: none;
+    }
+
+    // Button anchors to right viewport edge when collapsed
+    & > .sidebar-toggle {
+      position: fixed;
+      left: auto;
+      right: 0;
+    }
   }
 }
