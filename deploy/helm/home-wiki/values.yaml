@@ -91,10 +91,21 @@ mcp:
   ingress:
     enabled: false
     middleware: ""  # Traefik middleware (e.g., kube-system-redirect-lan-auth@kubernetescrd)
+  # NetworkPolicy restricting which namespaces can reach the MCP port.
+  # When disabled (default), the MCP port is reachable from any pod in the cluster.
+  networkPolicy:
+    enabled: false
+    # Namespaces allowed to reach the MCP port (by kubernetes.io/metadata.name label).
+    allowedNamespaces: []
+    #  - mcp-infra
 
 auth:
+  # Require auth on read-only GET routes (pages, search, etc.).
+  # When false (default), only mutating routes require auth.
+  authReads: false
+
   # Server-level JWT validation (Go middleware).
-  # Protects /mcp and mutating /api/ routes.
+  # Protects /mcp and mutating /api/ routes (and reads when auth.authReads=true).
   jwt:
     enabled: false
     # Must exactly match the iss claim emitted by your OIDC provider (e.g. Authentik).

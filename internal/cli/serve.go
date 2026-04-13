@@ -217,6 +217,9 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	if authMWs != nil {
 		apiOpts = append(apiOpts, api.WithAuthMiddleware(authMWs.api))
 	}
+	if strings.EqualFold(os.Getenv("WIKI_AUTH_READS"), "true") {
+		apiOpts = append(apiOpts, api.WithAuthReads(true))
+	}
 	apiOpts = append(apiOpts, api.WithRebuildNotifier(notifier))
 	apiHandler := api.NewHandler(v, searchSvc, apiOpts...)
 
@@ -253,8 +256,11 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	}()
 
 	httpSrv := &http.Server{
-		Addr:    ":" + port,
-		Handler: srv.Handler(),
+		Addr:         ":" + port,
+		Handler:      srv.Handler(),
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	// Collect servers that need graceful shutdown
@@ -286,8 +292,11 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		})
 
 		mcpHTTPSrv := &http.Server{
-			Addr:    fmt.Sprintf(":%d", mcpPort),
-			Handler: mux,
+			Addr:         fmt.Sprintf(":%d", mcpPort),
+			Handler:      mux,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 60 * time.Second,
+			IdleTimeout:  120 * time.Second,
 		}
 		servers = append(servers, mcpHTTPSrv)
 
@@ -384,8 +393,11 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	})
 
 	httpSrv := &http.Server{
-		Addr:    ":" + port,
-		Handler: mux,
+		Addr:         ":" + port,
+		Handler:      mux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)

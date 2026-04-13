@@ -36,9 +36,10 @@ func (h *Handler) handlePageWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read body")
+		writeError(w, http.StatusBadRequest, "failed to read body (max 10MB)")
 		return
 	}
 
@@ -82,6 +83,7 @@ func (h *Handler) handlePagePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var body struct {
 		Operations []service.PatchOp `json:"operations"`
 	}
