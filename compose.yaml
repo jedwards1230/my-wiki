@@ -1,0 +1,21 @@
+services:
+  wiki:
+    build:
+      context: .
+      args:
+        BUILD_VERSION: dev
+        BASE_URL: localhost:8080
+        REPO_URL: https://github.com/jedwards1230/home-wiki
+    ports:
+      - "8080:8080"
+    volumes:
+      - ${WIKI_VAULT:-~/Obsidian/home-wiki}:/data/vault:ro
+    command:
+      - sh
+      - -c
+      - |
+        echo "Building Quartz site..."
+        cd /quartz
+        npx quartz build --directory /data/vault --output /data/public --bundleInfo
+        echo "Starting wiki-server..."
+        wiki-server serve --vault /data/vault --port 8080
