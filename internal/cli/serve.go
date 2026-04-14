@@ -182,6 +182,13 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// structured logs on the same JSON stream as the server.
 	slog.SetDefault(logger)
 
+	// Warn if TZ is set but timezone data is missing (Alpine without tzdata).
+	if tz := os.Getenv("TZ"); tz != "" {
+		if _, err := time.LoadLocation(tz); err != nil {
+			logger.Warn("TZ set but timezone data unavailable — timestamps will use UTC; install tzdata", "TZ", tz, "error", err)
+		}
+	}
+
 	// Build auth middlewares early — they protect both the REST API and MCP server.
 	authMWs, err := buildAuthMiddlewares(context.Background(), logger, authConfigFromEnv())
 	if err != nil {
