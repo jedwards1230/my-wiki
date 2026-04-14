@@ -64,47 +64,337 @@ func getTextContent(result *mcp.CallToolResult) string {
 	return tc.Text
 }
 
-func TestLintHandler(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewLintService(v, nil)
-	handler := lintHandler(svc)
+// --- read ---
 
-	result, err := handler(context.Background(), makeReq(map[string]any{"check": "all"}))
+func TestReadHandler(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	handler := readHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{"path": "index.md"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	text := getTextContent(result)
-	if text == "" {
-		t.Fatal("expected non-empty result")
-	}
-	if !strings.Contains(text, "total") {
-		t.Errorf("expected JSON with total field, got:\n%s", text)
+	if !strings.Contains(text, "Home") {
+		t.Errorf("expected page content, got:\n%s", text)
 	}
 }
 
-func TestLintHandlerInvalidCheck(t *testing.T) {
+func TestReadHandlerNotFound(t *testing.T) {
 	v := setupTestVault(t)
-	svc := service.NewLintService(v, nil)
-	handler := lintHandler(svc)
+	svc := service.NewPageService(v.Storage)
+	handler := readHandler(svc)
 
-	result, err := handler(context.Background(), makeReq(map[string]any{"check": "invalid"}))
+	result, err := handler(context.Background(), makeReq(map[string]any{"path": "nonexistent"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Should return an error result, not a Go error
 	if !result.IsError {
-		t.Error("expected error result for invalid check")
+		t.Error("expected error result for missing page")
 	}
 }
 
-func TestDirectoryListHandler(t *testing.T) {
+func TestReadHandlerEmptyPath(t *testing.T) {
 	v := setupTestVault(t)
-	svc := service.NewDirectoryService(v)
-	handler := directoryListHandler(svc)
+	svc := service.NewPageService(v.Storage)
+	handler := readHandler(svc)
 
-	result, err := handler(context.Background(), makeReq(nil))
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty path")
+	}
+}
+
+// --- write ---
+
+func TestWriteHandlerCreateNew(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "new-page.md",
+		"content": "---\ntitle: New\ntags:\n  - test\ndate: 2026-01-15\n---\n\nContent.\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, "Wrote") {
+		t.Errorf("expected wrote message, got:\n%s", text)
+	}
+
+	// Verify file exists
+	if _, err := os.Stat(filepath.Join(v.Dir, "new-page.md")); err != nil {
+		t.Fatal("expected file to exist after write")
+	}
+}
+
+func TestWriteHandlerOverwriteExisting(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	// Overwrite existing index.md — should succeed (no existence check)
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "index.md",
+		"content": "---\ntitle: Updated Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\nUpdated.\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.IsError {
+		t.Error("expected success when overwriting existing page")
+	}
+
+	// Verify content was updated
+	data, _ := os.ReadFile(filepath.Join(v.Dir, "index.md"))
+	if !strings.Contains(string(data), "Updated Home") {
+		t.Error("expected content to be overwritten")
+	}
+}
+
+func TestWriteHandlerEmptyContent(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "empty.md",
+		"content": "",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty content")
+	}
+}
+
+func TestWriteHandlerEmptyPath(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"content": "---\ntitle: X\ntags:\n  - t\ndate: 2026-01-01\n---\n\nBody.\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty path")
+	}
+}
+
+func TestWriteHandlerLintWarnings(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	// Create a page with a broken wikilink.
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "broken.md",
+		"content": "---\ntitle: Broken\ntags:\n  - test\ndate: 2026-01-15\n---\n\n[[nonexistent-target]]\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.IsError {
+		t.Error("expected successful result")
+	}
+
+	if len(result.Content) < 2 {
+		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
+	}
+
+	tc, ok := mcp.AsTextContent(result.Content[1])
+	if !ok {
+		t.Fatal("expected second content item to be TextContent")
+	}
+	if !strings.Contains(tc.Text, "nonexistent-target") {
+		t.Errorf("expected warning about [[nonexistent-target]], got:\n%s", tc.Text)
+	}
+}
+
+// --- edit ---
+
+func TestEditHandler(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "project/alpha",
+		"operations": []interface{}{
+			map[string]interface{}{"find": "Content.", "replace": "Updated content."},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, "Updated content.") {
+		t.Errorf("expected patched content, got:\n%s", text)
+	}
+
+	// Verify the file was actually updated
+	rh := readHandler(svc)
+	readResult, err := rh(context.Background(), makeReq(map[string]any{"path": "project/alpha"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readText := getTextContent(readResult)
+	if !strings.Contains(readText, "Updated content.") {
+		t.Errorf("expected updated content on re-read, got:\n%s", readText)
+	}
+}
+
+func TestEditHandlerFindNotFound(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "project/alpha",
+		"operations": []interface{}{
+			map[string]interface{}{"find": "nonexistent text", "replace": "replacement"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for missing find string")
+	}
+}
+
+func TestEditHandlerEmptyPath(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"operations": []interface{}{
+			map[string]interface{}{"find": "x", "replace": "y"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty path")
+	}
+}
+
+func TestEditHandlerEmptyOperations(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":       "project/alpha",
+		"operations": []interface{}{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty operations")
+	}
+}
+
+func TestEditHandlerPageNotFound(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "nonexistent",
+		"operations": []interface{}{
+			map[string]interface{}{"find": "x", "replace": "y"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for nonexistent page")
+	}
+}
+
+func TestEditHandlerInvalidYAMLWarning(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "index.md",
+		"operations": []any{
+			map[string]any{
+				"find":    "  - root",
+				"replace": "  - [unclosed bracket",
+			},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.IsError {
+		t.Errorf("expected successful result, got error: %s", getTextContent(result))
+	}
+
+	if len(result.Content) < 2 {
+		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
+	}
+
+	tc, ok := mcp.AsTextContent(result.Content[1])
+	if !ok {
+		t.Fatal("expected second content item to be TextContent")
+	}
+	if !strings.Contains(tc.Text, "invalid YAML") {
+		t.Errorf("expected 'invalid YAML' warning, got:\n%s", tc.Text)
+	}
+}
+
+// --- list ---
+
+func TestListHandlerSimple(t *testing.T) {
+	v := setupTestVault(t)
+	pageSvc := service.NewPageService(v.Storage)
+	dirSvc := service.NewDirectoryService(v)
+	handler := listHandler(pageSvc, dirSvc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,48 +403,328 @@ func TestDirectoryListHandler(t *testing.T) {
 	if !strings.Contains(text, "index.md") {
 		t.Errorf("expected index.md in result, got:\n%s", text)
 	}
+	// Simple mode should have has_meta field
+	if !strings.Contains(text, "has_meta") {
+		t.Errorf("expected has_meta field in simple listing, got:\n%s", text)
+	}
+}
+
+func TestListHandlerWithPrefix(t *testing.T) {
+	v := setupTestVault(t)
+	pageSvc := service.NewPageService(v.Storage)
+	dirSvc := service.NewDirectoryService(v)
+	handler := listHandler(pageSvc, dirSvc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{"prefix": "project"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, "project/alpha.md") {
+		t.Errorf("expected project/alpha.md in result, got:\n%s", text)
+	}
+	if strings.Contains(text, "index.md") {
+		t.Errorf("should not contain index.md with project prefix, got:\n%s", text)
+	}
+}
+
+func TestListHandlerDetail(t *testing.T) {
+	v := setupTestVault(t)
+	pageSvc := service.NewPageService(v.Storage)
+	dirSvc := service.NewDirectoryService(v)
+	handler := listHandler(pageSvc, dirSvc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{"detail": true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, "index.md") {
+		t.Errorf("expected index.md in detail result, got:\n%s", text)
+	}
 	if !strings.Contains(text, "Home") {
-		t.Errorf("expected title in result, got:\n%s", text)
+		t.Errorf("expected title in detail result, got:\n%s", text)
 	}
 }
 
-func TestDirectoryGenerateHandler(t *testing.T) {
+func TestListHandlerDetailWithPrefix(t *testing.T) {
 	v := setupTestVault(t)
-	svc := service.NewDirectoryService(v)
-	handler := directoryGenerateHandler(testServer(), svc)
+	pageSvc := service.NewPageService(v.Storage)
+	dirSvc := service.NewDirectoryService(v)
+	handler := listHandler(pageSvc, dirSvc)
 
-	result, err := handler(context.Background(), makeReq(nil))
+	result, err := handler(context.Background(), makeReq(map[string]any{"prefix": "project", "detail": true}))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	text := getTextContent(result)
-	if !strings.Contains(text, "pages_indexed") {
-		t.Errorf("expected pages_indexed in result, got:\n%s", text)
+	if !strings.Contains(text, "project/alpha.md") {
+		t.Errorf("expected project/alpha.md in result, got:\n%s", text)
 	}
-
-	// Verify root index was created
-	indexFile := filepath.Join(v.Dir, "index.md")
-	if _, err := os.Stat(indexFile); os.IsNotExist(err) {
-		t.Error("expected index.md to be created by directory generate")
+	if strings.Contains(text, "index.md") {
+		t.Errorf("should not contain index.md with project prefix, got:\n%s", text)
 	}
 }
 
-func TestIngestListHandler(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewIngestService(v)
-	handler := ingestListHandler(svc)
+// --- delete ---
 
-	result, err := handler(context.Background(), makeReq(nil))
+func TestDeleteHandler(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := deleteHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	text := getTextContent(result)
-	if !strings.Contains(text, "unprocessed") {
-		t.Errorf("expected unprocessed in result, got:\n%s", text)
+	if !strings.Contains(text, "deleted") {
+		t.Errorf("expected deleted message, got:\n%s", text)
+	}
+
+	// Verify the file is gone
+	rh := readHandler(svc)
+	result, err = rh(context.Background(), makeReq(map[string]any{"path": "about.md"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error reading deleted page")
 	}
 }
+
+func TestDeleteHandlerNotFound(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := deleteHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{"path": "nonexistent"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for missing page")
+	}
+}
+
+func TestDeleteHandlerEmptyPath(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := deleteHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty path")
+	}
+}
+
+func TestDeleteHandlerLintWarnings(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := deleteHandler(testServer(), svc, lint, v.Dir, nil)
+
+	// about.md is linked from index.md — deleting it should produce warnings.
+	result, err := handler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.IsError {
+		t.Error("expected successful result")
+	}
+
+	if len(result.Content) < 2 {
+		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
+	}
+
+	tc, ok := mcp.AsTextContent(result.Content[1])
+	if !ok {
+		t.Fatal("expected second content item to be TextContent")
+	}
+	if !strings.Contains(tc.Text, "about") {
+		t.Errorf("expected warning about broken link to about, got:\n%s", tc.Text)
+	}
+}
+
+// --- move ---
+
+func TestMoveHandler(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := moveHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"source":      "project/alpha",
+		"destination": "project/beta",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, "moved") {
+		t.Errorf("expected moved message, got:\n%s", text)
+	}
+
+	// Verify source is gone
+	if _, err := os.Stat(filepath.Join(v.Dir, "project", "alpha.md")); !os.IsNotExist(err) {
+		t.Error("expected source file to be removed")
+	}
+	// Verify destination exists
+	if _, err := os.Stat(filepath.Join(v.Dir, "project", "beta.md")); err != nil {
+		t.Error("expected destination file to exist")
+	}
+}
+
+func TestMoveHandlerSourceNotFound(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := moveHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"source":      "nonexistent",
+		"destination": "project/beta",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error for nonexistent source")
+	}
+	text := getTextContent(result)
+	if !strings.Contains(text, "source page not found") {
+		t.Errorf("expected 'source page not found', got:\n%s", text)
+	}
+}
+
+func TestMoveHandlerDestinationExists(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := moveHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"source":      "about",
+		"destination": "index",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error for existing destination")
+	}
+	text := getTextContent(result)
+	if !strings.Contains(text, "destination already exists") {
+		t.Errorf("expected 'destination already exists', got:\n%s", text)
+	}
+}
+
+func TestMoveHandlerEmptySource(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := moveHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"destination": "project/beta",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error for empty source")
+	}
+}
+
+func TestMoveHandlerEmptyDestination(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := moveHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"source": "about",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error for empty destination")
+	}
+}
+
+// --- recent ---
+
+func TestRecentHandler(t *testing.T) {
+	v := setupTestVault(t)
+
+	now := time.Now()
+	oldest := now.Add(-3 * time.Hour)
+	middle := now.Add(-2 * time.Hour)
+	newest := now.Add(-1 * time.Hour)
+
+	_ = os.Chtimes(filepath.Join(v.Dir, "index.md"), oldest, oldest)
+	_ = os.Chtimes(filepath.Join(v.Dir, "about.md"), middle, middle)
+	_ = os.Chtimes(filepath.Join(v.Dir, "project", "alpha.md"), newest, newest)
+
+	svc := service.NewRecentService(v)
+	handler := recentHandler(svc)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, "index.md") {
+		t.Errorf("expected index.md in result, got:\n%s", text)
+	}
+	if !strings.Contains(text, "project/alpha.md") {
+		t.Errorf("expected project/alpha.md in result, got:\n%s", text)
+	}
+
+	alphaIdx := strings.Index(text, "project/alpha.md")
+	aboutIdx := strings.Index(text, "about.md")
+	indexIdx := strings.Index(text, "index.md")
+	if alphaIdx > aboutIdx || aboutIdx > indexIdx {
+		t.Errorf("expected newest-first order (alpha, about, index), got alpha@%d about@%d index@%d", alphaIdx, aboutIdx, indexIdx)
+	}
+
+	if strings.Contains(text, "meta/activity/") {
+		t.Error("expected meta/activity/ files to be excluded")
+	}
+
+	// Test with limit
+	result, err = handler(context.Background(), makeReq(map[string]any{"limit": float64(2)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = getTextContent(result)
+	if strings.Contains(text, "index.md") {
+		t.Errorf("expected index.md to be excluded with limit=2, got:\n%s", text)
+	}
+}
+
+// --- activity ---
 
 func TestActivityHandler(t *testing.T) {
 	v := setupTestVault(t)
@@ -194,486 +764,35 @@ func TestActivityHandlerInvalidType(t *testing.T) {
 	}
 }
 
-func TestReadPageHandler(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	handler := readPageHandler(svc)
+// --- search ---
 
-	result, err := handler(context.Background(), makeReq(map[string]any{"path": "index.md"}))
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestSearchHandlerEmptyQuery(t *testing.T) {
+	handler := searchHandler(&service.SearchService{})
 
-	text := getTextContent(result)
-	if !strings.Contains(text, "Home") {
-		t.Errorf("expected page content, got:\n%s", text)
-	}
-}
-
-func TestReadPageHandlerNotFound(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	handler := readPageHandler(svc)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{"path": "nonexistent"}))
+	result, err := handler(context.Background(), makeReq(map[string]any{"query": ""}))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if !result.IsError {
-		t.Error("expected error result for missing page")
+		t.Error("expected error for empty query")
 	}
 }
 
-func TestCreatePageHandler(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := createPageHandler(testServer(), svc, lint, v.Dir, nil)
+func TestSearchHandlerShortQuery(t *testing.T) {
+	handler := searchHandler(&service.SearchService{})
 
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path":    "new-page.md",
-		"content": "---\ntitle: New\ntags:\n  - test\ndate: 2026-01-15\n---\n\nContent.\n",
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	text := getTextContent(result)
-	if !strings.Contains(text, "Created") {
-		t.Errorf("expected created message, got:\n%s", text)
-	}
-}
-
-func TestCreatePageHandlerAlreadyExists(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := createPageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path":    "index.md",
-		"content": "new content",
-	}))
+	result, err := handler(context.Background(), makeReq(map[string]any{"query": "a"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if !result.IsError {
-		t.Error("expected error result for existing page")
+		t.Error("expected error for single-character query")
 	}
 }
 
-func TestCreatePageHandlerEmptyContent(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := createPageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path":    "empty-page.md",
-		"content": "",
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for empty content")
-	}
-}
-
-func TestUpdatePageHandlerNonExistent(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := updatePageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path":    "does-not-exist.md",
-		"content": "---\ntitle: Ghost\n---\n\nContent.\n",
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for non-existent page")
-	}
-	text := getTextContent(result)
-	if !strings.Contains(text, "page not found") {
-		t.Errorf("expected 'page not found' message, got:\n%s", text)
-	}
-}
-
-func TestUpdatePageHandlerEmptyContent(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := updatePageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path":    "index.md",
-		"content": "",
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for empty content")
-	}
-}
-
-func TestListPagesHandler(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	handler := listPagesHandler(svc)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	text := getTextContent(result)
-	if !strings.Contains(text, "index.md") {
-		t.Errorf("expected index.md in result, got:\n%s", text)
-	}
-}
-
-func TestDeletePageHandler(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := deletePageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	text := getTextContent(result)
-	if !strings.Contains(text, "deleted") {
-		t.Errorf("expected deleted message, got:\n%s", text)
-	}
-
-	// Verify the file is gone
-	readHandler := readPageHandler(svc)
-	result, err = readHandler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError {
-		t.Error("expected error reading deleted page")
-	}
-}
-
-func TestDeletePageHandlerNotFound(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := deletePageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{"path": "nonexistent"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for missing page")
-	}
-}
-
-func TestDeletePageHandlerEmptyPath(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := deletePageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for empty path")
-	}
-}
-
-func TestPatchPageHandler(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path": "project/alpha",
-		"operations": []interface{}{
-			map[string]interface{}{"find": "Content.", "replace": "Updated content."},
-		},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	text := getTextContent(result)
-	if !strings.Contains(text, "Updated content.") {
-		t.Errorf("expected patched content, got:\n%s", text)
-	}
-
-	// Verify the file was actually updated
-	readHandler := readPageHandler(svc)
-	readResult, err := readHandler(context.Background(), makeReq(map[string]any{"path": "project/alpha"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	readText := getTextContent(readResult)
-	if !strings.Contains(readText, "Updated content.") {
-		t.Errorf("expected updated content on re-read, got:\n%s", readText)
-	}
-}
-
-func TestPatchPageHandlerFindNotFound(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path": "project/alpha",
-		"operations": []interface{}{
-			map[string]interface{}{"find": "nonexistent text", "replace": "replacement"},
-		},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for missing find string")
-	}
-}
-
-func TestPatchPageHandlerEmptyPath(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"operations": []interface{}{
-			map[string]interface{}{"find": "x", "replace": "y"},
-		},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for empty path")
-	}
-}
-
-func TestPatchPageHandlerEmptyOperations(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path":       "project/alpha",
-		"operations": []interface{}{},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for empty operations")
-	}
-}
-
-func TestPatchPageHandlerPageNotFound(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path": "nonexistent",
-		"operations": []interface{}{
-			map[string]interface{}{"find": "x", "replace": "y"},
-		},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for nonexistent page")
-	}
-}
-
-func TestRecentListHandler(t *testing.T) {
-	v := setupTestVault(t)
-
-	// Set distinct mtimes so we can verify sort order.
-	// index.md = oldest, about.md = middle, project/alpha.md = newest
-	now := time.Now()
-	oldest := now.Add(-3 * time.Hour)
-	middle := now.Add(-2 * time.Hour)
-	newest := now.Add(-1 * time.Hour)
-
-	_ = os.Chtimes(filepath.Join(v.Dir, "index.md"), oldest, oldest)
-	_ = os.Chtimes(filepath.Join(v.Dir, "about.md"), middle, middle)
-	_ = os.Chtimes(filepath.Join(v.Dir, "project", "alpha.md"), newest, newest)
-
-	svc := service.NewRecentService(v)
-	handler := recentListHandler(svc)
-
-	// Test default (all pages returned)
-	result, err := handler(context.Background(), makeReq(map[string]any{}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	text := getTextContent(result)
-
-	// Should contain pages
-	if !strings.Contains(text, "index.md") {
-		t.Errorf("expected index.md in result, got:\n%s", text)
-	}
-	if !strings.Contains(text, "project/alpha.md") {
-		t.Errorf("expected project/alpha.md in result, got:\n%s", text)
-	}
-
-	// Verify sort order: alpha should appear before about, about before index
-	alphaIdx := strings.Index(text, "project/alpha.md")
-	aboutIdx := strings.Index(text, "about.md")
-	indexIdx := strings.Index(text, "index.md")
-	if alphaIdx > aboutIdx || aboutIdx > indexIdx {
-		t.Errorf("expected newest-first order (alpha, about, index), got alpha@%d about@%d index@%d", alphaIdx, aboutIdx, indexIdx)
-	}
-
-	// meta/activity files should be excluded
-	if strings.Contains(text, "meta/activity/") {
-		t.Error("expected meta/activity/ files to be excluded")
-	}
-
-	// Test with limit
-	result, err = handler(context.Background(), makeReq(map[string]any{"limit": float64(2)}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text = getTextContent(result)
-
-	// Should have at most 2 entries — index.md (oldest) should be absent
-	if strings.Contains(text, "index.md") {
-		t.Errorf("expected index.md to be excluded with limit=2, got:\n%s", text)
-	}
-}
-
-func TestCreatePageHandlerLintWarnings(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := createPageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	// Create a page with a broken wikilink.
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path":    "broken.md",
-		"content": "---\ntitle: Broken\ntags:\n  - test\ndate: 2026-01-15\n---\n\n[[nonexistent-target]]\n",
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Should not be an error — mutation succeeded.
-	if result.IsError {
-		t.Error("expected successful result")
-	}
-
-	// Should have at least 2 content items (success + warnings).
-	if len(result.Content) < 2 {
-		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
-	}
-
-	// Second content item should contain lint warnings.
-	tc, ok := mcp.AsTextContent(result.Content[1])
-	if !ok {
-		t.Fatal("expected second content item to be TextContent")
-	}
-	if !strings.Contains(tc.Text, "nonexistent-target") {
-		t.Errorf("expected warning about [[nonexistent-target]], got:\n%s", tc.Text)
-	}
-}
-
-func TestDeletePageHandlerLintWarnings(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := deletePageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	// about.md is linked from index.md — deleting it should produce warnings.
-	result, err := handler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if result.IsError {
-		t.Error("expected successful result")
-	}
-
-	if len(result.Content) < 2 {
-		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
-	}
-
-	tc, ok := mcp.AsTextContent(result.Content[1])
-	if !ok {
-		t.Fatal("expected second content item to be TextContent")
-	}
-	if !strings.Contains(tc.Text, "about") {
-		t.Errorf("expected warning about broken link to about, got:\n%s", tc.Text)
-	}
-}
-
-func TestPatchPageHandlerInvalidYAMLWarning(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewPageService(v.Storage)
-	lint := service.NewLintService(v, nil)
-	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
-
-	// Patch index.md to inject broken YAML into frontmatter.
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"path": "index.md",
-		"operations": []any{
-			map[string]any{
-				"find":    "  - root",
-				"replace": "  - [unclosed bracket",
-			},
-		},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if result.IsError {
-		t.Errorf("expected successful result (mutation should succeed), got error: %s", getTextContent(result))
-	}
-
-	// Should have warnings about invalid YAML.
-	if len(result.Content) < 2 {
-		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
-	}
-
-	tc, ok := mcp.AsTextContent(result.Content[1])
-	if !ok {
-		t.Fatal("expected second content item to be TextContent")
-	}
-	if !strings.Contains(tc.Text, "invalid YAML") {
-		t.Errorf("expected 'invalid YAML' warning, got:\n%s", tc.Text)
-	}
-}
+// --- New creates server ---
 
 func TestNewCreatesServer(t *testing.T) {
 	v := setupTestVault(t)

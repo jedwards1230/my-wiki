@@ -288,6 +288,18 @@ func (de *memDirEntry) Info() (fs.FileInfo, error) {
 	return &memFileInfo{name: de.name, dir: de.dir}, nil
 }
 
+func (m *MemStorage) Rename(srcRel, dstRel string) error {
+	srcRel = normPath(srcRel)
+	dstRel = normPath(dstRel)
+	data, ok := m.files[srcRel]
+	if !ok {
+		return &os.PathError{Op: "rename", Path: srcRel, Err: os.ErrNotExist}
+	}
+	m.files[dstRel] = data
+	delete(m.files, srcRel)
+	return nil
+}
+
 // AddFile is a test helper to add a file to the in-memory storage.
 func (m *MemStorage) AddFile(relPath string, content string) {
 	m.files[normPath(relPath)] = []byte(content)
