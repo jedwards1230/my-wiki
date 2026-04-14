@@ -38,6 +38,13 @@ func WithRebuildNotifier(n *notify.RebuildNotifier) HandlerOption {
 	}
 }
 
+// WithPageService provides a pre-configured PageService instead of constructing one internally.
+func WithPageService(ps *service.PageService) HandlerOption {
+	return func(h *Handler) {
+		h.pages = ps
+	}
+}
+
 // Handler holds all API services and registers routes.
 type Handler struct {
 	vaultDir  string
