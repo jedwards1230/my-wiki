@@ -41,7 +41,9 @@ func WithRebuildNotifier(n *notify.RebuildNotifier) HandlerOption {
 // WithPageService provides a pre-configured PageService instead of constructing one internally.
 func WithPageService(ps *service.PageService) HandlerOption {
 	return func(h *Handler) {
-		h.pages = ps
+		if ps != nil {
+			h.pages = ps
+		}
 	}
 }
 
