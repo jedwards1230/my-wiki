@@ -228,7 +228,8 @@ func TestReadPageHandlerNotFound(t *testing.T) {
 func TestCreatePageHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := createPageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := createPageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "new-page.md",
@@ -247,7 +248,8 @@ func TestCreatePageHandler(t *testing.T) {
 func TestCreatePageHandlerAlreadyExists(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := createPageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := createPageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "index.md",
@@ -265,7 +267,8 @@ func TestCreatePageHandlerAlreadyExists(t *testing.T) {
 func TestCreatePageHandlerEmptyContent(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := createPageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := createPageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "empty-page.md",
@@ -283,7 +286,8 @@ func TestCreatePageHandlerEmptyContent(t *testing.T) {
 func TestUpdatePageHandlerNonExistent(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := updatePageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := updatePageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "does-not-exist.md",
@@ -305,7 +309,8 @@ func TestUpdatePageHandlerNonExistent(t *testing.T) {
 func TestUpdatePageHandlerEmptyContent(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := updatePageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := updatePageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "index.md",
@@ -339,7 +344,8 @@ func TestListPagesHandler(t *testing.T) {
 func TestDeletePageHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := deletePageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := deletePageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
 	if err != nil {
@@ -365,7 +371,8 @@ func TestDeletePageHandler(t *testing.T) {
 func TestDeletePageHandlerNotFound(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := deletePageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := deletePageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{"path": "nonexistent"}))
 	if err != nil {
@@ -380,7 +387,8 @@ func TestDeletePageHandlerNotFound(t *testing.T) {
 func TestDeletePageHandlerEmptyPath(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := deletePageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := deletePageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{}))
 	if err != nil {
@@ -395,7 +403,8 @@ func TestDeletePageHandlerEmptyPath(t *testing.T) {
 func TestPatchPageHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := patchPageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "project/alpha",
@@ -427,7 +436,8 @@ func TestPatchPageHandler(t *testing.T) {
 func TestPatchPageHandlerFindNotFound(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := patchPageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "project/alpha",
@@ -447,7 +457,8 @@ func TestPatchPageHandlerFindNotFound(t *testing.T) {
 func TestPatchPageHandlerEmptyPath(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := patchPageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"operations": []interface{}{
@@ -466,7 +477,8 @@ func TestPatchPageHandlerEmptyPath(t *testing.T) {
 func TestPatchPageHandlerEmptyOperations(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := patchPageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":       "project/alpha",
@@ -484,7 +496,8 @@ func TestPatchPageHandlerEmptyOperations(t *testing.T) {
 func TestPatchPageHandlerPageNotFound(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
-	handler := patchPageHandler(testServer(), svc, v.Dir, nil)
+	lint := service.NewLintService(v, nil)
+	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "nonexistent",
@@ -557,6 +570,70 @@ func TestRecentListHandler(t *testing.T) {
 	// Should have at most 2 entries — index.md (oldest) should be absent
 	if strings.Contains(text, "index.md") {
 		t.Errorf("expected index.md to be excluded with limit=2, got:\n%s", text)
+	}
+}
+
+func TestCreatePageHandlerLintWarnings(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := createPageHandler(testServer(), svc, lint, v.Dir, nil)
+
+	// Create a page with a broken wikilink.
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "broken.md",
+		"content": "---\ntitle: Broken\ntags:\n  - test\ndate: 2026-01-15\n---\n\n[[nonexistent-target]]\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should not be an error — mutation succeeded.
+	if result.IsError {
+		t.Error("expected successful result")
+	}
+
+	// Should have at least 2 content items (success + warnings).
+	if len(result.Content) < 2 {
+		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
+	}
+
+	// Second content item should contain lint warnings.
+	tc, ok := mcp.AsTextContent(result.Content[1])
+	if !ok {
+		t.Fatal("expected second content item to be TextContent")
+	}
+	if !strings.Contains(tc.Text, "nonexistent-target") {
+		t.Errorf("expected warning about [[nonexistent-target]], got:\n%s", tc.Text)
+	}
+}
+
+func TestDeletePageHandlerLintWarnings(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := deletePageHandler(testServer(), svc, lint, v.Dir, nil)
+
+	// about.md is linked from index.md — deleting it should produce warnings.
+	result, err := handler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.IsError {
+		t.Error("expected successful result")
+	}
+
+	if len(result.Content) < 2 {
+		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
+	}
+
+	tc, ok := mcp.AsTextContent(result.Content[1])
+	if !ok {
+		t.Fatal("expected second content item to be TextContent")
+	}
+	if !strings.Contains(tc.Text, "about") {
+		t.Errorf("expected warning about broken link to about, got:\n%s", tc.Text)
 	}
 }
 

@@ -138,14 +138,22 @@ func (h *Handler) markDirty(relPath string) {
 
 // response is the JSON envelope for API responses.
 type response struct {
-	Data  any    `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
+	Data     any                 `json:"data,omitempty"`
+	Error    string              `json:"error,omitempty"`
+	Warnings []service.LintIssue `json:"warnings,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(response{Data: data})
+}
+
+// writeJSONWithWarnings writes a JSON response with optional lint warnings.
+func writeJSONWithWarnings(w http.ResponseWriter, status int, data any, warnings []service.LintIssue) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(response{Data: data, Warnings: warnings})
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

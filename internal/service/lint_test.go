@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jedwards1230/home-wiki/internal/vault"
@@ -133,6 +134,131 @@ func TestLintService_InvalidCheck(t *testing.T) {
 	_, err := svc.Run("invalid")
 	if err == nil {
 		t.Fatal("expected error for invalid check")
+	}
+}
+
+func TestLintPage_BrokenLinks(t *testing.T) {
+	v := setupLintVault(t)
+	svc := NewLintService(v, nil)
+
+	// Create a page with a broken wikilink.
+	content := "---\ntitle: Broken\ntags:\n  - test\ndate: 2026-01-01\n---\n\n[[nonexistent-page]] and [[project/alpha]].\n"
+	_ = os.WriteFile(filepath.Join(v.Dir, "broken-links.md"), []byte(content), 0o644)
+
+	issues := svc.LintPage("broken-links.md")
+
+	var found bool
+	for _, issue := range issues {
+		if issue.Check == "links" && strings.Contains(issue.Message, "nonexistent-page") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected broken link warning for [[nonexistent-page]], got: %v", issues)
+	}
+}
+
+func TestLintPage_CleanPage(t *testing.T) {
+	v := setupLintVault(t)
+	svc := NewLintService(v, nil)
+
+	// index.md links to project/alpha and meta/schema — both exist.
+	issues := svc.LintPage("index.md")
+	if len(issues) != 0 {
+		t.Errorf("expected no issues for clean page, got: %v", issues)
+	}
+}
+
+func TestLintPage_RawFile(t *testing.T) {
+	v := setupLintVault(t)
+	svc := NewLintService(v, nil)
+
+	// raw/bad.md is missing source and date-added.
+	issues := svc.LintPage("raw/bad.md")
+	if len(issues) == 0 {
+		t.Fatal("expected issues for raw/bad.md")
+	}
+	if issues[0].Check != "raw" {
+		t.Errorf("expected 'raw' check, got %q", issues[0].Check)
+	}
+}
+
+func TestLintPage_AddsExtension(t *testing.T) {
+	v := setupLintVault(t)
+	svc := NewLintService(v, nil)
+
+	// Path without .md should still work.
+	issues := svc.LintPage("index")
+	if len(issues) != 0 {
+		t.Errorf("expected no issues for index (without .md), got: %v", issues)
+	}
+}
+
+func TestLintDelete_CausesBrokenLinks(t *testing.T) {
+	v := setupLintVault(t)
+	svc := NewLintService(v, nil)
+
+	// meta/schema.md is linked from index.md and project/alpha.md.
+	// Delete it and check for broken link warnings.
+	_ = os.Remove(filepath.Join(v.Dir, "meta", "schema.md"))
+
+	issues := svc.LintDelete("meta/schema.md")
+
+	if len(issues) == 0 {
+		t.Fatal("expected broken link warnings after deleting meta/schema.md")
+	}
+
+	// Both index.md and project/alpha.md should have broken links.
+	files := map[string]bool{}
+	for _, issue := range issues {
+		files[issue.File] = true
+		if issue.Check != "links" {
+			t.Errorf("expected 'links' check, got %q", issue.Check)
+		}
+		if !strings.Contains(issue.Message, "target was deleted") {
+			t.Errorf("expected 'target was deleted' message, got %q", issue.Message)
+		}
+	}
+	if !files["index.md"] {
+		t.Error("expected index.md to have broken link after deleting meta/schema")
+	}
+	if !files["project/alpha.md"] {
+		t.Error("expected project/alpha.md to have broken link after deleting meta/schema")
+	}
+}
+
+func TestLintDelete_NoImpact(t *testing.T) {
+	v := setupLintVault(t)
+	svc := NewLintService(v, nil)
+
+	// orphan.md has no inbound links — deleting it should break nothing.
+	_ = os.Remove(filepath.Join(v.Dir, "orphan.md"))
+
+	issues := svc.LintDelete("orphan.md")
+	if len(issues) != 0 {
+		t.Errorf("expected no issues after deleting orphan, got: %v", issues)
+	}
+}
+
+func TestLintDelete_SlugStillResolvesToOtherPage(t *testing.T) {
+	v := setupLintVault(t)
+	svc := NewLintService(v, nil)
+
+	// Create two pages with the same basename: schema.md and meta/schema.md
+	content := "---\ntitle: Other Schema\ntags:\n  - test\ndate: 2026-01-01\n---\n\nAnother schema.\n"
+	_ = os.WriteFile(filepath.Join(v.Dir, "schema.md"), []byte(content), 0o644)
+
+	// Delete meta/schema.md — the "schema" slug should still resolve to schema.md.
+	_ = os.Remove(filepath.Join(v.Dir, "meta", "schema.md"))
+
+	issues := svc.LintDelete("meta/schema.md")
+
+	// Links to [[schema]] should still resolve (to the root schema.md).
+	// Only links to [[meta/schema]] should break.
+	for _, issue := range issues {
+		if strings.Contains(issue.Message, "[[schema]]") {
+			t.Errorf("[[schema]] should still resolve to schema.md, but got warning: %s", issue.Message)
+		}
 	}
 }
 
