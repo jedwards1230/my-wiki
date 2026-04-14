@@ -9,24 +9,26 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/jedwards1230/home-wiki/internal/vault"
 )
 
 // LogService provides activity log operations.
 type LogService struct {
-	vaultDir string
+	storage vault.Storage
 }
 
-// NewLogService creates a LogService for the given vault directory.
-func NewLogService(vaultDir string) *LogService {
-	return &LogService{vaultDir: vaultDir}
+// NewLogService creates a LogService backed by the given storage.
+func NewLogService(storage vault.Storage) *LogService {
+	return &LogService{storage: storage}
 }
 
 func (s *LogService) logIndexPath() string {
-	return filepath.Join(s.vaultDir, "meta", "log.md")
+	return filepath.Join("meta", "log.md")
 }
 
 func (s *LogService) activityDir() string {
-	return filepath.Join(s.vaultDir, "meta", "activity")
+	return filepath.Join("meta", "activity")
 }
 
 var (
@@ -38,7 +40,7 @@ var (
 
 // Index returns the last n entries from the log index. If n <= 0, all entries.
 func (s *LogService) Index(n int) ([]LogEntry, error) {
-	f, err := os.Open(s.logIndexPath())
+	f, err := s.storage.OpenFile(s.logIndexPath(), os.O_RDONLY, 0)
 	if err != nil {
 		return nil, fmt.Errorf("no log index found: %w", err)
 	}
@@ -113,12 +115,12 @@ func (s *LogService) Day(date string, detail bool) (*DayLog, error) {
 	if !validDate(date) {
 		return nil, fmt.Errorf("invalid date format: %s (expected YYYY-MM-DD)", date)
 	}
-	file := filepath.Join(s.activityDir(), date+".md")
-	if _, err := os.Stat(file); os.IsNotExist(err) {
+	fileRelPath := filepath.Join(s.activityDir(), date+".md")
+	if _, err := s.storage.Stat(fileRelPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("no activity file for %s", date)
 	}
 
-	f, err := os.Open(file)
+	f, err := s.storage.OpenFile(fileRelPath, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -179,20 +181,20 @@ func (s *LogService) Lint() ([]LogLintIssue, error) {
 	logIndex := s.logIndexPath()
 	activityDir := s.activityDir()
 
-	if _, err := os.Stat(logIndex); os.IsNotExist(err) {
+	if _, err := s.storage.Stat(logIndex); os.IsNotExist(err) {
 		return nil, fmt.Errorf("log index missing at %s", logIndex)
 	}
 
 	var issues []LogLintIssue
 
-	indexContent, err := os.ReadFile(logIndex)
+	indexContent, err := s.storage.ReadFile(logIndex)
 	if err != nil {
 		return nil, err
 	}
 	indexStr := string(indexContent)
 
 	// Check activity files have matching index entries
-	if entries, err := os.ReadDir(activityDir); err == nil {
+	if entries, err := s.storage.ReadDir(activityDir); err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 				continue
@@ -207,7 +209,7 @@ func (s *LogService) Lint() ([]LogLintIssue, error) {
 	}
 
 	// Check hash mismatches
-	f, err := os.Open(logIndex)
+	f, err := s.storage.OpenFile(logIndex, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -229,8 +231,8 @@ func (s *LogService) Lint() ([]LogLintIssue, error) {
 		date := dateMatch[1]
 		storedHash := hashMatch[1]
 
-		actFile := filepath.Join(activityDir, date+".md")
-		data, err := os.ReadFile(actFile)
+		actFileRelPath := filepath.Join(activityDir, date+".md")
+		data, err := s.storage.ReadFile(actFileRelPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				issues = append(issues, LogLintIssue{
@@ -249,13 +251,13 @@ func (s *LogService) Lint() ([]LogLintIssue, error) {
 	}
 
 	// Check for activity files without frontmatter
-	if entries, err := os.ReadDir(activityDir); err == nil {
+	if entries, err := s.storage.ReadDir(activityDir); err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 				continue
 			}
-			file := filepath.Join(activityDir, entry.Name())
-			data, err := os.ReadFile(file)
+			fileRelPath := filepath.Join(activityDir, entry.Name())
+			data, err := s.storage.ReadFile(fileRelPath)
 			if err != nil {
 				continue
 			}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jedwards1230/home-wiki/internal/service"
+	"github.com/jedwards1230/home-wiki/internal/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +32,7 @@ func runLog(cmd *cobra.Command, args []string) error {
 	n, _ := cmd.Flags().GetInt("number")
 	detail, _ := cmd.Flags().GetBool("detail")
 
-	logSvc := service.NewLogService(vaultDir)
+	logSvc := service.NewLogService(vault.NewFilesystemStorage(vaultDir))
 
 	// If -n is set with no args, show last N
 	if n > 0 && len(args) == 0 {

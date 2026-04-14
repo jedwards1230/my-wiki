@@ -5,9 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jedwards1230/home-wiki/internal/vault"
 )
 
-func setupPagesVault(t *testing.T) string {
+func setupPagesVault(t *testing.T) (vault.Storage, string) {
 	t.Helper()
 	dir := t.TempDir()
 
@@ -27,12 +29,12 @@ func setupPagesVault(t *testing.T) string {
 		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 	}
 
-	return dir
+	return vault.NewFilesystemStorage(dir), dir
 }
 
 func TestPageService_Read(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	content, err := svc.Read("index.md")
 	if err != nil {
@@ -44,8 +46,8 @@ func TestPageService_Read(t *testing.T) {
 }
 
 func TestPageService_ReadWithoutExtension(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	content, err := svc.Read("index")
 	if err != nil {
@@ -57,8 +59,8 @@ func TestPageService_ReadWithoutExtension(t *testing.T) {
 }
 
 func TestPageService_ReadNotFound(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	_, err := svc.Read("nonexistent")
 	if err == nil {
@@ -70,8 +72,8 @@ func TestPageService_ReadNotFound(t *testing.T) {
 }
 
 func TestPageService_ReadDirectory(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	// "meta" is a directory, not a page
 	_, err := svc.Read("meta")
@@ -84,8 +86,8 @@ func TestPageService_ReadDirectory(t *testing.T) {
 }
 
 func TestPageService_Write(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, dir := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	err := svc.Write("new-page.md", "---\ntitle: New\ntags:\n  - test\ndate: 2026-01-15\n---\n\nContent.\n")
 	if err != nil {
@@ -103,8 +105,8 @@ func TestPageService_Write(t *testing.T) {
 }
 
 func TestPageService_WriteNestedPath(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, dir := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	err := svc.Write("deep/nested/page.md", "---\ntitle: Nested\ntags:\n  - test\ndate: 2026-03-01\n---\n\nContent.\n")
 	if err != nil {
@@ -117,8 +119,8 @@ func TestPageService_WriteNestedPath(t *testing.T) {
 }
 
 func TestPageService_Delete(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, dir := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	err := svc.Delete("index.md")
 	if err != nil {
@@ -131,8 +133,8 @@ func TestPageService_Delete(t *testing.T) {
 }
 
 func TestPageService_DeleteNotFound(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	err := svc.Delete("nonexistent")
 	if err == nil {
@@ -141,8 +143,8 @@ func TestPageService_DeleteNotFound(t *testing.T) {
 }
 
 func TestPageService_List(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	pages, err := svc.List("")
 	if err != nil {
@@ -170,8 +172,8 @@ func TestPageService_List(t *testing.T) {
 }
 
 func TestPageService_ListPrefix(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	pages, err := svc.List("project")
 	if err != nil {
@@ -187,8 +189,8 @@ func TestPageService_ListPrefix(t *testing.T) {
 }
 
 func TestPageService_PathTraversal(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	_, err := svc.Read("../../etc/passwd")
 	if err == nil {
@@ -197,8 +199,8 @@ func TestPageService_PathTraversal(t *testing.T) {
 }
 
 func TestPageService_WriteValidation(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	tests := []struct {
 		name    string
@@ -294,8 +296,8 @@ func TestPageService_WriteValidation(t *testing.T) {
 }
 
 func TestPageService_PatchValidContent(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir)
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
 
 	// Patch index.md (which has valid frontmatter) — result should still be valid
 	result, err := svc.Patch("index.md", []PatchOp{

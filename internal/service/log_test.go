@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/jedwards1230/home-wiki/internal/vault"
 )
 
-func setupLogVault(t *testing.T) string {
+func setupLogVault(t *testing.T) vault.Storage {
 	t.Helper()
 	dir := t.TempDir()
 
@@ -24,12 +26,12 @@ func setupLogVault(t *testing.T) string {
 		"### 16:00 | note | Third thing\nJust a note.\n"
 	_ = os.WriteFile(filepath.Join(dir, "meta", "activity", "2026-04-06.md"), []byte(activityContent), 0o644)
 
-	return dir
+	return vault.NewFilesystemStorage(dir)
 }
 
 func TestLogService_Index(t *testing.T) {
-	dir := setupLogVault(t)
-	svc := NewLogService(dir)
+	storage := setupLogVault(t)
+	svc := NewLogService(storage)
 
 	entries, err := svc.Index(0)
 	if err != nil {
@@ -52,8 +54,8 @@ func TestLogService_Index(t *testing.T) {
 }
 
 func TestLogService_IndexN(t *testing.T) {
-	dir := setupLogVault(t)
-	svc := NewLogService(dir)
+	storage := setupLogVault(t)
+	svc := NewLogService(storage)
 
 	entries, err := svc.Index(1)
 	if err != nil {
@@ -69,8 +71,8 @@ func TestLogService_IndexN(t *testing.T) {
 }
 
 func TestLogService_Day(t *testing.T) {
-	dir := setupLogVault(t)
-	svc := NewLogService(dir)
+	storage := setupLogVault(t)
+	svc := NewLogService(storage)
 
 	dayLog, err := svc.Day("2026-04-06", false)
 	if err != nil {
@@ -96,8 +98,8 @@ func TestLogService_Day(t *testing.T) {
 }
 
 func TestLogService_DayDetail(t *testing.T) {
-	dir := setupLogVault(t)
-	svc := NewLogService(dir)
+	storage := setupLogVault(t)
+	svc := NewLogService(storage)
 
 	dayLog, err := svc.Day("2026-04-06", true)
 	if err != nil {
@@ -110,8 +112,8 @@ func TestLogService_DayDetail(t *testing.T) {
 }
 
 func TestLogService_DayMissing(t *testing.T) {
-	dir := setupLogVault(t)
-	svc := NewLogService(dir)
+	storage := setupLogVault(t)
+	svc := NewLogService(storage)
 
 	_, err := svc.Day("2099-01-01", false)
 	if err == nil {
@@ -120,8 +122,8 @@ func TestLogService_DayMissing(t *testing.T) {
 }
 
 func TestLogService_Lint(t *testing.T) {
-	dir := setupLogVault(t)
-	svc := NewLogService(dir)
+	storage := setupLogVault(t)
+	svc := NewLogService(storage)
 
 	issues, err := svc.Lint()
 	if err != nil {
@@ -139,7 +141,7 @@ func TestLogService_LintClean(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(dir, "meta", "activity"), 0o755)
 	_ = os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte("---\ntitle: Log\n---\n"), 0o644)
 
-	svc := NewLogService(dir)
+	svc := NewLogService(vault.NewFilesystemStorage(dir))
 
 	issues, err := svc.Lint()
 	if err != nil {

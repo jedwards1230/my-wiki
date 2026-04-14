@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/jedwards1230/home-wiki/internal/vault"
 )
 
 // ValidActivityTypes lists the allowed activity types.
@@ -15,20 +17,20 @@ var ValidActivityTypes = []string{"ingest", "edit", "create", "lint", "note", "m
 
 // ActivityService provides activity logging operations.
 type ActivityService struct {
-	vaultDir string
+	storage vault.Storage
 }
 
-// NewActivityService creates an ActivityService for the given vault directory.
-func NewActivityService(vaultDir string) *ActivityService {
-	return &ActivityService{vaultDir: vaultDir}
+// NewActivityService creates an ActivityService backed by the given storage.
+func NewActivityService(storage vault.Storage) *ActivityService {
+	return &ActivityService{storage: storage}
 }
 
 func (s *ActivityService) activityDir() string {
-	return filepath.Join(s.vaultDir, "meta", "activity")
+	return filepath.Join("meta", "activity")
 }
 
 func (s *ActivityService) logIndexPath() string {
-	return filepath.Join(s.vaultDir, "meta", "log.md")
+	return filepath.Join("meta", "log.md")
 }
 
 // Append adds an activity entry to today's log file and updates the log index.
@@ -65,15 +67,15 @@ func (s *ActivityService) Append(entry ActivityEntry) error {
 
 	activityDir := s.activityDir()
 	today := time.Now().Format("2006-01-02")
-	dailyFile := filepath.Join(activityDir, today+".md")
+	dailyRelPath := filepath.Join(activityDir, today+".md")
 
-	if err := os.MkdirAll(activityDir, 0o755); err != nil {
+	if err := s.storage.MkdirAll(activityDir, 0o755); err != nil {
 		return err
 	}
 
-	if _, err := os.Stat(dailyFile); os.IsNotExist(err) {
+	if _, err := s.storage.Stat(dailyRelPath); os.IsNotExist(err) {
 		content := fmt.Sprintf("---\ntitle: \"%s\"\ntags:\n  - meta/activity\ndate: %s\n---\n", today, today)
-		if err := os.WriteFile(dailyFile, []byte(content), 0o644); err != nil {
+		if err := s.storage.WriteFile(dailyRelPath, []byte(content), 0o644); err != nil {
 			return err
 		}
 	}
@@ -83,7 +85,7 @@ func (s *ActivityService) Append(entry ActivityEntry) error {
 	desc := BuildDescription(entry.Summary, entry.Touched)
 
 	// Append entry
-	f, err := os.OpenFile(dailyFile, os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := s.storage.OpenFile(dailyRelPath, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
@@ -95,7 +97,7 @@ func (s *ActivityService) Append(entry ActivityEntry) error {
 		_, _ = fmt.Fprintln(f, desc)
 	}
 
-	return s.updateLogIndex(dailyFile, today, entry.Title)
+	return s.updateLogIndex(dailyRelPath, today, entry.Title)
 }
 
 // Sanitize removes pipe and backtick characters and normalizes whitespace.
@@ -137,10 +139,10 @@ func BuildDescription(summary string, touched []string) string {
 	return desc
 }
 
-func (s *ActivityService) updateLogIndex(dailyFile, today, title string) error {
+func (s *ActivityService) updateLogIndex(dailyRelPath, today, title string) error {
 	logIndex := s.logIndexPath()
 
-	data, err := os.ReadFile(dailyFile)
+	data, err := s.storage.ReadFile(dailyRelPath)
 	if err != nil {
 		return err
 	}
@@ -157,16 +159,16 @@ func (s *ActivityService) updateLogIndex(dailyFile, today, title string) error {
 	indexLine := fmt.Sprintf("## [[meta/activity/%s|%s]] %d changes | `%s` | %s", today, today, entryCount, hash, title)
 
 	// Ensure log index exists
-	if _, err := os.Stat(logIndex); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(logIndex), 0o755); err != nil {
+	if _, err := s.storage.Stat(logIndex); os.IsNotExist(err) {
+		if err := s.storage.MkdirAll(filepath.Dir(logIndex), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(logIndex, []byte(""), 0o644); err != nil {
+		if err := s.storage.WriteFile(logIndex, []byte(""), 0o644); err != nil {
 			return err
 		}
 	}
 
-	existing, err := os.ReadFile(logIndex)
+	existing, err := s.storage.ReadFile(logIndex)
 	if err != nil {
 		return err
 	}
@@ -183,11 +185,11 @@ func (s *ActivityService) updateLogIndex(dailyFile, today, title string) error {
 	}
 
 	if found {
-		return os.WriteFile(logIndex, []byte(strings.Join(lines, "\n")), 0o644)
+		return s.storage.WriteFile(logIndex, []byte(strings.Join(lines, "\n")), 0o644)
 	}
 
 	// Append
-	f, err := os.OpenFile(logIndex, os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := s.storage.OpenFile(logIndex, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
