@@ -100,6 +100,77 @@ func TestActivityService_AppendUpdatesIndex(t *testing.T) {
 	}
 }
 
+func TestActivityService_AutoLoggedCompact(t *testing.T) {
+	storage, dir := setupActivityVault(t)
+	svc := NewActivityService(storage)
+
+	// Auto-logged entry should have no description body
+	err := svc.Append(ActivityEntry{
+		Type:       "create",
+		Title:      "[[home/plants/pothos]]",
+		Time:       "11:39",
+		AutoLogged: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Manual entry should have description body
+	err = svc.Append(ActivityEntry{
+		Type:    "create",
+		Title:   "Scaffolded all plant pages",
+		Time:    "11:40",
+		Summary: "Created 7 individual plant pages.",
+		Touched: []string{"home/plants/overview", "home/plants/pothos"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(dir, "meta", "activity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected at least one activity file")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "meta", "activity", entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+
+	// Auto entry: header only, no "Updated" or "Touched" line
+	if !strings.Contains(content, "### 11:39 | create | [[home/plants/pothos]]") {
+		t.Error("expected auto-logged header")
+	}
+	// The auto entry should NOT have a description line after it
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if strings.Contains(line, "11:39") && strings.Contains(line, "pothos") {
+			// Next non-empty line should be the manual entry header, not a description
+			for j := i + 1; j < len(lines); j++ {
+				if strings.TrimSpace(lines[j]) == "" {
+					continue
+				}
+				if !strings.HasPrefix(lines[j], "### ") {
+					t.Errorf("expected next non-empty line after auto entry to be a header, got: %q", lines[j])
+				}
+				break
+			}
+			break
+		}
+	}
+
+	// Manual entry: header + description with touched links
+	if !strings.Contains(content, "### 11:40 | create | Scaffolded all plant pages") {
+		t.Error("expected manual entry header")
+	}
+	if !strings.Contains(content, "[[home/plants/overview]]") {
+		t.Error("expected touched wikilinks in manual entry description")
+	}
+}
+
 func TestActivityService_InvalidType(t *testing.T) {
 	storage, _ := setupActivityVault(t)
 	svc := NewActivityService(storage)

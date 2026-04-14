@@ -37,12 +37,15 @@ type DayLog struct {
 }
 
 // ActivityEntry represents a single activity log entry.
+// When AutoLogged is true, Append writes only the H3 header line with no
+// description body — used for compact per-file audit entries from PageService.
 type ActivityEntry struct {
-	Type    string   `json:"type"`
-	Title   string   `json:"title"`
-	Time    string   `json:"time"`
-	Summary string   `json:"summary,omitempty"`
-	Touched []string `json:"touched,omitempty"`
+	Type       string   `json:"type"`
+	Title      string   `json:"title"`
+	Time       string   `json:"time"`
+	Summary    string   `json:"summary,omitempty"`
+	Touched    []string `json:"touched,omitempty"`
+	AutoLogged bool     `json:"auto_logged,omitempty"`
 }
 
 // PatchOp represents a single find-and-replace operation.
