@@ -75,10 +75,12 @@ func (vw *VaultWatcher) Run() {
 				continue
 			}
 
-			// New directory — add to watcher so we catch files created inside it.
+			// New directory — add recursively so we catch nested subdirectories.
 			if event.Has(fsnotify.Create) {
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-					_ = vw.watcher.Add(event.Name)
+					if err := vw.addRecursive(event.Name); err != nil {
+						vw.logger.Warn("failed to add new directory to watcher", "path", event.Name, "error", err)
+					}
 					continue
 				}
 			}

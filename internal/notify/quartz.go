@@ -16,6 +16,7 @@ type QuartzBuilder struct {
 	vaultDir  string // --directory flag value for npx quartz build
 	outputDir string // --output flag value for npx quartz build
 	logger    *slog.Logger
+	command   []string // build command; defaults to ["npx", "quartz", "build"]
 
 	mu           sync.Mutex
 	building     bool
@@ -30,6 +31,7 @@ func NewQuartzBuilder(quartzDir, vaultDir, outputDir string, logger *slog.Logger
 		vaultDir:  vaultDir,
 		outputDir: outputDir,
 		logger:    logger,
+		command:   []string{"npx", "quartz", "build"},
 	}
 }
 
@@ -54,11 +56,12 @@ func (q *QuartzBuilder) runBuild() {
 		start := time.Now()
 		q.logger.Info("quartz build starting")
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		cmd := exec.CommandContext(ctx, "npx", "quartz", "build",
+		args := append(q.command[1:],
 			"--directory", q.vaultDir,
 			"--output", q.outputDir,
 		)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		cmd := exec.CommandContext(ctx, q.command[0], args...)
 		cmd.Dir = q.quartzDir
 
 		output, err := cmd.CombinedOutput()
@@ -66,7 +69,11 @@ func (q *QuartzBuilder) runBuild() {
 
 		elapsed := time.Since(start)
 		if err != nil {
-			q.logger.Error("quartz build failed", "error", err, "elapsed", elapsed, "output", string(output))
+			out := string(output)
+			if len(out) > 2000 {
+				out = "..." + out[len(out)-2000:]
+			}
+			q.logger.Error("quartz build failed", "error", err, "elapsed", elapsed, "output", out)
 		} else {
 			q.logger.Info("quartz build completed", "elapsed", elapsed)
 		}

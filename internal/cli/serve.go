@@ -410,6 +410,7 @@ func newServeMCPCmd() *cobra.Command {
 	}
 
 	cmd.Flags().String("port", envOr("WIKI_MCP_PORT", "8081"), "MCP server port (env: WIKI_MCP_PORT)")
+	cmd.Flags().Bool("watch", envOrBool("WIKI_WATCH", true), "watch vault directory for filesystem changes (env: WIKI_WATCH)")
 
 	return cmd
 }
@@ -417,6 +418,7 @@ func newServeMCPCmd() *cobra.Command {
 func runServeMCP(cmd *cobra.Command, _ []string) error {
 	port, _ := cmd.Flags().GetString("port")
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
+	watchEnabled, _ := cmd.Flags().GetBool("watch")
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
@@ -438,16 +440,18 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	defer mcpNotifier.Close()
 
 	// Start filesystem watcher for standalone MCP mode (no Quartz builder).
-	vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, mcpNotifier,
-		notify.WithExcludeDirs([]string{".obsidian", "raw", "private"}),
-		notify.WithWatcherLogger(logger),
-	)
-	if watchErr != nil {
-		logger.Warn("filesystem watcher failed to start", "error", watchErr)
-	} else {
-		go vaultWatcher.Run()
-		defer func() { _ = vaultWatcher.Close() }()
-		logger.Info("filesystem watcher started", "vaultDir", vaultDir)
+	if watchEnabled {
+		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, mcpNotifier,
+			notify.WithExcludeDirs([]string{".obsidian", "raw", "private"}),
+			notify.WithWatcherLogger(logger),
+		)
+		if watchErr != nil {
+			logger.Warn("filesystem watcher failed to start", "error", watchErr)
+		} else {
+			go vaultWatcher.Run()
+			defer func() { _ = vaultWatcher.Close() }()
+			logger.Info("filesystem watcher started", "vaultDir", vaultDir)
+		}
 	}
 
 	// Shared PageService with auto-activity logging on mutations.
