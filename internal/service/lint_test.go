@@ -323,6 +323,49 @@ func TestLintService_Frontmatter_InvalidYAML(t *testing.T) {
 	}
 }
 
+func TestLintService_Links_Dedup(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"index.md":   "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[missing-page]] and [[about]].\n",
+		"about.md":   "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[missing-page]] and [[index]].\n",
+		"project.md": "---\ntitle: Project\ntags:\n  - dev\ndate: 2026-01-01\n---\n\n[[missing-page]] and [[also-missing]].\n",
+	}
+	for name, content := range files {
+		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+
+	report, err := svc.Run("links")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// [[missing-page]] linked from 3 files should be a single issue.
+	// [[also-missing]] linked from 1 file should be another.
+	if report.Total != 2 {
+		t.Errorf("expected 2 deduped issues, got %d", report.Total)
+		for _, issue := range report.Issues {
+			t.Logf("  %s", issue.Message)
+		}
+	}
+
+	for _, issue := range report.Issues {
+		if strings.Contains(issue.Message, "missing-page") {
+			if !strings.Contains(issue.Message, "linked from:") {
+				t.Errorf("expected 'linked from:' in message, got: %s", issue.Message)
+			}
+			// Should mention all 3 source files.
+			for _, src := range []string{"index.md", "about.md", "project.md"} {
+				if !strings.Contains(issue.Message, src) {
+					t.Errorf("expected %s in sources, got: %s", src, issue.Message)
+				}
+			}
+		}
+	}
+}
+
 func TestLintService_CleanVault(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{

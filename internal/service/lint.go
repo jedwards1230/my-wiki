@@ -180,6 +180,14 @@ func (s *LintService) checkLinks(report *LintReport) {
 		return
 	}
 
+	// Collect broken links grouped by target to deduplicate.
+	type brokenLink struct {
+		target  string // original case from first occurrence
+		sources []string
+	}
+	seen := make(map[string]*brokenLink) // keyed by lowercase target
+	var order []string                   // insertion order
+
 	for _, page := range pages {
 		rel, _ := filepath.Rel(s.vault.Dir, page)
 		links, err := vault.ExtractWikilinks(page)
@@ -187,14 +195,27 @@ func (s *LintService) checkLinks(report *LintReport) {
 			continue
 		}
 		for _, link := range links {
-			target := strings.ToLower(link)
-			if !slugs[target] {
-				report.Issues = append(report.Issues, LintIssue{
-					File: rel, Check: "links", Level: "WARN",
-					Message: fmt.Sprintf("broken link [[%s]]", link),
-				})
+			key := strings.ToLower(link)
+			if slugs[key] {
+				continue
 			}
+			bl, ok := seen[key]
+			if !ok {
+				bl = &brokenLink{target: link}
+				seen[key] = bl
+				order = append(order, key)
+			}
+			bl.sources = append(bl.sources, rel)
 		}
+	}
+
+	for _, key := range order {
+		bl := seen[key]
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "links", Level: "WARN",
+			Message: fmt.Sprintf("missing page [[%s]], linked from: %s",
+				bl.target, strings.Join(bl.sources, ", ")),
+		})
 	}
 }
 
