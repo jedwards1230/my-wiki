@@ -6,16 +6,19 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/jedwards1230/home-wiki/internal/vault"
 )
 
 // PageInfo describes a wiki page.
 type PageInfo struct {
-	Path    string `json:"path"`
-	Title   string `json:"title,omitempty"`
-	HasMeta bool   `json:"has_meta"`
+	Path     string `json:"path"`
+	Title    string `json:"title,omitempty"`
+	HasMeta  bool   `json:"has_meta"`
+	Modified string `json:"modified,omitempty"` // RFC 3339, populated when sort_by=modified
 }
 
 // PageService provides wiki page CRUD operations.
@@ -200,15 +203,27 @@ func (s *PageService) Delete(relPath string) error {
 	return nil
 }
 
-// List returns all wiki pages under the given prefix.
-// If prefix is empty, lists all pages.
-func (s *PageService) List(prefix string) ([]PageInfo, error) {
-	searchDir := ""
-	if prefix != "" {
-		searchDir = prefix
-	}
+// ListOptions configures page listing behavior.
+type ListOptions struct {
+	Prefix string // filter to pages under this directory
+	SortBy string // "name" (default) or "modified"
+	Limit  int    // max results (0 = unlimited)
+}
 
-	var pages []PageInfo
+// List returns wiki pages under the given options.
+func (s *PageService) List(opts ListOptions) ([]PageInfo, error) {
+	searchDir := ""
+	if opts.Prefix != "" {
+		searchDir = opts.Prefix
+	}
+	sortByMtime := opts.SortBy == "modified"
+
+	type pageWithMtime struct {
+		info  PageInfo
+		mtime time.Time
+	}
+	var items []pageWithMtime
+
 	err := s.storage.WalkDir(searchDir, func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -222,6 +237,11 @@ func (s *PageService) List(prefix string) ([]PageInfo, error) {
 			return nil
 		}
 		if filepath.Ext(rel) != ".md" {
+			return nil
+		}
+
+		// Exclude meta/activity/ from modified-sorted listings (same as old recent behavior).
+		if sortByMtime && (strings.HasPrefix(rel, "meta/activity/") || strings.HasPrefix(rel, filepath.Join("meta", "activity")+string(filepath.Separator))) {
 			return nil
 		}
 
@@ -239,13 +259,35 @@ func (s *PageService) List(prefix string) ([]PageInfo, error) {
 			}
 		}
 
-		pages = append(pages, info)
+		var mtime time.Time
+		if sortByMtime {
+			if fi, statErr := s.storage.Stat(rel); statErr == nil {
+				mtime = fi.ModTime()
+				info.Modified = mtime.UTC().Format(time.RFC3339)
+			}
+		}
+
+		items = append(items, pageWithMtime{info: info, mtime: mtime})
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
+	if sortByMtime {
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].mtime.After(items[j].mtime)
+		})
+	}
+
+	if opts.Limit > 0 && len(items) > opts.Limit {
+		items = items[:opts.Limit]
+	}
+
+	pages := make([]PageInfo, len(items))
+	for i, item := range items {
+		pages[i] = item.info
+	}
 	return pages, nil
 }
 

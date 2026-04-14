@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -12,11 +13,12 @@ import (
 type LintService struct {
 	vault  *vault.Vault
 	logSvc *LogService
+	tagSvc *TagService
 }
 
 // NewLintService creates a LintService for the given vault.
 func NewLintService(v *vault.Vault, logSvc *LogService) *LintService {
-	return &LintService{vault: v, logSvc: logSvc}
+	return &LintService{vault: v, logSvc: logSvc, tagSvc: NewTagService(v)}
 }
 
 // Run executes the specified lint check and returns a report.
@@ -28,21 +30,27 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 	case "all":
 		s.checkFrontmatter(report)
 		s.checkRawFrontmatter(report)
+		s.checkTags(report, false)
 		s.checkLinks(report)
 		s.checkOrphans(report)
+		s.checkSize(report)
 		s.checkLog(report)
 	case "frontmatter":
 		s.checkFrontmatter(report)
 	case "raw":
 		s.checkRawFrontmatter(report)
+	case "tags":
+		s.checkTags(report, true)
 	case "links":
 		s.checkLinks(report)
 	case "orphans":
 		s.checkOrphans(report)
+	case "size":
+		s.checkSize(report)
 	case "log":
 		s.checkLog(report)
 	default:
-		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, raw, links, orphans, or log", check)
+		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, raw, tags, links, orphans, size, or log", check)
 	}
 
 	report.Total = len(report.Issues)
@@ -97,6 +105,11 @@ func (s *LintService) checkFrontmatter(report *LintReport) {
 			report.Issues = append(report.Issues, LintIssue{
 				File: rel, Check: "frontmatter", Level: "FAIL", Message: "missing frontmatter",
 			})
+			continue
+		}
+
+		// Generated pages (e.g. index.md) are exempt from required-field checks.
+		if fm["generated"] == "true" {
 			continue
 		}
 
@@ -159,6 +172,68 @@ func (s *LintService) checkRawFrontmatter(report *LintReport) {
 				File: rel, Check: "raw", Level: "WARN",
 				Message: "missing: " + strings.Join(missing, " "),
 			})
+		}
+	}
+}
+
+func (s *LintService) checkTags(report *LintReport, required bool) {
+	allowed, err := s.tagSvc.AllowedTags()
+	if err != nil {
+		if required {
+			report.Issues = append(report.Issues, LintIssue{
+				Check: "tags", Level: "ERROR",
+				Message: fmt.Sprintf("failed to parse tag taxonomy: %v", err),
+			})
+		}
+		return
+	}
+
+	pages, err := s.vault.FindWikiPages()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "tags", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+
+	for _, page := range pages {
+		rel, _ := filepath.Rel(s.vault.Dir, page)
+		fm, fmErr := vault.ParseFrontmatter(page)
+		if fmErr != nil || fm == nil {
+			continue
+		}
+		if fm["generated"] == "true" {
+			continue
+		}
+
+		tags := fm["tags"]
+		if tags == "" {
+			continue // checkFrontmatter already catches missing tags
+		}
+
+		for _, tag := range strings.Split(tags, ",") {
+			tag = strings.TrimSpace(tag)
+			if tag == "" {
+				continue
+			}
+			if !allowed[tag] {
+				// Check if the domain prefix is valid (allow new sub-tags under known domains).
+				domain := tag
+				if idx := strings.IndexByte(tag, '/'); idx >= 0 {
+					domain = tag[:idx]
+				}
+				if allowed[domain] {
+					report.Issues = append(report.Issues, LintIssue{
+						File: rel, Check: "tags", Level: "WARN",
+						Message: fmt.Sprintf("tag %q not in taxonomy (domain %q is valid — add sub-tag to schema)", tag, domain),
+					})
+				} else {
+					report.Issues = append(report.Issues, LintIssue{
+						File: rel, Check: "tags", Level: "WARN",
+						Message: fmt.Sprintf("tag %q not in taxonomy (unknown domain %q)", tag, domain),
+					})
+				}
+			}
 		}
 	}
 }
@@ -379,6 +454,42 @@ func (s *LintService) lintPageLinks(relPath string) []LintIssue {
 		}
 	}
 	return issues
+}
+
+// maxPageWords is the word-count threshold above which a page gets a size warning.
+const maxPageWords = 1000
+
+func (s *LintService) checkSize(report *LintReport) {
+	pages, err := s.vault.FindWikiPages()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "size", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+
+	for _, page := range pages {
+		rel, _ := filepath.Rel(s.vault.Dir, page)
+
+		data, err := os.ReadFile(page)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+
+		// Strip frontmatter before counting words.
+		if idx := strings.Index(content[4:], "\n---"); idx >= 0 && strings.HasPrefix(content, "---\n") {
+			content = content[4+idx+4:]
+		}
+
+		words := len(strings.Fields(content))
+		if words > maxPageWords {
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "size", Level: "WARN",
+				Message: fmt.Sprintf("%d words (limit %d) — consider splitting", words, maxPageWords),
+			})
+		}
+	}
 }
 
 func (s *LintService) checkOrphans(report *LintReport) {
