@@ -55,7 +55,7 @@ type Handler struct {
 	directory *service.DirectoryService
 	activity  *service.ActivityService
 	pages     *service.PageService
-	recent    *service.RecentService
+	tags      *service.TagService
 	search    *service.SearchService
 	authMW    func(http.Handler) http.Handler
 	authReads bool
@@ -73,7 +73,7 @@ func NewHandler(v *vault.Vault, searchSvc *service.SearchService, opts ...Handle
 		directory: service.NewDirectoryService(v),
 		activity:  service.NewActivityService(v.Storage),
 		pages:     service.NewPageService(v.Storage),
-		recent:    service.NewRecentService(v),
+		tags:      service.NewTagService(v),
 		search:    searchSvc,
 	}
 	for _, opt := range opts {
@@ -95,6 +95,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/pages", h.wrapRead(http.HandlerFunc(h.handlePageList)))
 	mux.Handle("GET /api/recent", h.wrapRead(http.HandlerFunc(h.handleRecentList)))
 	mux.Handle("GET /api/search", h.wrapRead(http.HandlerFunc(h.handleSearch)))
+	mux.Handle("GET /api/tags", h.wrapRead(http.HandlerFunc(h.handleTags)))
+	mux.Handle("GET /api/whoami", h.wrapRead(http.HandlerFunc(h.handleWhoami)))
 
 	// Mutating routes — protected by auth middleware when configured
 	mux.Handle("POST /api/ingest/generate", h.wrapMutating(http.HandlerFunc(h.handleIngestGenerate)))

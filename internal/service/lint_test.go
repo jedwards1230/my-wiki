@@ -366,6 +366,108 @@ func TestLintService_Links_Dedup(t *testing.T) {
 	}
 }
 
+func TestLintService_GeneratedExempt(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"index.md": "---\ntitle: Home\ndate: 2026-01-01\ngenerated: true\n---\n\n[[about]]\n",
+		"about.md": "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[index]]\n",
+	}
+	for name, content := range files {
+		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+
+	report, err := svc.Run("frontmatter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// index.md has no tags but is generated: true — should be exempt.
+	for _, issue := range report.Issues {
+		if issue.File == "index.md" {
+			t.Errorf("expected generated page to be exempt, got issue: %s", issue.Message)
+		}
+	}
+}
+
+func TestLintService_Size(t *testing.T) {
+	dir := t.TempDir()
+	// Create a page with >1000 words
+	bigBody := strings.Repeat("word ", 1100)
+	files := map[string]string{
+		"big.md":   "---\ntitle: Big\ntags:\n  - test\ndate: 2026-01-01\n---\n\n" + bigBody,
+		"small.md": "---\ntitle: Small\ntags:\n  - test\ndate: 2026-01-01\n---\n\nShort page.\n",
+	}
+	for name, content := range files {
+		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+
+	report, err := svc.Run("size")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if report.Total != 1 {
+		t.Errorf("expected 1 size issue, got %d", report.Total)
+	}
+	if report.Total > 0 && report.Issues[0].File != "big.md" {
+		t.Errorf("expected issue for big.md, got %s", report.Issues[0].File)
+	}
+}
+
+func TestLintService_Tags(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, "meta"), 0o755)
+
+	schema := "---\ntitle: Schema\ntags:\n  - meta\ndate: 2026-01-01\n---\n\n" +
+		"<!-- begin:tag-taxonomy -->\n" +
+		"| Domain | Use for | Sub-tag examples |\n" +
+		"|--------|---------|------------------|\n" +
+		"| `homelab` | Infrastructure | `homelab/service`, `homelab/host` |\n" +
+		"| `meta` | Wiki ops | `meta/activity` |\n" +
+		"<!-- end:tag-taxonomy -->\n"
+
+	files := map[string]string{
+		"meta/schema.md": schema,
+		"good.md":        "---\ntitle: Good\ntags:\n  - homelab\ndate: 2026-01-01\n---\n\n[[meta/schema]]\n",
+		"bad-tag.md":     "---\ntitle: Bad\ntags:\n  - invalid-domain\ndate: 2026-01-01\n---\n\n[[meta/schema]]\n",
+		"new-sub.md":     "---\ntitle: New Sub\ntags:\n  - homelab/new-thing\ndate: 2026-01-01\n---\n\n[[meta/schema]]\n",
+	}
+	for name, content := range files {
+		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+
+	report, err := svc.Run("tags")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// bad-tag.md should have unknown domain, new-sub.md should warn about missing sub-tag
+	if report.Total != 2 {
+		t.Errorf("expected 2 tag issues, got %d", report.Total)
+		for _, issue := range report.Issues {
+			t.Logf("  %s: %s", issue.File, issue.Message)
+		}
+	}
+
+	for _, issue := range report.Issues {
+		if issue.File == "bad-tag.md" && !strings.Contains(issue.Message, "unknown domain") {
+			t.Errorf("expected 'unknown domain' for bad-tag.md, got: %s", issue.Message)
+		}
+		if issue.File == "new-sub.md" && !strings.Contains(issue.Message, "add sub-tag to schema") {
+			t.Errorf("expected 'add sub-tag' for new-sub.md, got: %s", issue.Message)
+		}
+	}
+}
+
 func TestLintService_CleanVault(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
@@ -384,10 +486,12 @@ func TestLintService_CleanVault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if report.Total != 0 {
-		t.Errorf("expected clean vault, got %d issues", report.Total)
-		for _, issue := range report.Issues {
-			t.Logf("  %s: %s - %s", issue.File, issue.Check, issue.Message)
+	// The only expected issue is a WARN about tags check being skipped
+	// (no meta/schema.md with taxonomy markers in this test vault).
+	for _, issue := range report.Issues {
+		if issue.Check == "tags" && issue.Level == "WARN" && strings.Contains(issue.Message, "skipped") {
+			continue
 		}
+		t.Errorf("unexpected issue: %s: %s - %s", issue.File, issue.Check, issue.Message)
 	}
 }

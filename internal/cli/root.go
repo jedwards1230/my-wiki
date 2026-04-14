@@ -13,6 +13,11 @@ func SetVersion(v string) {
 	version = v
 }
 
+// GetVersion returns the current version string.
+func GetVersion() string {
+	return version
+}
+
 // NewRootCmd creates the root wiki-server command with all subcommands.
 func NewRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
