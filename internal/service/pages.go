@@ -175,7 +175,7 @@ func (s *PageService) List(prefix string) ([]PageInfo, error) {
 		if readErr == nil {
 			buf := make([]byte, 1024)
 			n, _ := f.Read(buf)
-			f.Close()
+			_ = f.Close()
 			if title := extractTitle(buf[:n]); title != "" {
 				info.Title = title
 				info.HasMeta = true
