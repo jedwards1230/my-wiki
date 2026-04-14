@@ -302,7 +302,7 @@ func TestWriteHandlerAllOptionalFields(t *testing.T) {
 		return
 	}
 	rest := content[4:]
-	if strings.Index(rest, "---\n") == -1 {
+	if !strings.Contains(rest, "---\n") {
 		t.Error("expected closing --- in frontmatter")
 	}
 }
