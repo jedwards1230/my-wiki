@@ -214,7 +214,10 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 	// Build current slug index (post-deletion — the file is already removed).
 	slugs, err := s.vault.BuildSlugIndex()
 	if err != nil {
-		return nil
+		return []LintIssue{{
+			Check: "links", Level: "ERROR",
+			Message: fmt.Sprintf("failed to build slug index: %v", err),
+		}}
 	}
 
 	// If the deleted slugs still resolve (another page has the same basename),
@@ -233,7 +236,10 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 	// Walk wiki pages to find links that now point to nothing.
 	pages, err := s.vault.FindWikiPages()
 	if err != nil {
-		return nil
+		return []LintIssue{{
+			Check: "links", Level: "ERROR",
+			Message: fmt.Sprintf("failed to find wiki pages: %v", err),
+		}}
 	}
 
 	var issues []LintIssue
@@ -310,12 +316,18 @@ func (s *LintService) lintPageLinks(relPath string) []LintIssue {
 	absPath := filepath.Join(s.vault.Dir, relPath)
 	slugs, err := s.vault.BuildSlugIndex()
 	if err != nil {
-		return nil
+		return []LintIssue{{
+			File: relPath, Check: "links", Level: "ERROR",
+			Message: fmt.Sprintf("failed to build slug index: %v", err),
+		}}
 	}
 
 	links, err := vault.ExtractWikilinks(absPath)
 	if err != nil {
-		return nil
+		return []LintIssue{{
+			File: relPath, Check: "links", Level: "ERROR",
+			Message: fmt.Sprintf("failed to extract wikilinks: %v", err),
+		}}
 	}
 
 	var issues []LintIssue
