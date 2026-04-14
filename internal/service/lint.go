@@ -179,12 +179,15 @@ func (s *LintService) checkRawFrontmatter(report *LintReport) {
 func (s *LintService) checkTags(report *LintReport, required bool) {
 	allowed, err := s.tagSvc.AllowedTags()
 	if err != nil {
+		level := "WARN"
+		message := fmt.Sprintf("tags check skipped: %v", err)
 		if required {
-			report.Issues = append(report.Issues, LintIssue{
-				Check: "tags", Level: "ERROR",
-				Message: fmt.Sprintf("failed to parse tag taxonomy: %v", err),
-			})
+			level = "ERROR"
+			message = fmt.Sprintf("failed to parse tag taxonomy: %v", err)
 		}
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "tags", Level: level, Message: message,
+		})
 		return
 	}
 
@@ -478,8 +481,10 @@ func (s *LintService) checkSize(report *LintReport) {
 		content := string(data)
 
 		// Strip frontmatter before counting words.
-		if idx := strings.Index(content[4:], "\n---"); idx >= 0 && strings.HasPrefix(content, "---\n") {
-			content = content[4+idx+4:]
+		if strings.HasPrefix(content, "---\n") {
+			if idx := strings.Index(content[4:], "\n---"); idx >= 0 {
+				content = content[4+idx+4:]
+			}
 		}
 
 		words := len(strings.Fields(content))

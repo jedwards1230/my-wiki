@@ -486,10 +486,12 @@ func TestLintService_CleanVault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if report.Total != 0 {
-		t.Errorf("expected clean vault, got %d issues", report.Total)
-		for _, issue := range report.Issues {
-			t.Logf("  %s: %s - %s", issue.File, issue.Check, issue.Message)
+	// The only expected issue is a WARN about tags check being skipped
+	// (no meta/schema.md with taxonomy markers in this test vault).
+	for _, issue := range report.Issues {
+		if issue.Check == "tags" && issue.Level == "WARN" && strings.Contains(issue.Message, "skipped") {
+			continue
 		}
+		t.Errorf("unexpected issue: %s: %s - %s", issue.File, issue.Check, issue.Message)
 	}
 }

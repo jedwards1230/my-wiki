@@ -259,6 +259,11 @@ func (s *PageService) List(opts ListOptions) ([]PageInfo, error) {
 			}
 		}
 
+		// Fallback title from filename when frontmatter title is empty.
+		if info.Title == "" {
+			info.Title = strings.TrimSuffix(filepath.Base(rel), ".md")
+		}
+
 		var mtime time.Time
 		if sortByMtime {
 			if fi, statErr := s.storage.Stat(rel); statErr == nil {
