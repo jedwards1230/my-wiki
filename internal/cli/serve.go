@@ -42,6 +42,8 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().String("port", envOr("WIKI_PORT", "8080"), "HTTP port (env: WIKI_PORT)")
 	cmd.Flags().String("public-dir", envOr("WIKI_PUBLIC_DIR", "/data/public"), "path to Quartz public output (env: WIKI_PUBLIC_DIR)")
 	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: WIKI_MCP_PORT)")
+	cmd.Flags().String("quartz-dir", envOr("WIKI_QUARTZ_DIR", ""), "path to Quartz project directory; enables Quartz build triggering (env: WIKI_QUARTZ_DIR)")
+	cmd.Flags().Bool("watch", envOrBool("WIKI_WATCH", true), "watch vault directory for filesystem changes (env: WIKI_WATCH)")
 
 	return cmd
 }
@@ -56,6 +58,8 @@ func newServeHTTPCmd() *cobra.Command {
 	cmd.Flags().String("port", envOr("WIKI_PORT", "8080"), "HTTP port (env: WIKI_PORT)")
 	cmd.Flags().String("public-dir", envOr("WIKI_PUBLIC_DIR", "/data/public"), "path to Quartz public output (env: WIKI_PUBLIC_DIR)")
 	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: WIKI_MCP_PORT)")
+	cmd.Flags().String("quartz-dir", envOr("WIKI_QUARTZ_DIR", ""), "path to Quartz project directory; enables Quartz build triggering (env: WIKI_QUARTZ_DIR)")
+	cmd.Flags().Bool("watch", envOrBool("WIKI_WATCH", true), "watch vault directory for filesystem changes (env: WIKI_WATCH)")
 
 	return cmd
 }
@@ -63,6 +67,13 @@ func newServeHTTPCmd() *cobra.Command {
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envOrBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		return strings.EqualFold(v, "true") || v == "1"
 	}
 	return fallback
 }
@@ -169,6 +180,8 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	publicDir, _ := cmd.Flags().GetString("public-dir")
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
 	mcpPort, _ := cmd.Flags().GetInt("mcp-port")
+	quartzDir, _ := cmd.Flags().GetString("quartz-dir")
+	watchEnabled, _ := cmd.Flags().GetBool("watch")
 
 	// Support env var for mcp-port when flag is at default
 	if mcpPort == 0 {
@@ -223,27 +236,45 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	directorySvc := service.NewDirectoryService(v)
 	ingestSvc := service.NewIngestService(v)
 
-	// Debounced post-mutation hook: regenerate computed pages and touch
-	// dirty files so chokidar reliably triggers a Quartz rebuild.
+	// Create Quartz builder if quartz-dir is configured. This replaces
+	// Quartz's built-in --watch mode: the Go server triggers one-shot
+	// builds after debounced filesystem changes.
+	var quartzBuilder *notify.QuartzBuilder
+	if quartzDir != "" {
+		quartzBuilder = notify.NewQuartzBuilder(quartzDir, vaultDir, publicDir, logger)
+	}
+
+	// Debounced post-mutation hook: regenerate computed pages and trigger
+	// a Quartz build when the quartz builder is configured.
 	notifier := notify.New(2*time.Second, func(paths []string) {
-		now := time.Now()
 		if _, _, err := directorySvc.Generate(); err != nil {
 			logger.Warn("rebuild notifier: directory generate failed", "error", err)
 		}
 		if _, _, err := ingestSvc.Generate(); err != nil {
 			logger.Warn("rebuild notifier: ingest generate failed", "error", err)
 		}
-		for _, p := range paths {
-			if err := os.Chtimes(p, now, now); err != nil {
-				// File may have been deleted — skip silently
-				if !os.IsNotExist(err) {
-					logger.Warn("rebuild notifier: touch failed", "path", p, "error", err)
-				}
-			}
+		if quartzBuilder != nil {
+			quartzBuilder.Build()
 		}
 		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
 	})
 	defer notifier.Close()
+
+	// Start filesystem watcher to detect external changes (Obsidian Sync,
+	// git pull, manual edits) and feed them into the rebuild notifier.
+	if watchEnabled {
+		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, notifier,
+			notify.WithExcludeDirs([]string{".obsidian", "raw", "private"}),
+			notify.WithWatcherLogger(logger),
+		)
+		if watchErr != nil {
+			logger.Warn("filesystem watcher failed to start", "error", watchErr)
+		} else {
+			go vaultWatcher.Run()
+			defer func() { _ = vaultWatcher.Close() }()
+			logger.Info("filesystem watcher started", "vaultDir", vaultDir)
+		}
+	}
 
 	// Shared PageService with auto-activity logging on mutations.
 	activitySvc := service.NewActivityService(v.Storage)
@@ -379,6 +410,7 @@ func newServeMCPCmd() *cobra.Command {
 	}
 
 	cmd.Flags().String("port", envOr("WIKI_MCP_PORT", "8081"), "MCP server port (env: WIKI_MCP_PORT)")
+	cmd.Flags().Bool("watch", envOrBool("WIKI_WATCH", true), "watch vault directory for filesystem changes (env: WIKI_WATCH)")
 
 	return cmd
 }
@@ -386,6 +418,7 @@ func newServeMCPCmd() *cobra.Command {
 func runServeMCP(cmd *cobra.Command, _ []string) error {
 	port, _ := cmd.Flags().GetString("port")
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
+	watchEnabled, _ := cmd.Flags().GetBool("watch")
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
@@ -396,23 +429,30 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	ingestSvc := service.NewIngestService(v)
 
 	mcpNotifier := notify.New(2*time.Second, func(paths []string) {
-		now := time.Now()
 		if _, _, err := directorySvc.Generate(); err != nil {
 			logger.Warn("rebuild notifier: directory generate failed", "error", err)
 		}
 		if _, _, err := ingestSvc.Generate(); err != nil {
 			logger.Warn("rebuild notifier: ingest generate failed", "error", err)
 		}
-		for _, p := range paths {
-			if err := os.Chtimes(p, now, now); err != nil {
-				if !os.IsNotExist(err) {
-					logger.Warn("rebuild notifier: touch failed", "path", p, "error", err)
-				}
-			}
-		}
 		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
 	})
 	defer mcpNotifier.Close()
+
+	// Start filesystem watcher for standalone MCP mode (no Quartz builder).
+	if watchEnabled {
+		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, mcpNotifier,
+			notify.WithExcludeDirs([]string{".obsidian", "raw", "private"}),
+			notify.WithWatcherLogger(logger),
+		)
+		if watchErr != nil {
+			logger.Warn("filesystem watcher failed to start", "error", watchErr)
+		} else {
+			go vaultWatcher.Run()
+			defer func() { _ = vaultWatcher.Close() }()
+			logger.Info("filesystem watcher started", "vaultDir", vaultDir)
+		}
+	}
 
 	// Shared PageService with auto-activity logging on mutations.
 	mcpActivitySvc := service.NewActivityService(v.Storage)
