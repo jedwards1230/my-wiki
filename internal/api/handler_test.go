@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jedwards1230/home-wiki/internal/middleware"
 	"github.com/jedwards1230/home-wiki/internal/search"
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/jedwards1230/home-wiki/internal/vault"
@@ -418,6 +419,70 @@ func TestRecentEndpointWithLimit(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestWhoamiEndpoint(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp struct {
+		Data ServerInfo `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Data.Name != "home-wiki" {
+		t.Errorf("expected name=home-wiki, got %q", resp.Data.Name)
+	}
+	if resp.Data.User != nil {
+		t.Error("expected no user info without auth context")
+	}
+}
+
+func TestWhoamiEndpoint_WithUser(t *testing.T) {
+	v := setupTestVault(t)
+	h := NewHandler(v, nil)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
+	// Inject authenticated user into context
+	ctx := middleware.WithUser(r.Context(), &middleware.UserInfo{
+		Username: "testuser",
+		Email:    "test@example.com",
+		Name:     "Test User",
+		Groups:   []string{"wiki-editors"},
+	})
+	r = r.WithContext(ctx)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp struct {
+		Data ServerInfo `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Data.User == nil {
+		t.Fatal("expected user info with auth context")
+	}
+	if resp.Data.User.Username != "testuser" {
+		t.Errorf("expected username=testuser, got %q", resp.Data.User.Username)
+	}
+	if resp.Data.User.Email != "test@example.com" {
+		t.Errorf("expected email=test@example.com, got %q", resp.Data.User.Email)
 	}
 }
 
