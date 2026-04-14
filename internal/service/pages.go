@@ -20,8 +20,9 @@ type PageInfo struct {
 
 // PageService provides wiki page CRUD operations.
 type PageService struct {
-	storage    vault.Storage
-	onMutation func(MutationEvent)
+	storage      vault.Storage
+	excludedDirs []string
+	onMutation   func(MutationEvent)
 }
 
 // PageOption configures optional PageService behavior.
@@ -32,9 +33,22 @@ func WithOnMutation(fn func(MutationEvent)) PageOption {
 	return func(s *PageService) { s.onMutation = fn }
 }
 
+// WithExcludedDirs sets the directories to exclude from page listing.
+// The provided slice is copied so the caller can safely modify it afterward.
+func WithExcludedDirs(dirs []string) PageOption {
+	cp := make([]string, len(dirs))
+	copy(cp, dirs)
+	return func(s *PageService) { s.excludedDirs = cp }
+}
+
 // NewPageService creates a PageService backed by the given storage.
 func NewPageService(storage vault.Storage, opts ...PageOption) *PageService {
-	s := &PageService{storage: storage}
+	defaults := make([]string, len(vault.DefaultExcludedDirs))
+	copy(defaults, vault.DefaultExcludedDirs)
+	s := &PageService{
+		storage:      storage,
+		excludedDirs: defaults,
+	}
 	for _, o := range opts {
 		o(s)
 	}
@@ -200,9 +214,10 @@ func (s *PageService) List(prefix string) ([]PageInfo, error) {
 			return err
 		}
 		if d.IsDir() {
-			switch rel {
-			case "raw", "private", ".obsidian":
-				return filepath.SkipDir
+			for _, excluded := range s.excludedDirs {
+				if rel == excluded {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}

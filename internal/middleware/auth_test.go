@@ -201,10 +201,10 @@ func TestAuthValidToken(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if user == nil {
+	if user == nil { //nolint:staticcheck // SA5011 false positive: t.Fatal terminates
 		t.Fatal("expected user in context")
 	}
-	if user.Subject != "user-123" || user.Username != "justin" || user.Email != "justin@example.com" {
+	if user.Subject != "user-123" || user.Username != "justin" || user.Email != "justin@example.com" { //nolint:staticcheck // SA5011
 		t.Errorf("unexpected user: %+v", user)
 	}
 	if len(user.Groups) != 1 || user.Groups[0] != "admins" {

@@ -63,22 +63,22 @@ func (s *DirectoryService) List() ([]DirectoryEntry, error) {
 	return result, nil
 }
 
-// excludedDirs are directories that should not get index files.
-var excludedDirs = map[string]bool{
-	"raw":            true,
-	"private":        true,
-	".obsidian":      true,
+// directoryExcludedDirs are additional dirs excluded from directory index generation
+// beyond the vault-level exclusions.
+var directoryExcludedDirs = map[string]bool{
 	"meta/activity":  true,
 	"meta\\activity": true, // Windows
 }
 
 // isExcludedDir checks if a relative directory path should be excluded.
-func isExcludedDir(rel string) bool {
-	if excludedDirs[rel] {
+func (s *DirectoryService) isExcludedDir(rel string) bool {
+	if s.vault.IsExcluded(rel) {
 		return true
 	}
-	// Check if any parent is excluded
-	for excluded := range excludedDirs {
+	if directoryExcludedDirs[rel] {
+		return true
+	}
+	for excluded := range directoryExcludedDirs {
 		if strings.HasPrefix(rel, excluded+string(filepath.Separator)) {
 			return true
 		}
@@ -119,7 +119,7 @@ func (s *DirectoryService) Generate() (string, int, error) {
 		if dir == "." {
 			dir = ""
 		}
-		if isExcludedDir(dir) {
+		if s.isExcludedDir(dir) {
 			continue
 		}
 		pages = append(pages, e)
