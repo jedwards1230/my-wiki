@@ -705,6 +705,82 @@ func TestAuthReadsProtectsGetRoutes(t *testing.T) {
 	}
 }
 
+func TestPageWriteEndpointWithLintWarnings(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	// Create a page with a broken wikilink — lint should return a warning.
+	body := "---\ntitle: Broken Links\ntags:\n  - test\ndate: 2026-01-15\n---\n\n[[nonexistent-target]]\n"
+	r := httptest.NewRequest(http.MethodPut, "/api/pages/broken-link-page.md", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		b, _ := io.ReadAll(w.Body)
+		t.Fatalf("expected 200, got %d: %s", w.Code, string(b))
+	}
+
+	var resp response
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Warnings) == 0 {
+		t.Fatal("expected lint warnings for broken link, got none")
+	}
+	found := false
+	for _, warn := range resp.Warnings {
+		if strings.Contains(warn.Message, "nonexistent-target") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about [[nonexistent-target]], got: %v", resp.Warnings)
+	}
+}
+
+func TestPageWriteEndpointNoWarnings(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	// Create a page with valid links — no warnings expected.
+	body := "---\ntitle: Good Page\ntags:\n  - test\ndate: 2026-01-15\n---\n\n[[about]]\n"
+	r := httptest.NewRequest(http.MethodPut, "/api/pages/good-page.md", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		b, _ := io.ReadAll(w.Body)
+		t.Fatalf("expected 200, got %d: %s", w.Code, string(b))
+	}
+
+	var resp response
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Warnings) != 0 {
+		t.Errorf("expected no warnings for clean page, got: %v", resp.Warnings)
+	}
+}
+
+func TestPageDeleteEndpointWithLintWarnings(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	// about.md is linked from index.md — deleting it should produce a warning.
+	r := httptest.NewRequest(http.MethodDelete, "/api/pages/about.md", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp response
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Warnings) == 0 {
+		t.Fatal("expected lint warnings after deleting about.md (linked from index.md)")
+	}
+}
+
 func TestAuthMutatingRoutesPassWithAuth(t *testing.T) {
 	mux := setupTestMuxWithAuth(t)
 

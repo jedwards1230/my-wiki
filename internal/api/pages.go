@@ -59,10 +59,11 @@ func (h *Handler) handlePageWrite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.markDirty(path)
-	writeJSON(w, http.StatusOK, map[string]string{
+	warnings := h.lint.LintPage(path)
+	writeJSONWithWarnings(w, http.StatusOK, map[string]string{
 		"status": "ok",
 		"path":   path,
-	})
+	}, warnings)
 }
 
 func (h *Handler) handlePageDelete(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +79,8 @@ func (h *Handler) handlePageDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.markDirty(path)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	warnings := h.lint.LintDelete(path)
+	writeJSONWithWarnings(w, http.StatusOK, map[string]string{"status": "deleted"}, warnings)
 }
 
 func (h *Handler) handlePagePatch(w http.ResponseWriter, r *http.Request) {
@@ -121,10 +123,11 @@ func (h *Handler) handlePagePatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.markDirty(path)
-	writeJSON(w, http.StatusOK, map[string]string{
+	warnings := h.lint.LintPage(path)
+	writeJSONWithWarnings(w, http.StatusOK, map[string]string{
 		"path":    path,
 		"content": content,
-	})
+	}, warnings)
 }
 
 func (h *Handler) handlePageList(w http.ResponseWriter, r *http.Request) {

@@ -93,7 +93,6 @@ func getIntArg(req mcp.CallToolRequest, key string) int {
 	return 0
 }
 
-
 func getStringArrayArg(req mcp.CallToolRequest, key string) []string {
 	args := req.GetArguments()
 	v, ok := args[key]
@@ -111,6 +110,24 @@ func getStringArrayArg(req mcp.CallToolRequest, key string) []string {
 		}
 	}
 	return out
+}
+
+// resultWithLintWarnings constructs a tool result with the given text and
+// optional lint warnings. When warnings are present they are appended as a
+// second text content block and emitted as an MCP log notification at warning
+// level per the 2025-11-25 spec (notifications/message).
+func resultWithLintWarnings(ctx context.Context, s *server.MCPServer, text string, warnings []service.LintIssue) *mcp.CallToolResult {
+	result := mcp.NewToolResultText(text)
+	if len(warnings) > 0 {
+		result.Content = append(result.Content, mcp.TextContent{
+			Type: "text",
+			Text: "Lint warnings:\n" + toJSON(warnings),
+		})
+		mcpLog(ctx, s, mcp.LoggingLevelWarning, "lint", map[string]any{
+			"issues": len(warnings),
+		})
+	}
+	return result
 }
 
 func toJSON(v any) string {
@@ -230,7 +247,7 @@ func readPageHandler(svc *service.PageService) server.ToolHandlerFunc {
 	}
 }
 
-func createPageHandler(s *server.MCPServer, svc *service.PageService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
+func createPageHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		content := getStringArg(req, "content")
@@ -256,11 +273,11 @@ func createPageHandler(s *server.MCPServer, svc *service.PageService, vaultDir s
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
 			"action": "create_page", "path": path,
 		})
-		return mcp.NewToolResultText(fmt.Sprintf("Created page: %s", path)), nil
+		return resultWithLintWarnings(ctx, s, fmt.Sprintf("Created page: %s", path), lint.LintPage(path)), nil
 	}
 }
 
-func updatePageHandler(s *server.MCPServer, svc *service.PageService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
+func updatePageHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		content := getStringArg(req, "content")
@@ -286,11 +303,11 @@ func updatePageHandler(s *server.MCPServer, svc *service.PageService, vaultDir s
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
 			"action": "update_page", "path": path,
 		})
-		return mcp.NewToolResultText(fmt.Sprintf("Updated page: %s", path)), nil
+		return resultWithLintWarnings(ctx, s, fmt.Sprintf("Updated page: %s", path), lint.LintPage(path)), nil
 	}
 }
 
-func deletePageHandler(s *server.MCPServer, svc *service.PageService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
+func deletePageHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		if path == "" {
@@ -308,11 +325,11 @@ func deletePageHandler(s *server.MCPServer, svc *service.PageService, vaultDir s
 		mcpLog(ctx, s, mcp.LoggingLevelWarning, "vault", map[string]any{
 			"action": "delete_page", "path": path,
 		})
-		return mcp.NewToolResultText(fmt.Sprintf("deleted: %s", path)), nil
+		return resultWithLintWarnings(ctx, s, fmt.Sprintf("deleted: %s", path), lint.LintDelete(path)), nil
 	}
 }
 
-func patchPageHandler(s *server.MCPServer, svc *service.PageService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
+func patchPageHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
 		if path == "" {
@@ -337,7 +354,7 @@ func patchPageHandler(s *server.MCPServer, svc *service.PageService, vaultDir st
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
 			"action": "patch_page", "path": path, "operations": len(ops),
 		})
-		return mcp.NewToolResultText(content), nil
+		return resultWithLintWarnings(ctx, s, content, lint.LintPage(path)), nil
 	}
 }
 
