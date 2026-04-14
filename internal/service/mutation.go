@@ -14,4 +14,5 @@ const (
 type MutationEvent struct {
 	Kind MutationKind
 	Path string // relative path within vault (with .md extension)
+	From string // only set for MutationMove
 }

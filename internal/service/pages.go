@@ -272,7 +272,7 @@ func (s *PageService) Move(src, dst string) error {
 	}
 
 	if s.onMutation != nil {
-		s.onMutation(MutationEvent{Kind: MutationMove, Path: filepath.ToSlash(dst)})
+		s.onMutation(MutationEvent{Kind: MutationMove, Path: filepath.ToSlash(dst), From: filepath.ToSlash(src)})
 	}
 
 	return nil
