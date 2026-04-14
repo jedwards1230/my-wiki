@@ -312,6 +312,31 @@ func TestExtractWikilinks_WithAliasAndAnchor(t *testing.T) {
 	}
 }
 
+func TestExtractWikilinks_EscapedPipe(t *testing.T) {
+	dir := t.TempDir()
+	// Obsidian uses \| inside Markdown tables to avoid conflicting with
+	// table column separators.
+	content := "---\ntitle: Test\n---\n\n| Col |\n|---|\n| [[food/chili\\|Chili]] |\n| [[page\\|Display]] and [[normal|alias]] |\n"
+	if err := os.WriteFile(filepath.Join(dir, "test.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	links, err := ExtractWikilinks(filepath.Join(dir, "test.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []string{"food/chili", "page", "normal"}
+	if len(links) != len(expected) {
+		t.Fatalf("expected %d links, got %d: %v", len(expected), len(links), links)
+	}
+	for i, exp := range expected {
+		if links[i] != exp {
+			t.Errorf("link %d = %q, want %q", i, links[i], exp)
+		}
+	}
+}
+
 func TestParseFrontmatter_ListValues(t *testing.T) {
 	dir := t.TempDir()
 
