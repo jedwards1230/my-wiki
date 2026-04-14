@@ -637,6 +637,44 @@ func TestDeletePageHandlerLintWarnings(t *testing.T) {
 	}
 }
 
+func TestPatchPageHandlerInvalidYAMLWarning(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := patchPageHandler(testServer(), svc, lint, v.Dir, nil)
+
+	// Patch index.md to inject broken YAML into frontmatter.
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "index.md",
+		"operations": []any{
+			map[string]any{
+				"find":    "  - root",
+				"replace": "  - [unclosed bracket",
+			},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.IsError {
+		t.Errorf("expected successful result (mutation should succeed), got error: %s", getTextContent(result))
+	}
+
+	// Should have warnings about invalid YAML.
+	if len(result.Content) < 2 {
+		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
+	}
+
+	tc, ok := mcp.AsTextContent(result.Content[1])
+	if !ok {
+		t.Fatal("expected second content item to be TextContent")
+	}
+	if !strings.Contains(tc.Text, "invalid YAML") {
+		t.Errorf("expected 'invalid YAML' warning, got:\n%s", tc.Text)
+	}
+}
+
 func TestNewCreatesServer(t *testing.T) {
 	v := setupTestVault(t)
 	s := New(v, nil)

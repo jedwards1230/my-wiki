@@ -262,6 +262,67 @@ func TestLintDelete_SlugStillResolvesToOtherPage(t *testing.T) {
 	}
 }
 
+func TestLintPage_InvalidYAML(t *testing.T) {
+	v := setupLintVault(t)
+	svc := NewLintService(v, nil)
+
+	// Create a page with broken YAML frontmatter.
+	content := "---\ntitle: Broken\ntags:\n  - [unclosed bracket\ndate: 2026-01-01\n---\n\nBody.\n"
+	_ = os.WriteFile(filepath.Join(v.Dir, "bad-yaml.md"), []byte(content), 0o644)
+
+	issues := svc.LintPage("bad-yaml.md")
+	if len(issues) == 0 {
+		t.Fatal("expected YAML syntax error, got no issues")
+	}
+	if issues[0].Level != "FAIL" {
+		t.Errorf("expected FAIL level, got %q", issues[0].Level)
+	}
+	if !strings.Contains(issues[0].Message, "invalid YAML") {
+		t.Errorf("expected 'invalid YAML' in message, got: %s", issues[0].Message)
+	}
+}
+
+func TestLintPage_InvalidYAML_Raw(t *testing.T) {
+	v := setupLintVault(t)
+	svc := NewLintService(v, nil)
+
+	content := "---\ntitle: Broken Raw\nsource: {not closed\n---\n\nBody.\n"
+	_ = os.MkdirAll(filepath.Join(v.Dir, "raw"), 0o755)
+	_ = os.WriteFile(filepath.Join(v.Dir, "raw", "bad-yaml.md"), []byte(content), 0o644)
+
+	issues := svc.LintPage("raw/bad-yaml.md")
+	if len(issues) == 0 {
+		t.Fatal("expected YAML syntax error for raw file, got no issues")
+	}
+	if issues[0].Check != "raw" {
+		t.Errorf("expected 'raw' check, got %q", issues[0].Check)
+	}
+}
+
+func TestLintService_Frontmatter_InvalidYAML(t *testing.T) {
+	v := setupLintVault(t)
+
+	// Add a page with broken YAML to the vault.
+	content := "---\ntitle: Broken\nextra: {not closed\n---\n\nBody.\n"
+	_ = os.WriteFile(filepath.Join(v.Dir, "broken-yaml.md"), []byte(content), 0o644)
+
+	svc := NewLintService(v, nil)
+	report, err := svc.Run("frontmatter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var found bool
+	for _, issue := range report.Issues {
+		if issue.File == "broken-yaml.md" && strings.Contains(issue.Message, "invalid YAML") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected YAML syntax error for broken-yaml.md in frontmatter check")
+	}
+}
+
 func TestLintService_CleanVault(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{

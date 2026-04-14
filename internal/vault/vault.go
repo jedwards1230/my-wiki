@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"go.yaml.in/yaml/v2"
 )
 
 // Vault provides operations on a wiki vault directory.
@@ -163,6 +165,61 @@ func parseFrontmatterScanner(scanner *bufio.Scanner) (map[string]string, error) 
 	}
 
 	return fm, scanner.Err()
+}
+
+// ValidateYAMLSyntax checks whether the frontmatter between --- markers is
+// valid YAML by running yaml.Unmarshal. Returns nil if valid or no frontmatter,
+// an error describing the parse failure otherwise.
+func ValidateYAMLSyntax(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return ValidateYAMLSyntaxString(string(data))
+}
+
+// ValidateYAMLSyntaxString checks whether frontmatter in a content string is
+// valid YAML. Returns nil if valid or no frontmatter present.
+func ValidateYAMLSyntaxString(content string) error {
+	raw, ok := extractRawFrontmatter(content)
+	if !ok {
+		return nil // no frontmatter — not a syntax error
+	}
+	var dest any
+	if err := yaml.Unmarshal([]byte(raw), &dest); err != nil {
+		return fmt.Errorf("invalid YAML in frontmatter: %v", err)
+	}
+	return nil
+}
+
+// extractRawFrontmatter returns the raw YAML string between --- markers.
+// Returns ("", false) if no frontmatter block is found.
+func extractRawFrontmatter(content string) (string, bool) {
+	if !strings.HasPrefix(strings.TrimSpace(content), "---") {
+		return "", false
+	}
+
+	// Find start (first ---) and end (second ---) markers.
+	lines := strings.SplitAfter(content, "\n")
+	var start, end int
+	found := 0
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "---" {
+			if found == 0 {
+				start = i + 1
+				found++
+			} else {
+				end = i
+				found++
+				break
+			}
+		}
+	}
+	if found < 2 {
+		return "", false
+	}
+
+	return strings.Join(lines[start:end], ""), true
 }
 
 var (
