@@ -93,15 +93,6 @@ func getIntArg(req mcp.CallToolRequest, key string) int {
 	return 0
 }
 
-func getBoolArg(req mcp.CallToolRequest, key string) bool {
-	args := req.GetArguments()
-	if v, ok := args[key]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return false
-}
 
 func getStringArrayArg(req mcp.CallToolRequest, key string) []string {
 	args := req.GetArguments()
@@ -195,48 +186,6 @@ func ingestGenerateHandler(s *server.MCPServer, svc *service.IngestService) serv
 		})
 		result := map[string]any{"path": path, "count": count}
 		return mcp.NewToolResultText(toJSON(result)), nil
-	}
-}
-
-func logIndexHandler(svc *service.LogService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		n := getIntArg(req, "n")
-
-		entries, err := svc.Index(n)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(entries)), nil
-	}
-}
-
-func logDayHandler(svc *service.LogService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		date := getStringArg(req, "date")
-		detail := getBoolArg(req, "detail")
-
-		if date == "" {
-			return mcp.NewToolResultError("date is required"), nil
-		}
-
-		dayLog, err := svc.Day(date, detail)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(dayLog)), nil
-	}
-}
-
-func logLintHandler(svc *service.LogService) server.ToolHandlerFunc {
-	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		issues, err := svc.Lint()
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(issues)), nil
 	}
 }
 

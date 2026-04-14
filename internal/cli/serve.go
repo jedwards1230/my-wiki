@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -139,6 +141,28 @@ func buildAuthMiddlewares(ctx context.Context, logger *slog.Logger, cfg *middlew
 	return &authMiddlewares{mcp: mcpMW, api: apiMW}, nil
 }
 
+// makeActivityCallback constructs a mutation callback that appends activity log
+// entries and marks the relevant files dirty for Quartz rebuild. The returned
+// callback is safe for concurrent use.
+func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify.RebuildNotifier, vaultDir string, logger *slog.Logger) func(service.MutationEvent) {
+	var mu sync.Mutex
+	return func(evt service.MutationEvent) {
+		entry := service.ActivityEntry{
+			Type:    string(evt.Kind),
+			Title:   fmt.Sprintf("%s %s", evt.Kind, filepath.Base(strings.TrimSuffix(evt.Path, ".md"))),
+			Touched: []string{strings.TrimSuffix(evt.Path, ".md")},
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if err := activitySvc.Append(entry); err != nil {
+			logger.Warn("auto-activity failed", "error", err, "path", evt.Path)
+		}
+		today := time.Now().Format("2006-01-02")
+		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "activity", today+".md"))
+		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "log.md"))
+	}
+}
+
 func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	port, _ := cmd.Flags().GetString("port")
 	publicDir, _ := cmd.Flags().GetString("public-dir")
@@ -213,6 +237,12 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	})
 	defer notifier.Close()
 
+	// Shared PageService with auto-activity logging on mutations.
+	activitySvc := service.NewActivityService(v.Storage)
+	pageSvc := service.NewPageService(v.Storage, service.WithOnMutation(
+		makeActivityCallback(activitySvc, notifier, vaultDir, logger),
+	))
+
 	var apiOpts []api.HandlerOption
 	if authMWs != nil {
 		apiOpts = append(apiOpts, api.WithAuthMiddleware(authMWs.api))
@@ -221,6 +251,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		apiOpts = append(apiOpts, api.WithAuthReads(true))
 	}
 	apiOpts = append(apiOpts, api.WithRebuildNotifier(notifier))
+	apiOpts = append(apiOpts, api.WithPageService(pageSvc))
 	apiHandler := api.NewHandler(v, searchSvc, apiOpts...)
 
 	srv := server.New(cfg, publicFS, vaultFS, logger,
@@ -278,7 +309,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 
 	// Optionally start MCP server in the same process
 	if mcpPort > 0 {
-		mcpSrv := mcpserver.New(v, searchSvc, mcpserver.WithRebuildNotifier(notifier))
+		mcpSrv := mcpserver.New(v, searchSvc, mcpserver.WithRebuildNotifier(notifier), mcpserver.WithPageService(pageSvc))
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 		mux := http.NewServeMux()
@@ -374,7 +405,13 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	})
 	defer mcpNotifier.Close()
 
-	mcpSrv := mcpserver.New(v, nil, mcpserver.WithRebuildNotifier(mcpNotifier))
+	// Shared PageService with auto-activity logging on mutations.
+	mcpActivitySvc := service.NewActivityService(v.Storage)
+	mcpPageSvc := service.NewPageService(v.Storage, service.WithOnMutation(
+		makeActivityCallback(mcpActivitySvc, mcpNotifier, vaultDir, logger),
+	))
+
+	mcpSrv := mcpserver.New(v, nil, mcpserver.WithRebuildNotifier(mcpNotifier), mcpserver.WithPageService(mcpPageSvc))
 	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 	authMWs, err := buildAuthMiddlewares(context.Background(), logger, authConfigFromEnv())

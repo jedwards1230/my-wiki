@@ -15,12 +15,20 @@ type Option func(*options)
 
 type options struct {
 	notifier *notify.RebuildNotifier
+	pages    *service.PageService
 }
 
 // WithRebuildNotifier sets a notifier called after successful vault mutations.
 func WithRebuildNotifier(n *notify.RebuildNotifier) Option {
 	return func(o *options) {
 		o.notifier = n
+	}
+}
+
+// WithPageService provides a pre-configured PageService.
+func WithPageService(ps *service.PageService) Option {
+	return func(o *options) {
+		o.pages = ps
 	}
 }
 
@@ -37,19 +45,25 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
 		server.WithLogging(),
-		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Log all work with wiki_activity when done."),
+		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete operations are automatically logged. Use wiki_activity for non-page activities (ingest, lint, note, migrate)."),
 	)
 
-	lint := service.NewLintService(v)
+	logSvc := service.NewLogService(v.Storage)
+	lint := service.NewLintService(v, logSvc)
 	ingest := service.NewIngestService(v)
 	directory := service.NewDirectoryService(v)
-	logSvc := service.NewLogService(v.Storage)
 	activity := service.NewActivityService(v.Storage)
-	pages := service.NewPageService(v.Storage)
 	recent := service.NewRecentService(v)
 
+	var pages *service.PageService
+	if cfg.pages != nil {
+		pages = cfg.pages
+	} else {
+		pages = service.NewPageService(v.Storage)
+	}
+
 	registerResources(s, pages)
-	registerTools(s, v.Dir, cfg.notifier, lint, ingest, directory, logSvc, activity, pages, recent, searchSvc)
+	registerTools(s, v.Dir, cfg.notifier, lint, ingest, directory, activity, pages, recent, searchSvc)
 
 	return s
 }
@@ -93,7 +107,6 @@ func registerTools(
 	lint *service.LintService,
 	ingest *service.IngestService,
 	directory *service.DirectoryService,
-	logSvc *service.LogService,
 	activity *service.ActivityService,
 	pages *service.PageService,
 	recent *service.RecentService,
@@ -108,8 +121,8 @@ func registerTools(
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("check",
-				mcp.Enum("all", "frontmatter", "raw", "links", "orphans"),
-				mcp.Description("Which check to run: frontmatter (required fields), raw (raw source metadata), links (broken wikilinks), orphans (no inbound links), all (everything). Default: all."),
+				mcp.Enum("all", "frontmatter", "raw", "links", "orphans", "log"),
+				mcp.Description("Which check to run: frontmatter (required fields), raw (raw source metadata), links (broken wikilinks), orphans (no inbound links), log (activity log integrity), all (everything). Default: all."),
 			),
 		),
 		lintHandler(lint),
@@ -164,52 +177,6 @@ func registerTools(
 	)
 
 	s.AddTool(
-		mcp.NewTool("wiki_log",
-			mcp.WithTitleAnnotation("View Log Index"),
-			mcp.WithDescription("List daily summaries from meta/log.md — each entry has date, change count, hash, and title. Use wiki_log_day to see a specific day's entries."),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-			mcp.WithNumber("n",
-				mcp.Description("Return only the last N days. Default (0): return all."),
-			),
-		),
-		logIndexHandler(logSvc),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_log_day",
-			mcp.WithTitleAnnotation("View Day Log"),
-			mcp.WithDescription("Get activity entries for a single day (type, time, title). Use wiki_log first to find dates with activity."),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-			mcp.WithString("date",
-				mcp.Required(),
-				mcp.Description("Date in YYYY-MM-DD format."),
-			),
-			mcp.WithBoolean("detail",
-				mcp.Description("Include full entry body/summary text. Default: false (headers only)."),
-			),
-		),
-		logDayHandler(logSvc),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_log_lint",
-			mcp.WithTitleAnnotation("Lint Log"),
-			mcp.WithDescription("Check activity log integrity: hash mismatches between index and daily files, orphaned files, missing frontmatter. Returns JSON array of {message}. For vault-wide checks, use wiki_lint instead."),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-		),
-		logLintHandler(logSvc),
-	)
-
-	s.AddTool(
 		mcp.NewTool("wiki_activity",
 			mcp.WithTitleAnnotation("Log Activity"),
 			mcp.WithDescription("Append an entry to today's activity log and update meta/log.md index. Call after completing wiki work to maintain the audit trail."),
@@ -219,8 +186,8 @@ func registerTools(
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("type",
 				mcp.Required(),
-				mcp.Enum("ingest", "edit", "create", "lint", "note", "migrate"),
-				mcp.Description("Activity type: ingest (raw source processed), edit (page modified), create (new page), lint (health check run), note (general observation), migrate (structural change)."),
+				mcp.Enum("ingest", "edit", "create", "delete", "lint", "note", "migrate"),
+				mcp.Description("Activity type: ingest (raw source processed), edit (page modified), create (new page), delete (page removed), lint (health check run), note (general observation), migrate (structural change)."),
 			),
 			mcp.WithString("title",
 				mcp.Required(),
