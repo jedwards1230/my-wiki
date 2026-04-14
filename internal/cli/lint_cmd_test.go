@@ -105,24 +105,13 @@ func TestLintOrphans(t *testing.T) {
 
 func TestLintAll_Clean(t *testing.T) {
 	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, "meta"), 0o755)
 
-	// Create a minimal clean vault with schema containing tag taxonomy
-	schema := "---\ntitle: Schema\ntags:\n  - meta\ndate: 2026-01-01\n---\n\n" +
-		"<!-- begin:tag-taxonomy -->\n" +
-		"| Domain | Use for | Sub-tags |\n" +
-		"|--------|---------|----------|\n" +
-		"| `root` | Root | |\n" +
-		"| `info` | Info | |\n" +
-		"| `meta` | Meta | |\n" +
-		"<!-- end:tag-taxonomy -->\n"
-
+	// Minimal clean vault — each tag used on 2+ pages, all links resolve.
 	files := map[string]string{
-		"index.md":       "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[about]] and [[meta/schema]] and [[page-a]] and [[page-b]]\n",
-		"about.md":       "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[index]] and [[meta/schema]] and [[page-a]] and [[page-b]]\n",
-		"page-a.md":      "---\ntitle: Page A\ntags:\n  - root\n  - info\n  - meta\ndate: 2026-01-01\n---\n\n[[index]] and [[about]] and [[page-b]]\n",
-		"page-b.md":      "---\ntitle: Page B\ntags:\n  - root\n  - info\n  - meta\ndate: 2026-01-01\n---\n\n[[index]] and [[about]] and [[page-a]]\n",
-		"meta/schema.md": schema,
+		"index.md":  "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[about]] and [[page-a]] and [[page-b]]\n",
+		"about.md":  "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[index]] and [[page-a]] and [[page-b]]\n",
+		"page-a.md": "---\ntitle: Page A\ntags:\n  - root\n  - info\ndate: 2026-01-01\n---\n\n[[index]] and [[about]] and [[page-b]]\n",
+		"page-b.md": "---\ntitle: Page B\ntags:\n  - root\n  - info\ndate: 2026-01-01\n---\n\n[[index]] and [[about]] and [[page-a]]\n",
 	}
 	for name, content := range files {
 		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
