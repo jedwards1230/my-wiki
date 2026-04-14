@@ -78,6 +78,14 @@ func (s *LintService) checkFrontmatter(report *LintReport) {
 
 	for _, page := range pages {
 		rel, _ := filepath.Rel(s.vault.Dir, page)
+
+		if err := vault.ValidateYAMLSyntax(page); err != nil {
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "frontmatter", Level: "FAIL", Message: err.Error(),
+			})
+			continue
+		}
+
 		fm, err := vault.ParseFrontmatter(page)
 		if err != nil {
 			report.Issues = append(report.Issues, LintIssue{
@@ -118,6 +126,14 @@ func (s *LintService) checkRawFrontmatter(report *LintReport) {
 
 	for _, file := range files {
 		rel, _ := filepath.Rel(s.vault.Dir, file)
+
+		if err := vault.ValidateYAMLSyntax(file); err != nil {
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "raw", Level: "FAIL", Message: err.Error(),
+			})
+			continue
+		}
+
 		fm, err := vault.ParseFrontmatter(file)
 		if err != nil {
 			report.Issues = append(report.Issues, LintIssue{
@@ -267,27 +283,28 @@ func (s *LintService) lintPageFrontmatter(relPath string) []LintIssue {
 	absPath := filepath.Join(s.vault.Dir, relPath)
 	isRaw := strings.HasPrefix(relPath, "raw/") || strings.HasPrefix(relPath, "raw\\")
 
+	check := "frontmatter"
+	if isRaw {
+		check = "raw"
+	}
+
+	// Validate YAML syntax before field checks — catches malformed YAML
+	// that the lenient key-value parser would silently skip.
+	if err := vault.ValidateYAMLSyntax(absPath); err != nil {
+		return []LintIssue{{File: relPath, Check: check, Level: "FAIL", Message: err.Error()}}
+	}
+
 	fm, err := vault.ParseFrontmatter(absPath)
 	if err != nil {
-		check := "frontmatter"
-		if isRaw {
-			check = "raw"
-		}
 		return []LintIssue{{File: relPath, Check: check, Level: "FAIL", Message: err.Error()}}
 	}
 	if fm == nil {
-		check := "frontmatter"
-		if isRaw {
-			check = "raw"
-		}
 		return []LintIssue{{File: relPath, Check: check, Level: "FAIL", Message: "missing frontmatter"}}
 	}
 
 	var required []string
-	check := "frontmatter"
 	if isRaw {
 		required = []string{"title", "source", "date-added"}
-		check = "raw"
 	} else {
 		required = []string{"title", "tags", "date"}
 	}
