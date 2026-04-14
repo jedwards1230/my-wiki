@@ -127,8 +127,17 @@ func TestActivityService_AutoLoggedCompact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, _ := os.ReadDir(filepath.Join(dir, "meta", "activity"))
-	data, _ := os.ReadFile(filepath.Join(dir, "meta", "activity", entries[0].Name()))
+	entries, err := os.ReadDir(filepath.Join(dir, "meta", "activity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected at least one activity file")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "meta", "activity", entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	content := string(data)
 
 	// Auto entry: header only, no "Updated" or "Touched" line
