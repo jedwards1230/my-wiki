@@ -89,6 +89,23 @@ func (m *MemStorage) ReadDir(relPath string) ([]fs.DirEntry, error) {
 		prefix = ""
 	}
 
+	// Check that the path exists and is a directory (not a file).
+	if prefix != "" {
+		if _, ok := m.files[relPath]; ok {
+			return nil, &os.PathError{Op: "readdir", Path: relPath, Err: fmt.Errorf("not a directory")}
+		}
+		isDir := false
+		for k := range m.files {
+			if strings.HasPrefix(k, prefix) {
+				isDir = true
+				break
+			}
+		}
+		if !isDir {
+			return nil, &os.PathError{Op: "readdir", Path: relPath, Err: os.ErrNotExist}
+		}
+	}
+
 	seen := make(map[string]bool)
 	var entries []fs.DirEntry
 
@@ -211,9 +228,9 @@ func (m *MemStorage) WalkDir(relPath string, fn fs.WalkDirFunc) error {
 	return nil
 }
 
-// normPath cleans a path and converts "." or "" to ".".
+// normPath cleans a path and normalizes to forward slashes for cross-platform consistency.
 func normPath(p string) string {
-	p = filepath.Clean(p)
+	p = filepath.ToSlash(filepath.Clean(p))
 	if p == "." || p == "" {
 		return "."
 	}
@@ -230,7 +247,7 @@ type memFile struct {
 func (f *memFile) Read(p []byte) (int, error)  { return f.buf.Read(p) }
 func (f *memFile) Write(p []byte) (int, error) { return f.buf.Write(p) }
 func (f *memFile) Close() error {
-	f.storage.files[f.path] = f.buf.Bytes()
+	f.storage.files[f.path] = append([]byte(nil), f.buf.Bytes()...)
 	return nil
 }
 
@@ -241,9 +258,14 @@ type memFileInfo struct {
 	dir  bool
 }
 
-func (fi *memFileInfo) Name() string       { return fi.name }
-func (fi *memFileInfo) Size() int64        { return fi.size }
-func (fi *memFileInfo) Mode() fs.FileMode  { return 0o644 }
+func (fi *memFileInfo) Name() string { return fi.name }
+func (fi *memFileInfo) Size() int64  { return fi.size }
+func (fi *memFileInfo) Mode() fs.FileMode {
+	if fi.dir {
+		return fs.ModeDir | 0o755
+	}
+	return 0o644
+}
 func (fi *memFileInfo) ModTime() time.Time { return time.Time{} }
 func (fi *memFileInfo) IsDir() bool        { return fi.dir }
 func (fi *memFileInfo) Sys() any           { return nil }
@@ -254,9 +276,14 @@ type memDirEntry struct {
 	dir  bool
 }
 
-func (de *memDirEntry) Name() string      { return de.name }
-func (de *memDirEntry) IsDir() bool       { return de.dir }
-func (de *memDirEntry) Type() fs.FileMode { return 0 }
+func (de *memDirEntry) Name() string { return de.name }
+func (de *memDirEntry) IsDir() bool  { return de.dir }
+func (de *memDirEntry) Type() fs.FileMode {
+	if de.dir {
+		return fs.ModeDir
+	}
+	return 0
+}
 func (de *memDirEntry) Info() (fs.FileInfo, error) {
 	return &memFileInfo{name: de.name, dir: de.dir}, nil
 }
