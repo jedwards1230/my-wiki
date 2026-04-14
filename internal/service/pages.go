@@ -34,15 +34,20 @@ func WithOnMutation(fn func(MutationEvent)) PageOption {
 }
 
 // WithExcludedDirs sets the directories to exclude from page listing.
+// The provided slice is copied so the caller can safely modify it afterward.
 func WithExcludedDirs(dirs []string) PageOption {
-	return func(s *PageService) { s.excludedDirs = dirs }
+	cp := make([]string, len(dirs))
+	copy(cp, dirs)
+	return func(s *PageService) { s.excludedDirs = cp }
 }
 
 // NewPageService creates a PageService backed by the given storage.
 func NewPageService(storage vault.Storage, opts ...PageOption) *PageService {
+	defaults := make([]string, len(vault.DefaultExcludedDirs))
+	copy(defaults, vault.DefaultExcludedDirs)
 	s := &PageService{
 		storage:      storage,
-		excludedDirs: vault.DefaultExcludedDirs,
+		excludedDirs: defaults,
 	}
 	for _, o := range opts {
 		o(s)

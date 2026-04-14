@@ -563,7 +563,7 @@ func TestCustomExcludedDirs(t *testing.T) {
 		t.Fatalf("FindWikiPages: expected %d pages, got %d: %v", len(expected), len(rels), rels)
 	}
 	for i, exp := range expected {
-		if rels[i] != exp {
+		if filepath.ToSlash(rels[i]) != exp {
 			t.Errorf("FindWikiPages page %d: expected %s, got %s", i, exp, rels[i])
 		}
 	}
@@ -574,16 +574,17 @@ func TestCustomExcludedDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slugs["public/page"] {
-		t.Error("BuildSlugIndex: expected public/page slug")
+	wantSlug := func(key string) {
+		t.Helper()
+		// slug keys use OS-native separators via filepath.Rel
+		if !slugs[filepath.FromSlash(key)] {
+			t.Errorf("BuildSlugIndex: expected %q slug", key)
+		}
 	}
+	wantSlug("public/page")
 	// drafts and notes are excluded from FindWikiPages but still linkable
-	if !slugs["drafts/wip"] {
-		t.Error("BuildSlugIndex: expected drafts/wip slug (slug index is broader)")
-	}
-	if !slugs["notes/note"] {
-		t.Error("BuildSlugIndex: expected notes/note slug (slug index is broader)")
-	}
+	wantSlug("drafts/wip")
+	wantSlug("notes/note")
 	// .obsidian is always excluded from slug index
 	if slugs["conf"] {
 		t.Error("BuildSlugIndex: .obsidian/conf.md should be excluded from slug index")

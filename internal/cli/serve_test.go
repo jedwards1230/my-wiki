@@ -8,14 +8,14 @@ import (
 )
 
 // requireAuthConfig calls t.Fatal if cfg is nil and returns it typed for
-// subsequent field access. This satisfies staticcheck SA5011 which cannot
-// see through t.Fatal as a control-flow terminator.
+// subsequent field access. The nolint suppresses SA5011 which cannot see
+// through t.Fatal as a control-flow terminator.
 func requireAuthConfig(t *testing.T, cfg *middleware.AuthConfig) middleware.AuthConfig {
 	t.Helper()
-	if cfg == nil {
+	if cfg == nil { //nolint:staticcheck // SA5011 false positive: t.Fatal terminates
 		t.Fatal("expected non-nil config")
 	}
-	return *cfg
+	return *cfg //nolint:staticcheck // SA5011: unreachable when cfg is nil (t.Fatal above)
 }
 
 func TestAuthConfigFromEnvUnset(t *testing.T) {
