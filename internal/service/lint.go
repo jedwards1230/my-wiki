@@ -181,31 +181,13 @@ func (s *LintService) checkRawFrontmatter(report *LintReport) {
 	}
 }
 
-// minPagesPerTag is the minimum page count before a tag is considered established.
-const minPagesPerTag = 3
-
-func (s *LintService) checkTags(report *LintReport, required bool) {
-	taxonomy, err := s.tagSvc.ParseTaxonomy()
+func (s *LintService) checkTags(report *LintReport, _ bool) {
+	tagCounts, err := s.tagSvc.CountTags()
 	if err != nil {
-		level := "WARN"
-		message := fmt.Sprintf("tags check skipped: %v", err)
-		if required {
-			level = "ERROR"
-			message = fmt.Sprintf("failed to parse tag taxonomy: %v", err)
-		}
 		report.Issues = append(report.Issues, LintIssue{
-			Check: "tags", Level: level, Message: message,
+			Check: "tags", Level: "ERROR", Message: err.Error(),
 		})
 		return
-	}
-
-	// Build allow-set from taxonomy.
-	allowed := make(map[string]bool)
-	for _, e := range taxonomy {
-		allowed[e.Domain] = true
-		for _, st := range e.SubTags {
-			allowed[st] = true
-		}
 	}
 
 	pages, err := s.vault.FindWikiPages()
@@ -216,8 +198,7 @@ func (s *LintService) checkTags(report *LintReport, required bool) {
 		return
 	}
 
-	// Single pass: validate per-page tags and count usage (skipping generated pages).
-	tagCounts := make(map[string]int)
+	// Per-page structural checks.
 	for _, page := range pages {
 		rel, _ := filepath.Rel(s.vault.Dir, page)
 		fm, fmErr := vault.ParseFrontmatter(page)
@@ -238,50 +219,36 @@ func (s *LintService) checkTags(report *LintReport, required bool) {
 			if tag == "" {
 				continue
 			}
-			tagCounts[tag]++
 
-			if !allowed[tag] {
-				domain := tag
-				if idx := strings.IndexByte(tag, '/'); idx >= 0 {
-					domain = tag[:idx]
-				}
-				if allowed[domain] {
-					report.Issues = append(report.Issues, LintIssue{
-						File: rel, Check: "tags", Level: "WARN",
-						Message: fmt.Sprintf("tag %q not in taxonomy (domain %q is valid — add sub-tag to schema)", tag, domain),
-					})
-				} else {
-					report.Issues = append(report.Issues, LintIssue{
-						File: rel, Check: "tags", Level: "WARN",
-						Message: fmt.Sprintf("tag %q not in taxonomy (unknown domain %q)", tag, domain),
-					})
-				}
+			// Structural: must be kebab-case.
+			if !IsKebabCase(tag) {
+				report.Issues = append(report.Issues, LintIssue{
+					File: rel, Check: "tags", Level: "WARN",
+					Message: fmt.Sprintf("tag %q is not kebab-case", tag),
+				})
 			}
 		}
 	}
 
-	// Taxonomy-level: flag unused domains and under-threshold tags.
-	for _, e := range taxonomy {
-		domainTotal := tagCounts[e.Domain]
-		for _, st := range e.SubTags {
-			domainTotal += tagCounts[st]
-		}
-		if domainTotal == 0 {
-			report.Issues = append(report.Issues, LintIssue{
-				Check: "tags", Level: "INFO",
-				Message: fmt.Sprintf("taxonomy domain %q has 0 pages — consider removing or populating", e.Domain),
-			})
-		}
-	}
+	// Vault-wide checks.
 	for tag, count := range tagCounts {
-		if !allowed[tag] {
-			continue // already reported per-page above
-		}
-		if count < minPagesPerTag {
+		// Single-page tags are likely typos or cleanup candidates.
+		if count == 1 {
 			report.Issues = append(report.Issues, LintIssue{
 				Check: "tags", Level: "INFO",
-				Message: fmt.Sprintf("tag %q used on %d page(s) (schema recommends %d+ before adding a tag)", tag, count, minPagesPerTag),
+				Message: fmt.Sprintf("tag %q used on only 1 page", tag),
 			})
+		}
+
+		// Sub-tags whose parent domain has no pages.
+		if strings.Contains(tag, "/") {
+			domain := ParentDomain(tag)
+			if tagCounts[domain] == 0 {
+				report.Issues = append(report.Issues, LintIssue{
+					Check: "tags", Level: "INFO",
+					Message: fmt.Sprintf("tag %q has no pages using parent domain %q", tag, domain),
+				})
+			}
 		}
 	}
 }

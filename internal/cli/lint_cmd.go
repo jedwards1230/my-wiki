@@ -38,7 +38,7 @@ func runLint(cmd *cobra.Command, args []string) error {
 	if check == "all" {
 		printLintSection("Frontmatter Check", report, "frontmatter")
 		printLintSection("Raw Source Frontmatter Check", report, "raw")
-		printLintSection("Tag Taxonomy", report, "tags")
+		printLintSection("Tag Structure", report, "tags")
 		printLintSection("Broken Wikilinks", report, "links")
 		printLintSection("Orphan Pages (no inbound links)", report, "orphans")
 		printLintSection("Page Size", report, "size")
