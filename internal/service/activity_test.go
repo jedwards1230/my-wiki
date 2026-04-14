@@ -5,21 +5,23 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jedwards1230/home-wiki/internal/vault"
 )
 
-func setupActivityVault(t *testing.T) string {
+func setupActivityVault(t *testing.T) (vault.Storage, string) {
 	t.Helper()
 	dir := t.TempDir()
 
 	_ = os.MkdirAll(filepath.Join(dir, "meta", "activity"), 0o755)
 	_ = os.WriteFile(filepath.Join(dir, "meta", "log.md"), []byte("---\ntitle: Activity Log\n---\n"), 0o644)
 
-	return dir
+	return vault.NewFilesystemStorage(dir), dir
 }
 
 func TestActivityService_Append(t *testing.T) {
-	dir := setupActivityVault(t)
-	svc := NewActivityService(dir)
+	storage, dir := setupActivityVault(t)
+	svc := NewActivityService(storage)
 
 	err := svc.Append(ActivityEntry{
 		Type:  "create",
@@ -50,8 +52,8 @@ func TestActivityService_Append(t *testing.T) {
 }
 
 func TestActivityService_AppendWithTouched(t *testing.T) {
-	dir := setupActivityVault(t)
-	svc := NewActivityService(dir)
+	storage, dir := setupActivityVault(t)
+	svc := NewActivityService(storage)
 
 	err := svc.Append(ActivityEntry{
 		Type:    "edit",
@@ -76,8 +78,8 @@ func TestActivityService_AppendWithTouched(t *testing.T) {
 }
 
 func TestActivityService_AppendUpdatesIndex(t *testing.T) {
-	dir := setupActivityVault(t)
-	svc := NewActivityService(dir)
+	storage, dir := setupActivityVault(t)
+	svc := NewActivityService(storage)
 
 	err := svc.Append(ActivityEntry{
 		Type:  "note",
@@ -99,8 +101,8 @@ func TestActivityService_AppendUpdatesIndex(t *testing.T) {
 }
 
 func TestActivityService_InvalidType(t *testing.T) {
-	dir := setupActivityVault(t)
-	svc := NewActivityService(dir)
+	storage, _ := setupActivityVault(t)
+	svc := NewActivityService(storage)
 
 	err := svc.Append(ActivityEntry{
 		Type:  "invalid",
@@ -113,8 +115,8 @@ func TestActivityService_InvalidType(t *testing.T) {
 }
 
 func TestActivityService_InvalidTime(t *testing.T) {
-	dir := setupActivityVault(t)
-	svc := NewActivityService(dir)
+	storage, _ := setupActivityVault(t)
+	svc := NewActivityService(storage)
 
 	err := svc.Append(ActivityEntry{
 		Type:  "note",
