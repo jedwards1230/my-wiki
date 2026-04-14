@@ -1,8 +1,8 @@
 package vault
 
 import (
+	"io"
 	"io/fs"
-	"os"
 )
 
 // Storage abstracts file-level operations on the vault, enabling alternative
@@ -24,13 +24,13 @@ type Storage interface {
 
 	// OpenFile opens a file with the given flags and permissions.
 	// The caller is responsible for closing the returned file.
-	OpenFile(relPath string, flag int, perm fs.FileMode) (*os.File, error)
+	OpenFile(relPath string, flag int, perm fs.FileMode) (io.ReadWriteCloser, error)
 
 	// MkdirAll creates a directory path and all parents.
 	MkdirAll(relPath string, perm fs.FileMode) error
 
 	// ReadDir reads the named directory.
-	ReadDir(relPath string) ([]os.DirEntry, error)
+	ReadDir(relPath string) ([]fs.DirEntry, error)
 
 	// WalkDir walks the directory tree rooted at relPath, calling fn for each entry.
 	// Paths passed to fn are relative to the storage root.

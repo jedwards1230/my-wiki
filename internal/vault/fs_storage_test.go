@@ -42,7 +42,9 @@ func TestFilesystemStorage_Remove(t *testing.T) {
 	dir := t.TempDir()
 	s := NewFilesystemStorage(dir)
 
-	_ = s.WriteFile("deleteme.txt", []byte("bye"), 0o644)
+	if err := s.WriteFile("deleteme.txt", []byte("bye"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Remove("deleteme.txt"); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +57,9 @@ func TestFilesystemStorage_Stat(t *testing.T) {
 	dir := t.TempDir()
 	s := NewFilesystemStorage(dir)
 
-	_ = s.WriteFile("exists.txt", []byte("data"), 0o644)
+	if err := s.WriteFile("exists.txt", []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	info, err := s.Stat("exists.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -95,8 +99,12 @@ func TestFilesystemStorage_ReadDir(t *testing.T) {
 	dir := t.TempDir()
 	s := NewFilesystemStorage(dir)
 
-	_ = s.WriteFile("file1.txt", []byte("a"), 0o644)
-	_ = s.WriteFile("file2.txt", []byte("b"), 0o644)
+	if err := s.WriteFile("file1.txt", []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFile("file2.txt", []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	entries, err := s.ReadDir("")
 	if err != nil {
@@ -111,8 +119,12 @@ func TestFilesystemStorage_WalkDir(t *testing.T) {
 	dir := t.TempDir()
 	s := NewFilesystemStorage(dir)
 
-	_ = s.WriteFile("a.txt", []byte("a"), 0o644)
-	_ = s.WriteFile("sub/b.txt", []byte("b"), 0o644)
+	if err := s.WriteFile("a.txt", []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFile("sub/b.txt", []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	var paths []string
 	err := s.WalkDir("", func(path string, d fs.DirEntry, err error) error {
@@ -145,7 +157,9 @@ func TestFilesystemStorage_OpenFile(t *testing.T) {
 	dir := t.TempDir()
 	s := NewFilesystemStorage(dir)
 
-	_ = s.WriteFile("openme.txt", []byte("content"), 0o644)
+	if err := s.WriteFile("openme.txt", []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	f, err := s.OpenFile("openme.txt", os.O_RDONLY, 0)
 	if err != nil {

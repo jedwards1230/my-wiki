@@ -2,6 +2,7 @@ package vault
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,8 +15,13 @@ type FilesystemStorage struct {
 }
 
 // NewFilesystemStorage creates a FilesystemStorage rooted at the given directory.
+// The root path is normalized to an absolute path.
 func NewFilesystemStorage(root string) *FilesystemStorage {
-	return &FilesystemStorage{root: root}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		absRoot = root // fallback to original if Abs fails
+	}
+	return &FilesystemStorage{root: absRoot}
 }
 
 // Root returns the absolute root directory path.
@@ -58,7 +64,7 @@ func (f *FilesystemStorage) Stat(relPath string) (fs.FileInfo, error) {
 	return os.Stat(abs)
 }
 
-func (f *FilesystemStorage) OpenFile(relPath string, flag int, perm fs.FileMode) (*os.File, error) {
+func (f *FilesystemStorage) OpenFile(relPath string, flag int, perm fs.FileMode) (io.ReadWriteCloser, error) {
 	abs, err := f.resolve(relPath)
 	if err != nil {
 		return nil, err
@@ -74,7 +80,7 @@ func (f *FilesystemStorage) MkdirAll(relPath string, perm fs.FileMode) error {
 	return os.MkdirAll(abs, perm)
 }
 
-func (f *FilesystemStorage) ReadDir(relPath string) ([]os.DirEntry, error) {
+func (f *FilesystemStorage) ReadDir(relPath string) ([]fs.DirEntry, error) {
 	abs, err := f.resolve(relPath)
 	if err != nil {
 		return nil, err
