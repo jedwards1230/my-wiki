@@ -38,13 +38,21 @@ func WithRebuildNotifier(n *notify.RebuildNotifier) HandlerOption {
 	}
 }
 
+// WithPageService provides a pre-configured PageService instead of constructing one internally.
+func WithPageService(ps *service.PageService) HandlerOption {
+	return func(h *Handler) {
+		if ps != nil {
+			h.pages = ps
+		}
+	}
+}
+
 // Handler holds all API services and registers routes.
 type Handler struct {
 	vaultDir  string
 	lint      *service.LintService
 	ingest    *service.IngestService
 	directory *service.DirectoryService
-	log       *service.LogService
 	activity  *service.ActivityService
 	pages     *service.PageService
 	recent    *service.RecentService
@@ -57,12 +65,12 @@ type Handler struct {
 // NewHandler creates an API handler with services built from the given vault.
 // searchSvc may be nil if search is not configured.
 func NewHandler(v *vault.Vault, searchSvc *service.SearchService, opts ...HandlerOption) *Handler {
+	logSvc := service.NewLogService(v.Storage)
 	h := &Handler{
 		vaultDir:  v.Dir,
-		lint:      service.NewLintService(v),
+		lint:      service.NewLintService(v, logSvc),
 		ingest:    service.NewIngestService(v),
 		directory: service.NewDirectoryService(v),
-		log:       service.NewLogService(v.Storage),
 		activity:  service.NewActivityService(v.Storage),
 		pages:     service.NewPageService(v.Storage),
 		recent:    service.NewRecentService(v),
@@ -83,9 +91,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/lint", h.wrapRead(http.HandlerFunc(h.handleLint)))
 	mux.Handle("GET /api/ingest", h.wrapRead(http.HandlerFunc(h.handleIngestList)))
 	mux.Handle("GET /api/directory", h.wrapRead(http.HandlerFunc(h.handleDirectoryList)))
-	mux.Handle("GET /api/log", h.wrapRead(http.HandlerFunc(h.handleLogIndex)))
-	mux.Handle("GET /api/log/lint", h.wrapRead(http.HandlerFunc(h.handleLogLint)))
-	mux.Handle("GET /api/log/{date}", h.wrapRead(http.HandlerFunc(h.handleLogDay)))
 	mux.Handle("GET /api/pages/{path...}", h.wrapRead(http.HandlerFunc(h.handlePageRead)))
 	mux.Handle("GET /api/pages", h.wrapRead(http.HandlerFunc(h.handlePageList)))
 	mux.Handle("GET /api/recent", h.wrapRead(http.HandlerFunc(h.handleRecentList)))
