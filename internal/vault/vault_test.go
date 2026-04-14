@@ -501,6 +501,96 @@ func TestValidateYAMLSyntaxString(t *testing.T) {
 	}
 }
 
+func TestIsExcluded(t *testing.T) {
+	v := New(t.TempDir())
+
+	// Default exclusions
+	for _, dir := range DefaultExcludedDirs {
+		if !v.IsExcluded(dir) {
+			t.Errorf("expected %q to be excluded by default", dir)
+		}
+	}
+
+	// Non-excluded
+	if v.IsExcluded("meta") {
+		t.Error("meta should not be excluded")
+	}
+}
+
+func TestCustomExcludedDirs(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create directories and files
+	for _, d := range []string{"public", "drafts", "notes", ".obsidian"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		"index.md":          "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\nHello.\n",
+		"public/page.md":    "---\ntitle: Public\ntags:\n  - pub\ndate: 2026-01-01\n---\n\nPublic.\n",
+		"drafts/wip.md":     "---\ntitle: WIP\ntags:\n  - draft\ndate: 2026-01-01\n---\n\nDraft.\n",
+		"notes/note.md":     "---\ntitle: Note\ntags:\n  - note\ndate: 2026-01-01\n---\n\nNote.\n",
+		".obsidian/conf.md": "config\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Use custom exclusions (only "drafts" and "notes")
+	v := &Vault{
+		Dir:          dir,
+		Storage:      NewFilesystemStorage(dir),
+		ExcludedDirs: []string{"drafts", "notes"},
+	}
+
+	// FindWikiPages should exclude drafts and notes but include public and .obsidian
+	pages, err := v.FindWikiPages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rels []string
+	for _, p := range pages {
+		rel, _ := filepath.Rel(dir, p)
+		rels = append(rels, rel)
+	}
+	sort.Strings(rels)
+
+	expected := []string{".obsidian/conf.md", "index.md", "public/page.md"}
+	if len(rels) != len(expected) {
+		t.Fatalf("FindWikiPages: expected %d pages, got %d: %v", len(expected), len(rels), rels)
+	}
+	for i, exp := range expected {
+		if filepath.ToSlash(rels[i]) != exp {
+			t.Errorf("FindWikiPages page %d: expected %s, got %s", i, exp, rels[i])
+		}
+	}
+
+	// BuildSlugIndex uses its own narrower exclusion list (only .obsidian and
+	// private) so that raw/ and other custom-excluded dirs remain linkable.
+	slugs, err := v.BuildSlugIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSlug := func(key string) {
+		t.Helper()
+		// slug keys use OS-native separators via filepath.Rel
+		if !slugs[filepath.FromSlash(key)] {
+			t.Errorf("BuildSlugIndex: expected %q slug", key)
+		}
+	}
+	wantSlug("public/page")
+	// drafts and notes are excluded from FindWikiPages but still linkable
+	wantSlug("drafts/wip")
+	wantSlug("notes/note")
+	// .obsidian is always excluded from slug index
+	if slugs["conf"] {
+		t.Error("BuildSlugIndex: .obsidian/conf.md should be excluded from slug index")
+	}
+}
+
 func TestBuildSlugIndex(t *testing.T) {
 	dir := setupTestVault(t)
 	v := New(dir)

@@ -11,21 +11,43 @@ import (
 	"go.yaml.in/yaml/v2"
 )
 
+// DefaultExcludedDirs are directories excluded from wiki page discovery by default.
+var DefaultExcludedDirs = []string{".obsidian", "raw", "private"}
+
 // Vault provides operations on a wiki vault directory.
 type Vault struct {
-	Dir     string
-	Storage Storage
+	Dir          string
+	Storage      Storage
+	ExcludedDirs []string
 }
 
-// New creates a Vault rooted at dir.
+// New creates a Vault rooted at dir. Each instance gets its own copy of
+// DefaultExcludedDirs so mutations on one Vault cannot affect others.
 func New(dir string) *Vault {
+	excl := make([]string, len(DefaultExcludedDirs))
+	copy(excl, DefaultExcludedDirs)
 	return &Vault{
-		Dir:     dir,
-		Storage: NewFilesystemStorage(dir),
+		Dir:          dir,
+		Storage:      NewFilesystemStorage(dir),
+		ExcludedDirs: excl,
 	}
 }
 
-// FindWikiPages returns all .md files excluding raw/, private/, .obsidian/.
+// IsExcluded reports whether the given relative path matches one of the
+// vault's excluded directories. Paths are normalized to forward slashes
+// before comparison so the check works on all platforms.
+func (v *Vault) IsExcluded(rel string) bool {
+	normalized := filepath.ToSlash(rel)
+	for _, d := range v.ExcludedDirs {
+		if normalized == filepath.ToSlash(d) {
+			return true
+		}
+	}
+	return false
+}
+
+// FindWikiPages returns all .md files, excluding directories listed in
+// ExcludedDirs (default: .obsidian/, raw/, private/).
 func (v *Vault) FindWikiPages() ([]string, error) {
 	var pages []string
 	err := filepath.WalkDir(v.Dir, func(p string, d os.DirEntry, err error) error {
@@ -34,8 +56,7 @@ func (v *Vault) FindWikiPages() ([]string, error) {
 		}
 		rel, _ := filepath.Rel(v.Dir, p)
 		if d.IsDir() {
-			switch rel {
-			case "raw", "private", ".obsidian":
+			if v.IsExcluded(rel) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -287,9 +308,18 @@ func removeInlineCode(s string) string {
 	return result.String()
 }
 
+// slugExcludedDirs are directories excluded from slug indexing. This is
+// narrower than ExcludedDirs because raw/ files are valid wikilink targets
+// even though they are not wiki pages.
+var slugExcludedDirs = map[string]bool{
+	".obsidian": true,
+	"private":   true,
+}
+
 // BuildSlugIndex builds a set of lowercase slugs for all pages in the vault
 // (excluding .obsidian/ and private/). Both the basename and full relative path
-// (without .md) are included.
+// (without .md) are included. Note: raw/ is intentionally included because raw
+// files can be wikilink targets.
 func (v *Vault) BuildSlugIndex() (map[string]bool, error) {
 	slugs := make(map[string]bool)
 	err := filepath.WalkDir(v.Dir, func(p string, d os.DirEntry, err error) error {
@@ -298,8 +328,7 @@ func (v *Vault) BuildSlugIndex() (map[string]bool, error) {
 		}
 		rel, _ := filepath.Rel(v.Dir, p)
 		if d.IsDir() {
-			switch rel {
-			case ".obsidian", "private":
+			if slugExcludedDirs[rel] {
 				return filepath.SkipDir
 			}
 			return nil

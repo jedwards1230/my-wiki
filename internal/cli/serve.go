@@ -247,9 +247,10 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 
 	// Shared PageService with auto-activity logging on mutations.
 	activitySvc := service.NewActivityService(v.Storage)
-	pageSvc := service.NewPageService(v.Storage, service.WithOnMutation(
-		makeActivityCallback(activitySvc, notifier, vaultDir, logger),
-	))
+	pageSvc := service.NewPageService(v.Storage,
+		service.WithExcludedDirs(v.ExcludedDirs),
+		service.WithOnMutation(makeActivityCallback(activitySvc, notifier, vaultDir, logger)),
+	)
 
 	var apiOpts []api.HandlerOption
 	if authMWs != nil {
@@ -415,9 +416,10 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 
 	// Shared PageService with auto-activity logging on mutations.
 	mcpActivitySvc := service.NewActivityService(v.Storage)
-	mcpPageSvc := service.NewPageService(v.Storage, service.WithOnMutation(
-		makeActivityCallback(mcpActivitySvc, mcpNotifier, vaultDir, logger),
-	))
+	mcpPageSvc := service.NewPageService(v.Storage,
+		service.WithExcludedDirs(v.ExcludedDirs),
+		service.WithOnMutation(makeActivityCallback(mcpActivitySvc, mcpNotifier, vaultDir, logger)),
+	)
 
 	mcpSrv := mcpserver.New(v, nil, mcpserver.WithRebuildNotifier(mcpNotifier), mcpserver.WithPageService(mcpPageSvc))
 	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)

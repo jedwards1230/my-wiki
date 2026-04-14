@@ -192,11 +192,11 @@ func newAuthHandler(
 			}
 
 			var claims struct {
-				Subject          string   `json:"sub"`
+				Subject           string   `json:"sub"`
 				PreferredUsername string   `json:"preferred_username"`
-				Email            string   `json:"email"`
-				Name             string   `json:"name"`
-				Groups           []string `json:"groups"`
+				Email             string   `json:"email"`
+				Name              string   `json:"name"`
+				Groups            []string `json:"groups"`
 			}
 			if err := tok.Claims(&claims); err != nil {
 				writeUnauthorized(w)
