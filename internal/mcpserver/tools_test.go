@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jedwards1230/home-wiki/internal/middleware"
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/jedwards1230/home-wiki/internal/vault"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -1057,6 +1058,53 @@ func TestSearchHandlerShortQuery(t *testing.T) {
 }
 
 // --- New creates server ---
+
+func TestWhoamiHandler(t *testing.T) {
+	v := setupTestVault(t)
+	handler := whoamiHandler(v.Dir)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, `"name": "home-wiki"`) {
+		t.Errorf("expected name field, got:\n%s", text)
+	}
+	if !strings.Contains(text, `"version"`) {
+		t.Errorf("expected version field, got:\n%s", text)
+	}
+	// No auth context — user should be absent.
+	if strings.Contains(text, `"user"`) {
+		t.Errorf("expected no user field without auth, got:\n%s", text)
+	}
+}
+
+func TestWhoamiHandler_WithUser(t *testing.T) {
+	v := setupTestVault(t)
+	handler := whoamiHandler(v.Dir)
+
+	ctx := middleware.WithUser(context.Background(), &middleware.UserInfo{
+		Username: "agent",
+		Email:    "agent@example.com",
+		Name:     "Agent Smith",
+		Groups:   []string{"editors"},
+	})
+
+	result, err := handler(ctx, makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, `"username": "agent"`) {
+		t.Errorf("expected username in user field, got:\n%s", text)
+	}
+	if !strings.Contains(text, `"email": "agent@example.com"`) {
+		t.Errorf("expected email in user field, got:\n%s", text)
+	}
+}
 
 func TestNewCreatesServer(t *testing.T) {
 	v := setupTestVault(t)
