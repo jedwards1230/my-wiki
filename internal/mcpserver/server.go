@@ -278,6 +278,23 @@ func registerTools(
 		moveHandler(s, pages, lint, vaultDir, notifier),
 	)
 
+	// --- lint: Run vault health checks ---
+	s.AddTool(
+		mcp.NewTool("lint",
+			mcp.WithTitleAnnotation("Lint Vault"),
+			mcp.WithDescription("Run vault health checks. Returns issues grouped by check. The 'links' check deduplicates by target page, listing all source files per missing page."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithIdempotentHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithString("check",
+				mcp.Description("Which check to run. Default: all."),
+				mcp.Enum("all", "frontmatter", "raw", "links", "orphans", "log"),
+			),
+		),
+		lintHandler(lint),
+	)
+
 	// --- recent: Recently modified pages ---
 	s.AddTool(
 		mcp.NewTool("recent",
