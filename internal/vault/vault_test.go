@@ -424,6 +424,83 @@ func TestParseFrontmatterString_Unterminated(t *testing.T) {
 	}
 }
 
+func TestValidateYAMLSyntax_Valid(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\ntitle: Valid\ntags:\n  - test\ndate: 2026-01-01\n---\n\nBody.\n"
+	f := filepath.Join(dir, "valid.md")
+	_ = os.WriteFile(f, []byte(content), 0o644)
+
+	if err := ValidateYAMLSyntax(f); err != nil {
+		t.Errorf("expected valid YAML, got error: %v", err)
+	}
+}
+
+func TestValidateYAMLSyntax_BrokenBrackets(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\ntitle: Broken\ntags:\n  - [unclosed bracket\ndate: 2026-01-01\n---\n\nBody.\n"
+	f := filepath.Join(dir, "broken.md")
+	_ = os.WriteFile(f, []byte(content), 0o644)
+
+	err := ValidateYAMLSyntax(f)
+	if err == nil {
+		t.Fatal("expected error for broken YAML brackets, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid YAML") {
+		t.Errorf("expected 'invalid YAML' in error, got: %v", err)
+	}
+}
+
+func TestValidateYAMLSyntax_BrokenBraces(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\ntitle: Broken\nextra: {not closed\n---\n\nBody.\n"
+	f := filepath.Join(dir, "broken.md")
+	_ = os.WriteFile(f, []byte(content), 0o644)
+
+	err := ValidateYAMLSyntax(f)
+	if err == nil {
+		t.Fatal("expected error for broken YAML braces, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid YAML") {
+		t.Errorf("expected 'invalid YAML' in error, got: %v", err)
+	}
+}
+
+func TestValidateYAMLSyntax_NoFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	content := "Just plain text, no frontmatter.\n"
+	f := filepath.Join(dir, "plain.md")
+	_ = os.WriteFile(f, []byte(content), 0o644)
+
+	if err := ValidateYAMLSyntax(f); err != nil {
+		t.Errorf("expected no error for no frontmatter, got: %v", err)
+	}
+}
+
+func TestValidateYAMLSyntaxString(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		wantErr bool
+	}{
+		{"valid", "---\ntitle: OK\n---\nBody.\n", false},
+		{"no frontmatter", "Just text.\n", false},
+		{"unclosed bracket", "---\ntags:\n  - [broken\n---\nBody.\n", true},
+		{"unclosed brace", "---\nextra: {broken\n---\nBody.\n", true},
+		{"duplicate key", "---\ntitle: A\ntitle: B\n---\nBody.\n", false}, // YAML allows duplicate keys (last wins)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateYAMLSyntaxString(tt.content)
+			if tt.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestBuildSlugIndex(t *testing.T) {
 	dir := setupTestVault(t)
 	v := New(dir)
