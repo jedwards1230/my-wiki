@@ -29,8 +29,9 @@ func NewDirectoryService(v *vault.Vault) *DirectoryService {
 	return &DirectoryService{vault: v}
 }
 
-// List returns all wiki pages with their frontmatter metadata.
-func (s *DirectoryService) List() ([]DirectoryEntry, error) {
+// List returns wiki pages with their frontmatter metadata.
+// If prefix is non-empty, only pages under that directory are returned.
+func (s *DirectoryService) List(prefix string) ([]DirectoryEntry, error) {
 	pages, err := s.vault.FindWikiPages()
 	if err != nil {
 		return nil, err
@@ -39,6 +40,11 @@ func (s *DirectoryService) List() ([]DirectoryEntry, error) {
 	var result []DirectoryEntry
 	for _, p := range pages {
 		rel, _ := filepath.Rel(s.vault.Dir, p)
+
+		if prefix != "" && !strings.HasPrefix(rel, prefix) {
+			continue
+		}
+
 		entry := DirectoryEntry{
 			Path:  rel,
 			Title: strings.TrimSuffix(filepath.Base(p), ".md"),
@@ -104,7 +110,7 @@ type dirNode struct {
 // wiki pages. Root gets a folder tree + vault-wide tag overview. Leaf dirs get
 // flat page tables. Mid-level dirs get subtree structure + scoped tags.
 func (s *DirectoryService) Generate() (string, int, error) {
-	entries, err := s.List()
+	entries, err := s.List("")
 	if err != nil {
 		return "", 0, err
 	}

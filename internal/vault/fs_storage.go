@@ -108,6 +108,21 @@ func (f *FilesystemStorage) WalkDir(relPath string, fn fs.WalkDirFunc) error {
 	})
 }
 
+func (f *FilesystemStorage) Rename(srcRel, dstRel string) error {
+	srcAbs, err := f.resolve(srcRel)
+	if err != nil {
+		return err
+	}
+	dstAbs, err := f.resolve(dstRel)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dstAbs), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(srcAbs, dstAbs)
+}
+
 // resolve converts a relative path to an absolute path within the root,
 // preventing path traversal attacks.
 func (f *FilesystemStorage) resolve(relPath string) (string, error) {

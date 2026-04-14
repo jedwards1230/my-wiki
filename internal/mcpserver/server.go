@@ -45,12 +45,11 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
 		server.WithLogging(),
-		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete mutations are auto-logged as compact audit entries — do NOT call wiki_activity for individual page changes. Use wiki_activity only for narrative summaries of multi-page work sessions or non-page activities (ingest, lint, note, migrate)."),
+		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete/move mutations are auto-logged as compact audit entries — do NOT call activity for individual page changes. Use activity only for narrative summaries of multi-page work sessions or non-page activities (ingest, lint, note, migrate)."),
 	)
 
 	logSvc := service.NewLogService(v.Storage)
 	lint := service.NewLintService(v, logSvc)
-	ingest := service.NewIngestService(v)
 	directory := service.NewDirectoryService(v)
 	activity := service.NewActivityService(v.Storage)
 	recent := service.NewRecentService(v)
@@ -63,7 +62,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 	}
 
 	registerResources(s, pages)
-	registerTools(s, v.Dir, cfg.notifier, lint, ingest, directory, activity, pages, recent, searchSvc)
+	registerTools(s, v.Dir, cfg.notifier, lint, directory, activity, pages, recent, searchSvc)
 
 	return s
 }
@@ -105,110 +104,15 @@ func registerTools(
 	vaultDir string,
 	notifier *notify.RebuildNotifier,
 	lint *service.LintService,
-	ingest *service.IngestService,
 	directory *service.DirectoryService,
 	activity *service.ActivityService,
 	pages *service.PageService,
 	recent *service.RecentService,
 	searchSvc *service.SearchService,
 ) {
+	// --- read: Read a wiki page ---
 	s.AddTool(
-		mcp.NewTool("wiki_lint",
-			mcp.WithTitleAnnotation("Lint Wiki"),
-			mcp.WithDescription("Run vault health checks. Returns JSON with issues (file, check, level, message) and total count."),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-			mcp.WithString("check",
-				mcp.Enum("all", "frontmatter", "raw", "links", "orphans", "log"),
-				mcp.Description("Which check to run: frontmatter (required fields), raw (raw source metadata), links (broken wikilinks), orphans (no inbound links), log (activity log integrity), all (everything). Default: all."),
-			),
-		),
-		lintHandler(lint),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_ingest",
-			mcp.WithTitleAnnotation("List Ingest Queue"),
-			mcp.WithDescription("List raw/ files missing the 'ingested' frontmatter key — source documents awaiting summarization into wiki pages. Returns JSON array of {path, title, date_added}."),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-		),
-		ingestListHandler(ingest),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_directory",
-			mcp.WithTitleAnnotation("List Page Directory"),
-			mcp.WithDescription("List all wiki pages with title, description, and tags. Returns JSON array of {path, title, description, tags}. Use wiki_directory_generate to write a browsable markdown page."),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-		),
-		directoryListHandler(directory),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_directory_generate",
-			mcp.WithTitleAnnotation("Generate Page Directory"),
-			mcp.WithDescription("Regenerate index.md with all wiki pages grouped by tag. Serves as both homepage and agent catalog. Use wiki_directory to read the list without side effects. Returns {path, count}."),
-			mcp.WithReadOnlyHintAnnotation(false),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-		),
-		directoryGenerateHandler(s, directory),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_ingest_generate",
-			mcp.WithTitleAnnotation("Generate Ingest Queue"),
-			mcp.WithDescription("Write meta/ingest-queue.md with a table of unprocessed raw sources. Use wiki_ingest to read the list without side effects. Returns {path, count}."),
-			mcp.WithReadOnlyHintAnnotation(false),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-		),
-		ingestGenerateHandler(s, ingest),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_activity",
-			mcp.WithTitleAnnotation("Log Activity"),
-			mcp.WithDescription("Append a narrative entry to today's activity log. Individual page mutations (create/edit/delete) are auto-logged — do NOT duplicate them here. Use this for summaries of multi-page work sessions or non-page activities like ingest, lint, or migrate."),
-			mcp.WithReadOnlyHintAnnotation(false),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(false),
-			mcp.WithOpenWorldHintAnnotation(false),
-			mcp.WithString("type",
-				mcp.Required(),
-				mcp.Enum("ingest", "edit", "create", "delete", "lint", "note", "migrate"),
-				mcp.Description("Activity type: ingest (raw source processed), edit (page modified), create (new page), delete (page removed), lint (health check run), note (general observation), migrate (structural change)."),
-			),
-			mcp.WithString("title",
-				mcp.Required(),
-				mcp.Description("Short title for the activity entry."),
-			),
-			mcp.WithString("time",
-				mcp.Description("Override timestamp in HH:MM format. Default: current time."),
-			),
-			mcp.WithString("summary",
-				mcp.Description("Optional description of what was done."),
-			),
-			mcp.WithArray("touched",
-				mcp.Description("Wiki pages related to this activity (e.g., project/foo). Optional."),
-				mcp.Items(map[string]any{"type": "string"}),
-			),
-		),
-		activityHandler(s, activity, vaultDir, notifier),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_read_page",
+		mcp.NewTool("read",
 			mcp.WithTitleAnnotation("Read Page"),
 			mcp.WithDescription("Read a wiki page's full markdown content including frontmatter. The .md extension is added automatically if omitted."),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -220,68 +124,34 @@ func registerTools(
 				mcp.Description("Relative path within the vault (e.g., meta/schema or meta/schema.md)."),
 			),
 		),
-		readPageHandler(pages),
+		readHandler(pages),
 	)
 
+	// --- write: Create or update a wiki page ---
 	s.AddTool(
-		mcp.NewTool("wiki_create_page",
-			mcp.WithTitleAnnotation("Create Page"),
-			mcp.WithDescription("Create a new wiki page. Fails if the page already exists — use wiki_update_page to modify existing pages."),
-			mcp.WithReadOnlyHintAnnotation(false),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(false),
-			mcp.WithOpenWorldHintAnnotation(false),
-			mcp.WithString("path",
-				mcp.Required(),
-				mcp.Description("Relative path for the new page (e.g., project/my-project). The .md extension is added if omitted."),
-			),
-			mcp.WithString("content",
-				mcp.Required(),
-				mcp.Description("Full markdown content. Should include YAML frontmatter with title, tags, and date fields."),
-			),
-		),
-		createPageHandler(s, pages, lint, vaultDir, notifier),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_update_page",
-			mcp.WithTitleAnnotation("Update Page"),
-			mcp.WithDescription("Overwrite an existing wiki page. Fails if the page does not exist — use wiki_create_page for new pages. Read the page first with wiki_read_page, then send the complete updated content."),
+		mcp.NewTool("write",
+			mcp.WithTitleAnnotation("Write Page"),
+			mcp.WithDescription("Create or update a wiki page. If the page exists it is overwritten; if it does not exist it is created. No existence check needed — just send the full content."),
 			mcp.WithReadOnlyHintAnnotation(false),
 			mcp.WithDestructiveHintAnnotation(true),
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("path",
 				mcp.Required(),
-				mcp.Description("Relative path to the page."),
+				mcp.Description("Relative path for the page (e.g., project/my-project). The .md extension is added if omitted."),
 			),
 			mcp.WithString("content",
 				mcp.Required(),
-				mcp.Description("Complete replacement markdown content including YAML frontmatter."),
+				mcp.Description("Full markdown content including YAML frontmatter with title, tags, and date fields."),
 			),
 		),
-		updatePageHandler(s, pages, lint, vaultDir, notifier),
+		writeHandler(s, pages, lint, vaultDir, notifier),
 	)
 
+	// --- edit: Surgical partial update ---
 	s.AddTool(
-		mcp.NewTool("wiki_delete_page",
-			mcp.WithTitleAnnotation("Delete Page"),
-			mcp.WithDescription("Delete a wiki page. Returns an error if the page does not exist."),
-			mcp.WithReadOnlyHintAnnotation(false),
-			mcp.WithDestructiveHintAnnotation(true),
-			mcp.WithIdempotentHintAnnotation(false),
-			mcp.WithOpenWorldHintAnnotation(false),
-			mcp.WithString("path",
-				mcp.Required(),
-				mcp.Description("Relative path to the page to delete (e.g., project/old-page or project/old-page.md). The .md extension is added if omitted."),
-			),
-		),
-		deletePageHandler(s, pages, lint, vaultDir, notifier),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_patch_page",
-			mcp.WithTitleAnnotation("Patch Page"),
+		mcp.NewTool("edit",
+			mcp.WithTitleAnnotation("Edit Page"),
 			mcp.WithDescription("Apply targeted find-and-replace edits to an existing wiki page without replacing the entire content. Each operation replaces the first occurrence of 'find' with 'replace'. If any find string is not found, the operation fails with no changes written."),
 			mcp.WithReadOnlyHintAnnotation(false),
 			mcp.WithDestructiveHintAnnotation(true),
@@ -289,7 +159,7 @@ func registerTools(
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("path",
 				mcp.Required(),
-				mcp.Description("Relative path to the page to patch (e.g., project/my-project or project/my-project.md). The .md extension is added if omitted."),
+				mcp.Description("Relative path to the page to edit (e.g., project/my-project or project/my-project.md). The .md extension is added if omitted."),
 			),
 			mcp.WithArray("operations",
 				mcp.Required(),
@@ -304,13 +174,14 @@ func registerTools(
 				}),
 			),
 		),
-		patchPageHandler(s, pages, lint, vaultDir, notifier),
+		editHandler(s, pages, lint, vaultDir, notifier),
 	)
 
+	// --- list: List pages with optional detail ---
 	s.AddTool(
-		mcp.NewTool("wiki_list_pages",
+		mcp.NewTool("list",
 			mcp.WithTitleAnnotation("List Pages"),
-			mcp.WithDescription("List wiki pages (excludes raw/, private/, .obsidian/). Returns JSON array of {path, title, has_meta}."),
+			mcp.WithDescription("List wiki pages (excludes raw/, private/, .obsidian/). With detail=false (default), returns JSON array of {path, title, has_meta}. With detail=true, returns rich entries with {path, title, description, tags} from frontmatter."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
@@ -318,28 +189,17 @@ func registerTools(
 			mcp.WithString("prefix",
 				mcp.Description("Filter to pages under this directory (e.g., 'project/' or 'meta/'). Default: list all pages."),
 			),
-		),
-		listPagesHandler(pages),
-	)
-
-	s.AddTool(
-		mcp.NewTool("wiki_recent",
-			mcp.WithTitleAnnotation("Recent Pages"),
-			mcp.WithDescription("List recently modified wiki pages sorted by modification time. Returns JSON array of {path, title, modified}. Excludes activity log files."),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithIdempotentHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-			mcp.WithNumber("limit",
-				mcp.Description("Maximum pages to return. Default: 20."),
+			mcp.WithBoolean("detail",
+				mcp.Description("When true, return rich directory entries with description and tags from frontmatter. Default: false."),
 			),
 		),
-		recentListHandler(recent),
+		listHandler(pages, directory),
 	)
 
+	// --- search: Full-text search ---
 	if searchSvc != nil {
 		s.AddTool(
-			mcp.NewTool("wiki_search",
+			mcp.NewTool("search",
 				mcp.WithTitleAnnotation("Search Wiki"),
 				mcp.WithDescription("Full-text search across wiki pages. Matches against title, tags, and content. Returns results ranked by relevance with snippets and timing. Use engine='all' to compare search backends side-by-side."),
 				mcp.WithReadOnlyHintAnnotation(true),
@@ -361,4 +221,90 @@ func registerTools(
 			searchHandler(searchSvc),
 		)
 	}
+
+	// --- delete: Remove a page ---
+	s.AddTool(
+		mcp.NewTool("delete",
+			mcp.WithTitleAnnotation("Delete Page"),
+			mcp.WithDescription("Delete a wiki page. Returns an error if the page does not exist."),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
+			mcp.WithIdempotentHintAnnotation(false),
+			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithString("path",
+				mcp.Required(),
+				mcp.Description("Relative path to the page to delete (e.g., project/old-page or project/old-page.md). The .md extension is added if omitted."),
+			),
+		),
+		deleteHandler(s, pages, lint, vaultDir, notifier),
+	)
+
+	// --- move: Rename/relocate a page ---
+	s.AddTool(
+		mcp.NewTool("move",
+			mcp.WithTitleAnnotation("Move Page"),
+			mcp.WithDescription("Rename or relocate a wiki page. Fails if the source does not exist or the destination already exists. Returns lint warnings about broken wikilinks caused by the move."),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
+			mcp.WithIdempotentHintAnnotation(false),
+			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithString("source",
+				mcp.Required(),
+				mcp.Description("Current relative path of the page (e.g., project/old-name). The .md extension is added if omitted."),
+			),
+			mcp.WithString("destination",
+				mcp.Required(),
+				mcp.Description("New relative path for the page (e.g., project/new-name). The .md extension is added if omitted."),
+			),
+		),
+		moveHandler(s, pages, lint, vaultDir, notifier),
+	)
+
+	// --- recent: Recently modified pages ---
+	s.AddTool(
+		mcp.NewTool("recent",
+			mcp.WithTitleAnnotation("Recent Pages"),
+			mcp.WithDescription("List recently modified wiki pages sorted by modification time. Returns JSON array of {path, title, modified}. Excludes activity log files."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithIdempotentHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithNumber("limit",
+				mcp.Description("Maximum pages to return. Default: 20."),
+			),
+		),
+		recentHandler(recent),
+	)
+
+	// --- activity: Append to activity log ---
+	s.AddTool(
+		mcp.NewTool("activity",
+			mcp.WithTitleAnnotation("Log Activity"),
+			mcp.WithDescription("Append a narrative entry to today's activity log. Individual page mutations (create/edit/delete/move) are auto-logged — do NOT duplicate them here. Use this for summaries of multi-page work sessions or non-page activities like ingest, lint, or migrate."),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithIdempotentHintAnnotation(false),
+			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithString("type",
+				mcp.Required(),
+				mcp.Enum("ingest", "edit", "create", "delete", "lint", "note", "migrate", "move"),
+				mcp.Description("Activity type: ingest (raw source processed), edit (page modified), create (new page), delete (page removed), lint (health check run), note (general observation), migrate (structural change), move (page relocated)."),
+			),
+			mcp.WithString("title",
+				mcp.Required(),
+				mcp.Description("Short title for the activity entry."),
+			),
+			mcp.WithString("time",
+				mcp.Description("Override timestamp in HH:MM format. Default: current time."),
+			),
+			mcp.WithString("summary",
+				mcp.Description("Optional description of what was done."),
+			),
+			mcp.WithArray("touched",
+				mcp.Description("Wiki pages related to this activity (e.g., project/foo). Optional."),
+				mcp.Items(map[string]any{"type": "string"}),
+			),
+		),
+		activityHandler(s, activity, vaultDir, notifier),
+	)
 }

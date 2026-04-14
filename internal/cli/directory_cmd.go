@@ -33,7 +33,7 @@ func runDirectory(cmd *cobra.Command, _ []string) error {
 
 	switch {
 	case countOnly:
-		entries, err := svc.List()
+		entries, err := svc.List("")
 		if err != nil {
 			return err
 		}
@@ -45,7 +45,7 @@ func runDirectory(cmd *cobra.Command, _ []string) error {
 		}
 		fmt.Printf("Generated index files (%d page(s) indexed)\n", count)
 	default:
-		entries, err := svc.List()
+		entries, err := svc.List("")
 		if err != nil {
 			return err
 		}

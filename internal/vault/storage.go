@@ -35,4 +35,8 @@ type Storage interface {
 	// WalkDir walks the directory tree rooted at relPath, calling fn for each entry.
 	// Paths passed to fn are relative to the storage root.
 	WalkDir(relPath string, fn fs.WalkDirFunc) error
+
+	// Rename moves a file from srcRel to dstRel within the storage root.
+	// Parent directories of the destination are created as needed.
+	Rename(srcRel, dstRel string) error
 }
