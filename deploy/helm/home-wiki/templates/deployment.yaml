@@ -201,6 +201,8 @@ spec:
             - --mcp-port={{ .Values.mcp.port }}
             {{- end }}
           env:
+            - name: TZ
+              value: {{ .Values.timezone | default "UTC" | quote }}
             - name: WIKI_PUBLIC_DIR
               value: "/data/public"
             - name: WIKI_VAULT_DIR

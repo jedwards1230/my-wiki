@@ -7,6 +7,8 @@ image:
 
 imagePullSecrets: []
 
+timezone: "UTC"
+
 service:
   type: ClusterIP
   port: 80
