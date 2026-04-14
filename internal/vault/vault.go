@@ -292,8 +292,12 @@ func ExtractWikilinks(path string) ([]string, error) {
 		matches := wikilinkRe.FindAllStringSubmatch(cleaned, -1)
 		for _, m := range matches {
 			target := m[1]
-			// Strip display text after |
-			if idx := strings.IndexByte(target, '|'); idx >= 0 {
+			// Strip display text after | or escaped \| (Obsidian uses
+			// \| inside tables to avoid conflicting with Markdown pipe
+			// syntax).
+			if idx := strings.Index(target, `\|`); idx >= 0 {
+				target = target[:idx]
+			} else if idx := strings.IndexByte(target, '|'); idx >= 0 {
 				target = target[:idx]
 			}
 			// Strip heading anchor after #

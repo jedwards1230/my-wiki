@@ -150,6 +150,22 @@ func toJSON(v any) string {
 
 // --- Tool handlers ---
 
+func lintHandler(lint *service.LintService) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		check := getStringArg(req, "check")
+		if check == "" {
+			check = "all"
+		}
+
+		report, err := lint.Run(check)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		return mcp.NewToolResultText(toJSON(report)), nil
+	}
+}
+
 func readHandler(svc *service.PageService) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
