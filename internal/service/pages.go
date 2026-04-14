@@ -20,12 +20,25 @@ type PageInfo struct {
 
 // PageService provides wiki page CRUD operations.
 type PageService struct {
-	storage vault.Storage
+	storage    vault.Storage
+	onMutation func(MutationEvent)
+}
+
+// PageOption configures optional PageService behavior.
+type PageOption func(*PageService)
+
+// WithOnMutation sets a callback invoked after successful page mutations.
+func WithOnMutation(fn func(MutationEvent)) PageOption {
+	return func(s *PageService) { s.onMutation = fn }
 }
 
 // NewPageService creates a PageService backed by the given storage.
-func NewPageService(storage vault.Storage) *PageService {
-	return &PageService{storage: storage}
+func NewPageService(storage vault.Storage, opts ...PageOption) *PageService {
+	s := &PageService{storage: storage}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // ensureMD ensures the path has a .md extension.
@@ -64,7 +77,28 @@ func (s *PageService) Write(relPath, content string) error {
 	}
 
 	relPath = ensureMD(relPath)
-	return s.storage.WriteFile(relPath, []byte(content), 0o644)
+
+	// Check existence before writing to distinguish create vs edit.
+	existed := false
+	if _, statErr := s.storage.Stat(relPath); statErr == nil {
+		existed = true
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+
+	if err := s.storage.WriteFile(relPath, []byte(content), 0o644); err != nil {
+		return err
+	}
+
+	if s.onMutation != nil {
+		kind := MutationEdit
+		if !existed {
+			kind = MutationCreate
+		}
+		s.onMutation(MutationEvent{Kind: kind, Path: filepath.ToSlash(relPath)})
+	}
+
+	return nil
 }
 
 // ValidationError is returned when page content fails frontmatter validation.
@@ -141,7 +175,15 @@ func (s *PageService) Delete(relPath string) error {
 		return fmt.Errorf("page not found: %s", relPath)
 	}
 
-	return s.storage.Remove(relPath)
+	if err := s.storage.Remove(relPath); err != nil {
+		return err
+	}
+
+	if s.onMutation != nil {
+		s.onMutation(MutationEvent{Kind: MutationDelete, Path: filepath.ToSlash(relPath)})
+	}
+
+	return nil
 }
 
 // List returns all wiki pages under the given prefix.

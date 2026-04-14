@@ -310,3 +310,111 @@ func TestPageService_PatchValidContent(t *testing.T) {
 		t.Error("expected patched content")
 	}
 }
+
+func TestPageService_MutationCallbackCreate(t *testing.T) {
+	dir := setupPagesVault(t)
+	var got *MutationEvent
+	svc := NewPageService(dir, WithOnMutation(func(evt MutationEvent) {
+		got = &evt
+	}))
+
+	err := svc.Write("new-page.md", "---\ntitle: New\ntags:\n  - test\ndate: 2026-01-15\n---\n\nContent.\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected mutation callback to fire")
+	}
+	if got.Kind != MutationCreate {
+		t.Errorf("expected MutationCreate, got %s", got.Kind)
+	}
+	if !strings.HasSuffix(got.Path, "new-page.md") {
+		t.Errorf("expected path ending in new-page.md, got %s", got.Path)
+	}
+}
+
+func TestPageService_MutationCallbackEdit(t *testing.T) {
+	dir := setupPagesVault(t)
+	var got *MutationEvent
+	svc := NewPageService(dir, WithOnMutation(func(evt MutationEvent) {
+		got = &evt
+	}))
+
+	// index.md already exists
+	err := svc.Write("index.md", "---\ntitle: Updated\ntags:\n  - root\ndate: 2026-01-01\n---\n\nUpdated.\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected mutation callback to fire")
+	}
+	if got.Kind != MutationEdit {
+		t.Errorf("expected MutationEdit, got %s", got.Kind)
+	}
+}
+
+func TestPageService_MutationCallbackDelete(t *testing.T) {
+	dir := setupPagesVault(t)
+	var got *MutationEvent
+	svc := NewPageService(dir, WithOnMutation(func(evt MutationEvent) {
+		got = &evt
+	}))
+
+	err := svc.Delete("index.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected mutation callback to fire")
+	}
+	if got.Kind != MutationDelete {
+		t.Errorf("expected MutationDelete, got %s", got.Kind)
+	}
+}
+
+func TestPageService_MutationCallbackPatch(t *testing.T) {
+	dir := setupPagesVault(t)
+	var callCount int
+	svc := NewPageService(dir, WithOnMutation(func(evt MutationEvent) {
+		callCount++
+	}))
+
+	_, err := svc.Patch("index.md", []PatchOp{
+		{Find: "Welcome.", Replace: "Hello."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callCount != 1 {
+		t.Errorf("expected callback called once (via Write), got %d", callCount)
+	}
+}
+
+func TestPageService_NoCallbackNoPanic(t *testing.T) {
+	dir := setupPagesVault(t)
+	svc := NewPageService(dir) // no callback
+
+	err := svc.Write("safe.md", "---\ntitle: Safe\ntags:\n  - test\ndate: 2026-01-15\n---\n\nContent.\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = svc.Delete("safe.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPageService_CallbackNotCalledOnError(t *testing.T) {
+	dir := setupPagesVault(t)
+	called := false
+	svc := NewPageService(dir, WithOnMutation(func(evt MutationEvent) {
+		called = true
+	}))
+
+	// Invalid frontmatter should fail validation
+	_ = svc.Write("bad.md", "no frontmatter")
+	if called {
+		t.Error("callback should not fire on validation error")
+	}
+}

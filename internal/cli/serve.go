@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -213,6 +214,22 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	})
 	defer notifier.Close()
 
+	// Shared PageService with auto-activity logging on mutations.
+	activitySvc := service.NewActivityService(vaultDir)
+	pageSvc := service.NewPageService(vaultDir, service.WithOnMutation(func(evt service.MutationEvent) {
+		entry := service.ActivityEntry{
+			Type:    string(evt.Kind),
+			Title:   fmt.Sprintf("%s %s", evt.Kind, filepath.Base(strings.TrimSuffix(evt.Path, ".md"))),
+			Touched: []string{strings.TrimSuffix(evt.Path, ".md")},
+		}
+		if err := activitySvc.Append(entry); err != nil {
+			logger.Warn("auto-activity failed", "error", err, "path", evt.Path)
+		}
+		today := time.Now().Format("2006-01-02")
+		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "activity", today+".md"))
+		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "log.md"))
+	}))
+
 	var apiOpts []api.HandlerOption
 	if authMWs != nil {
 		apiOpts = append(apiOpts, api.WithAuthMiddleware(authMWs.api))
@@ -221,6 +238,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		apiOpts = append(apiOpts, api.WithAuthReads(true))
 	}
 	apiOpts = append(apiOpts, api.WithRebuildNotifier(notifier))
+	apiOpts = append(apiOpts, api.WithPageService(pageSvc))
 	apiHandler := api.NewHandler(v, searchSvc, apiOpts...)
 
 	srv := server.New(cfg, publicFS, vaultFS, logger,
@@ -278,7 +296,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 
 	// Optionally start MCP server in the same process
 	if mcpPort > 0 {
-		mcpSrv := mcpserver.New(v, searchSvc, mcpserver.WithRebuildNotifier(notifier))
+		mcpSrv := mcpserver.New(v, searchSvc, mcpserver.WithRebuildNotifier(notifier), mcpserver.WithPageService(pageSvc))
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 		mux := http.NewServeMux()
@@ -374,7 +392,23 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	})
 	defer mcpNotifier.Close()
 
-	mcpSrv := mcpserver.New(v, nil, mcpserver.WithRebuildNotifier(mcpNotifier))
+	// Shared PageService with auto-activity logging on mutations.
+	mcpActivitySvc := service.NewActivityService(vaultDir)
+	mcpPageSvc := service.NewPageService(vaultDir, service.WithOnMutation(func(evt service.MutationEvent) {
+		entry := service.ActivityEntry{
+			Type:    string(evt.Kind),
+			Title:   fmt.Sprintf("%s %s", evt.Kind, filepath.Base(strings.TrimSuffix(evt.Path, ".md"))),
+			Touched: []string{strings.TrimSuffix(evt.Path, ".md")},
+		}
+		if err := mcpActivitySvc.Append(entry); err != nil {
+			logger.Warn("auto-activity failed", "error", err, "path", evt.Path)
+		}
+		today := time.Now().Format("2006-01-02")
+		mcpNotifier.MarkDirty(filepath.Join(vaultDir, "meta", "activity", today+".md"))
+		mcpNotifier.MarkDirty(filepath.Join(vaultDir, "meta", "log.md"))
+	}))
+
+	mcpSrv := mcpserver.New(v, nil, mcpserver.WithRebuildNotifier(mcpNotifier), mcpserver.WithPageService(mcpPageSvc))
 	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 	authMWs, err := buildAuthMiddlewares(context.Background(), logger, authConfigFromEnv())

@@ -15,12 +15,20 @@ type Option func(*options)
 
 type options struct {
 	notifier *notify.RebuildNotifier
+	pages    *service.PageService
 }
 
 // WithRebuildNotifier sets a notifier called after successful vault mutations.
 func WithRebuildNotifier(n *notify.RebuildNotifier) Option {
 	return func(o *options) {
 		o.notifier = n
+	}
+}
+
+// WithPageService provides a pre-configured PageService.
+func WithPageService(ps *service.PageService) Option {
+	return func(o *options) {
+		o.pages = ps
 	}
 }
 
@@ -37,7 +45,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
 		server.WithLogging(),
-		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Log all work with wiki_activity when done."),
+		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete operations are automatically logged. Use wiki_activity for non-page activities (ingest, lint, note, migrate)."),
 	)
 
 	lint := service.NewLintService(v)
@@ -45,8 +53,14 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 	directory := service.NewDirectoryService(v)
 	logSvc := service.NewLogService(v.Storage)
 	activity := service.NewActivityService(v.Storage)
-	pages := service.NewPageService(v.Storage)
 	recent := service.NewRecentService(v)
+
+	var pages *service.PageService
+	if cfg.pages != nil {
+		pages = cfg.pages
+	} else {
+		pages = service.NewPageService(v.Storage)
+	}
 
 	registerResources(s, pages)
 	registerTools(s, v.Dir, cfg.notifier, lint, ingest, directory, logSvc, activity, pages, recent, searchSvc)
@@ -219,8 +233,8 @@ func registerTools(
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("type",
 				mcp.Required(),
-				mcp.Enum("ingest", "edit", "create", "lint", "note", "migrate"),
-				mcp.Description("Activity type: ingest (raw source processed), edit (page modified), create (new page), lint (health check run), note (general observation), migrate (structural change)."),
+				mcp.Enum("ingest", "edit", "create", "delete", "lint", "note", "migrate"),
+				mcp.Description("Activity type: ingest (raw source processed), edit (page modified), create (new page), delete (page removed), lint (health check run), note (general observation), migrate (structural change)."),
 			),
 			mcp.WithString("title",
 				mcp.Required(),
