@@ -312,9 +312,9 @@ func TestPageService_PatchValidContent(t *testing.T) {
 }
 
 func TestPageService_MutationCallbackCreate(t *testing.T) {
-	dir := setupPagesVault(t)
+	storage, _ := setupPagesVault(t)
 	var got *MutationEvent
-	svc := NewPageService(dir, WithOnMutation(func(evt MutationEvent) {
+	svc := NewPageService(storage, WithOnMutation(func(evt MutationEvent) {
 		got = &evt
 	}))
 
@@ -334,9 +334,9 @@ func TestPageService_MutationCallbackCreate(t *testing.T) {
 }
 
 func TestPageService_MutationCallbackEdit(t *testing.T) {
-	dir := setupPagesVault(t)
+	storage, _ := setupPagesVault(t)
 	var got *MutationEvent
-	svc := NewPageService(dir, WithOnMutation(func(evt MutationEvent) {
+	svc := NewPageService(storage, WithOnMutation(func(evt MutationEvent) {
 		got = &evt
 	}))
 
@@ -354,9 +354,9 @@ func TestPageService_MutationCallbackEdit(t *testing.T) {
 }
 
 func TestPageService_MutationCallbackDelete(t *testing.T) {
-	dir := setupPagesVault(t)
+	storage, _ := setupPagesVault(t)
 	var got *MutationEvent
-	svc := NewPageService(dir, WithOnMutation(func(evt MutationEvent) {
+	svc := NewPageService(storage, WithOnMutation(func(evt MutationEvent) {
 		got = &evt
 	}))
 
@@ -373,9 +373,9 @@ func TestPageService_MutationCallbackDelete(t *testing.T) {
 }
 
 func TestPageService_MutationCallbackPatch(t *testing.T) {
-	dir := setupPagesVault(t)
+	storage, _ := setupPagesVault(t)
 	var callCount int
-	svc := NewPageService(dir, WithOnMutation(func(evt MutationEvent) {
+	svc := NewPageService(storage, WithOnMutation(func(evt MutationEvent) {
 		callCount++
 	}))
 
@@ -391,8 +391,8 @@ func TestPageService_MutationCallbackPatch(t *testing.T) {
 }
 
 func TestPageService_NoCallbackNoPanic(t *testing.T) {
-	dir := setupPagesVault(t)
-	svc := NewPageService(dir) // no callback
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage) // no callback
 
 	err := svc.Write("safe.md", "---\ntitle: Safe\ntags:\n  - test\ndate: 2026-01-15\n---\n\nContent.\n")
 	if err != nil {
@@ -406,9 +406,9 @@ func TestPageService_NoCallbackNoPanic(t *testing.T) {
 }
 
 func TestPageService_CallbackNotCalledOnError(t *testing.T) {
-	dir := setupPagesVault(t)
+	storage, _ := setupPagesVault(t)
 	called := false
-	svc := NewPageService(dir, WithOnMutation(func(evt MutationEvent) {
+	svc := NewPageService(storage, WithOnMutation(func(evt MutationEvent) {
 		called = true
 	}))
 

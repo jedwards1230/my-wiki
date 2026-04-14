@@ -36,7 +36,7 @@ func setupLintVault(t *testing.T) *vault.Vault {
 
 func TestLintService_Frontmatter(t *testing.T) {
 	v := setupLintVault(t)
-	svc := NewLintService(v)
+	svc := NewLintService(v, nil)
 
 	report, err := svc.Run("frontmatter")
 	if err != nil {
@@ -62,7 +62,7 @@ func TestLintService_Frontmatter(t *testing.T) {
 
 func TestLintService_Raw(t *testing.T) {
 	v := setupLintVault(t)
-	svc := NewLintService(v)
+	svc := NewLintService(v, nil)
 
 	report, err := svc.Run("raw")
 	if err != nil {
@@ -86,7 +86,7 @@ func TestLintService_Raw(t *testing.T) {
 
 func TestLintService_Links(t *testing.T) {
 	v := setupLintVault(t)
-	svc := NewLintService(v)
+	svc := NewLintService(v, nil)
 
 	report, err := svc.Run("links")
 	if err != nil {
@@ -100,7 +100,7 @@ func TestLintService_Links(t *testing.T) {
 
 func TestLintService_Orphans(t *testing.T) {
 	v := setupLintVault(t)
-	svc := NewLintService(v)
+	svc := NewLintService(v, nil)
 
 	report, err := svc.Run("orphans")
 	if err != nil {
@@ -114,7 +114,7 @@ func TestLintService_Orphans(t *testing.T) {
 
 func TestLintService_All(t *testing.T) {
 	v := setupLintVault(t)
-	svc := NewLintService(v)
+	svc := NewLintService(v, nil)
 
 	report, err := svc.Run("all")
 	if err != nil {
@@ -128,7 +128,7 @@ func TestLintService_All(t *testing.T) {
 
 func TestLintService_InvalidCheck(t *testing.T) {
 	v := setupLintVault(t)
-	svc := NewLintService(v)
+	svc := NewLintService(v, nil)
 
 	_, err := svc.Run("invalid")
 	if err == nil {
@@ -147,7 +147,7 @@ func TestLintService_CleanVault(t *testing.T) {
 	}
 
 	v := vault.New(dir)
-	svc := NewLintService(v)
+	svc := NewLintService(v, nil)
 
 	report, err := svc.Run("all")
 	if err != nil {

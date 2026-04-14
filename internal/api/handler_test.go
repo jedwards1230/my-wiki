@@ -135,66 +135,6 @@ func TestIngestGenerateEndpoint(t *testing.T) {
 	}
 }
 
-func TestLogIndexEndpoint(t *testing.T) {
-	mux, _ := setupTestMux(t)
-
-	r := httptest.NewRequest(http.MethodGet, "/api/log", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestLogIndexEndpointWithN(t *testing.T) {
-	mux, _ := setupTestMux(t)
-
-	r := httptest.NewRequest(http.MethodGet, "/api/log?n=1", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestLogDayEndpoint(t *testing.T) {
-	mux, _ := setupTestMux(t)
-
-	r := httptest.NewRequest(http.MethodGet, "/api/log/2026-04-06", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestLogDayEndpointNotFound(t *testing.T) {
-	mux, _ := setupTestMux(t)
-
-	r := httptest.NewRequest(http.MethodGet, "/api/log/2099-01-01", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", w.Code)
-	}
-}
-
-func TestLogLintEndpoint(t *testing.T) {
-	mux, _ := setupTestMux(t)
-
-	r := httptest.NewRequest(http.MethodGet, "/api/log/lint", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-}
-
 func TestActivityEndpoint(t *testing.T) {
 	mux, _ := setupTestMux(t)
 
@@ -705,7 +645,6 @@ func TestAuthReadRoutesRemainOpen(t *testing.T) {
 		{"/api/lint"},
 		{"/api/ingest"},
 		{"/api/directory"},
-		{"/api/log"},
 		{"/api/recent"},
 		{"/api/search?q=Alpha"},
 	}
@@ -739,7 +678,6 @@ func TestAuthReadsProtectsGetRoutes(t *testing.T) {
 		"/api/lint",
 		"/api/ingest",
 		"/api/directory",
-		"/api/log",
 		"/api/recent",
 		"/api/search?q=Alpha",
 	}
