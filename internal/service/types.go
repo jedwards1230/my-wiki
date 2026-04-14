@@ -45,7 +45,7 @@ type ActivityEntry struct {
 	Time       string   `json:"time"`
 	Summary    string   `json:"summary,omitempty"`
 	Touched    []string `json:"touched,omitempty"`
-	AutoLogged bool     `json:"autoLogged,omitempty"`
+	AutoLogged bool     `json:"auto_logged,omitempty"`
 }
 
 // PatchOp represents a single find-and-replace operation.
