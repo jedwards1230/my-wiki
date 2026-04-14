@@ -3,6 +3,7 @@ package vault
 import (
 	"bufio"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,16 +22,31 @@ type Vault struct {
 	ExcludedDirs []string
 }
 
+// Option configures a Vault.
+type Option func(*Vault)
+
+// WithStorage overrides the default FilesystemStorage backend.
+func WithStorage(s Storage) Option {
+	return func(v *Vault) { v.Storage = s }
+}
+
 // New creates a Vault rooted at dir. Each instance gets its own copy of
 // DefaultExcludedDirs so mutations on one Vault cannot affect others.
-func New(dir string) *Vault {
+// Without options, it uses FilesystemStorage.
+func New(dir string, opts ...Option) *Vault {
 	excl := make([]string, len(DefaultExcludedDirs))
 	copy(excl, DefaultExcludedDirs)
-	return &Vault{
+	v := &Vault{
 		Dir:          dir,
-		Storage:      NewFilesystemStorage(dir),
 		ExcludedDirs: excl,
 	}
+	for _, o := range opts {
+		o(v)
+	}
+	if v.Storage == nil {
+		v.Storage = NewFilesystemStorage(dir)
+	}
+	return v
 }
 
 // IsExcluded reports whether the given relative path matches one of the
@@ -50,19 +66,18 @@ func (v *Vault) IsExcluded(rel string) bool {
 // ExcludedDirs (default: .obsidian/, raw/, private/).
 func (v *Vault) FindWikiPages() ([]string, error) {
 	var pages []string
-	err := filepath.WalkDir(v.Dir, func(p string, d os.DirEntry, err error) error {
+	err := v.Storage.WalkDir("", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(v.Dir, p)
 		if d.IsDir() {
 			if v.IsExcluded(rel) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if filepath.Ext(p) == ".md" {
-			pages = append(pages, p)
+		if filepath.Ext(rel) == ".md" {
+			pages = append(pages, filepath.Join(v.Dir, rel))
 		}
 		return nil
 	})
@@ -74,17 +89,19 @@ func (v *Vault) FindWikiPages() ([]string, error) {
 
 // FindRawFiles returns all .md files in raw/.
 func (v *Vault) FindRawFiles() ([]string, error) {
-	rawDir := filepath.Join(v.Dir, "raw")
-	if _, err := os.Stat(rawDir); os.IsNotExist(err) {
-		return nil, nil
+	if _, err := v.Storage.Stat("raw"); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	var files []string
-	err := filepath.WalkDir(rawDir, func(p string, d os.DirEntry, err error) error {
+	err := v.Storage.WalkDir("raw", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && filepath.Ext(p) == ".md" {
-			files = append(files, p)
+		if !d.IsDir() && filepath.Ext(rel) == ".md" {
+			files = append(files, filepath.Join(v.Dir, rel))
 		}
 		return nil
 	})
@@ -322,21 +339,20 @@ var slugExcludedDirs = map[string]bool{
 // files can be wikilink targets.
 func (v *Vault) BuildSlugIndex() (map[string]bool, error) {
 	slugs := make(map[string]bool)
-	err := filepath.WalkDir(v.Dir, func(p string, d os.DirEntry, err error) error {
+	err := v.Storage.WalkDir("", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(v.Dir, p)
 		if d.IsDir() {
 			if slugExcludedDirs[rel] {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if filepath.Ext(p) != ".md" {
+		if filepath.Ext(rel) != ".md" {
 			return nil
 		}
-		base := strings.TrimSuffix(filepath.Base(p), ".md")
+		base := strings.TrimSuffix(filepath.Base(rel), ".md")
 		relNoExt := strings.TrimSuffix(rel, ".md")
 		slugs[strings.ToLower(base)] = true
 		slugs[strings.ToLower(relNoExt)] = true
