@@ -122,7 +122,10 @@ func TestWriteHandlerCreateNew(t *testing.T) {
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "new-page.md",
-		"content": "---\ntitle: New\ntags:\n  - test\ndate: 2026-01-15\n---\n\nContent.\n",
+		"title":   "New",
+		"tags":    []interface{}{"test"},
+		"date":    "2026-01-15",
+		"content": "Content.\n",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -133,9 +136,163 @@ func TestWriteHandlerCreateNew(t *testing.T) {
 		t.Errorf("expected wrote message, got:\n%s", text)
 	}
 
-	// Verify file exists
-	if _, err := os.Stat(filepath.Join(v.Dir, "new-page.md")); err != nil {
+	// Verify file exists and has assembled frontmatter
+	data, err := os.ReadFile(filepath.Join(v.Dir, "new-page.md"))
+	if err != nil {
 		t.Fatal("expected file to exist after write")
+	}
+	content := string(data)
+	if !strings.Contains(content, "title: New") {
+		t.Error("expected assembled frontmatter with title")
+	}
+	if !strings.Contains(content, "  - test") {
+		t.Error("expected assembled frontmatter with tags")
+	}
+	if !strings.Contains(content, "date: 2026-01-15") {
+		t.Error("expected assembled frontmatter with date")
+	}
+	if !strings.Contains(content, "Content.\n") {
+		t.Error("expected body content after frontmatter")
+	}
+}
+
+func TestWriteHandlerDateDefaultsToToday(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "no-date.md",
+		"title":   "No Date",
+		"tags":    []interface{}{"test"},
+		"content": "Body.\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.IsError {
+		t.Errorf("expected success, got error: %s", getTextContent(result))
+	}
+
+	data, _ := os.ReadFile(filepath.Join(v.Dir, "no-date.md"))
+	today := time.Now().Format("2006-01-02")
+	if !strings.Contains(string(data), "date: "+today) {
+		t.Errorf("expected date to default to today (%s), got:\n%s", today, string(data))
+	}
+}
+
+func TestWriteHandlerWithDescription(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":        "with-desc.md",
+		"title":       "Described",
+		"tags":        []interface{}{"test"},
+		"date":        "2026-03-01",
+		"description": "A short summary.",
+		"content":     "Body.\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.IsError {
+		t.Errorf("expected success, got error: %s", getTextContent(result))
+	}
+
+	data, _ := os.ReadFile(filepath.Join(v.Dir, "with-desc.md"))
+	if !strings.Contains(string(data), "description: A short summary.") {
+		t.Errorf("expected description in frontmatter, got:\n%s", string(data))
+	}
+}
+
+func TestWriteHandlerWithExtraFrontmatter(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":              "with-extra.md",
+		"title":             "Extra",
+		"tags":              []interface{}{"test"},
+		"date":              "2026-03-01",
+		"extra_frontmatter": "status: wip\nsource: https://example.com",
+		"content":           "Body.\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.IsError {
+		t.Errorf("expected success, got error: %s", getTextContent(result))
+	}
+
+	data, _ := os.ReadFile(filepath.Join(v.Dir, "with-extra.md"))
+	content := string(data)
+	if !strings.Contains(content, "status: wip") {
+		t.Errorf("expected extra_frontmatter 'status: wip', got:\n%s", content)
+	}
+	if !strings.Contains(content, "source: https://example.com") {
+		t.Errorf("expected extra_frontmatter 'source' line, got:\n%s", content)
+	}
+}
+
+func TestWriteHandlerAllOptionalFields(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":              "full-page.md",
+		"title":             "Full Page",
+		"tags":              []interface{}{"project", "go"},
+		"date":              "2026-04-14",
+		"description":       "Everything included.",
+		"extra_frontmatter": "status: active\npriority: high",
+		"content":           "All fields present.\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.IsError {
+		t.Errorf("expected success, got error: %s", getTextContent(result))
+	}
+
+	data, _ := os.ReadFile(filepath.Join(v.Dir, "full-page.md"))
+	content := string(data)
+
+	for _, want := range []string{
+		"title: Full Page",
+		"  - project",
+		"  - go",
+		"date: 2026-04-14",
+		"description: Everything included.",
+		"status: active",
+		"priority: high",
+		"All fields present.",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("expected %q in output, got:\n%s", want, content)
+		}
+	}
+
+	// Verify frontmatter structure: starts with --- and has closing ---
+	if !strings.HasPrefix(content, "---\n") {
+		t.Error("expected content to start with ---")
+	}
+	// After opening ---, there should be a closing ---
+	rest := content[4:]
+	closingIdx := strings.Index(rest, "---\n")
+	if closingIdx == -1 {
+		t.Error("expected closing --- in frontmatter")
 	}
 }
 
@@ -148,7 +305,10 @@ func TestWriteHandlerOverwriteExisting(t *testing.T) {
 	// Overwrite existing index.md — should succeed (no existence check)
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "index.md",
-		"content": "---\ntitle: Updated Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\nUpdated.\n",
+		"title":   "Updated Home",
+		"tags":    []interface{}{"root"},
+		"date":    "2026-01-01",
+		"content": "Updated.\n",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -173,6 +333,8 @@ func TestWriteHandlerEmptyContent(t *testing.T) {
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "empty.md",
+		"title":   "Empty",
+		"tags":    []interface{}{"test"},
 		"content": "",
 	}))
 	if err != nil {
@@ -191,7 +353,9 @@ func TestWriteHandlerEmptyPath(t *testing.T) {
 	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
-		"content": "---\ntitle: X\ntags:\n  - t\ndate: 2026-01-01\n---\n\nBody.\n",
+		"title":   "X",
+		"tags":    []interface{}{"t"},
+		"content": "Body.\n",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -199,6 +363,46 @@ func TestWriteHandlerEmptyPath(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected error result for empty path")
+	}
+}
+
+func TestWriteHandlerEmptyTitle(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "no-title.md",
+		"tags":    []interface{}{"t"},
+		"content": "Body.\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty title")
+	}
+}
+
+func TestWriteHandlerEmptyTags(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":    "no-tags.md",
+		"title":   "No Tags",
+		"content": "Body.\n",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error result for empty tags")
 	}
 }
 
@@ -211,7 +415,10 @@ func TestWriteHandlerLintWarnings(t *testing.T) {
 	// Create a page with a broken wikilink.
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "broken.md",
-		"content": "---\ntitle: Broken\ntags:\n  - test\ndate: 2026-01-15\n---\n\n[[nonexistent-target]]\n",
+		"title":   "Broken",
+		"tags":    []interface{}{"test"},
+		"date":    "2026-01-15",
+		"content": "[[nonexistent-target]]\n",
 	}))
 	if err != nil {
 		t.Fatal(err)

@@ -166,19 +166,58 @@ func readHandler(svc *service.PageService) server.ToolHandlerFunc {
 	}
 }
 
+// buildFrontmatter assembles YAML frontmatter from structured parameters.
+func buildFrontmatter(title string, tags []string, date, description, extraFrontmatter string) string {
+	var b strings.Builder
+	b.WriteString("---\n")
+	b.WriteString(fmt.Sprintf("title: %s\n", title))
+	b.WriteString("tags:\n")
+	for _, tag := range tags {
+		b.WriteString(fmt.Sprintf("  - %s\n", tag))
+	}
+	b.WriteString(fmt.Sprintf("date: %s\n", date))
+	if description != "" {
+		b.WriteString(fmt.Sprintf("description: %s\n", description))
+	}
+	if extraFrontmatter != "" {
+		b.WriteString(extraFrontmatter)
+		if !strings.HasSuffix(extraFrontmatter, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("---\n")
+	return b.String()
+}
+
 func writeHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
+		title := getStringArg(req, "title")
+		tags := getStringArrayArg(req, "tags")
 		content := getStringArg(req, "content")
+		date := getStringArg(req, "date")
+		description := getStringArg(req, "description")
+		extraFrontmatter := getStringArg(req, "extra_frontmatter")
 
 		if path == "" {
 			return mcp.NewToolResultError("path is required"), nil
 		}
+		if title == "" {
+			return mcp.NewToolResultError("title is required"), nil
+		}
+		if len(tags) == 0 {
+			return mcp.NewToolResultError("tags is required and must not be empty"), nil
+		}
 		if content == "" {
 			return mcp.NewToolResultError("content is required"), nil
 		}
+		if date == "" {
+			date = time.Now().Format("2006-01-02")
+		}
 
-		if err := svc.Write(path, content); err != nil {
+		fullContent := buildFrontmatter(title, tags, date, description, extraFrontmatter) + "\n" + content
+
+		if err := svc.Write(path, fullContent); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
