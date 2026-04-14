@@ -306,7 +306,7 @@ func moveHandler(s *server.MCPServer, svc *service.PageService, lint *service.Li
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
 			"action": "move", "source": source, "destination": destination,
 		})
-		// Lint the destination for broken links caused by the move.
+		// Lint the source for broken inbound links caused by removing the old path.
 		return resultWithLintWarnings(ctx, s, fmt.Sprintf("moved: %s -> %s", source, destination), lint.LintDelete(source)), nil
 	}
 }

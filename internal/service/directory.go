@@ -37,11 +37,17 @@ func (s *DirectoryService) List(prefix string) ([]DirectoryEntry, error) {
 		return nil, err
 	}
 
+	normalizedPrefix := filepath.ToSlash(strings.TrimRight(prefix, "/\\"))
+
 	var result []DirectoryEntry
 	for _, p := range pages {
-		rel, _ := filepath.Rel(s.vault.Dir, p)
+		rel, err := filepath.Rel(s.vault.Dir, p)
+		if err != nil {
+			return nil, fmt.Errorf("compute relative path for %q from %q: %w", p, s.vault.Dir, err)
+		}
+		rel = filepath.ToSlash(rel)
 
-		if prefix != "" && !strings.HasPrefix(rel, prefix) {
+		if normalizedPrefix != "" && rel != normalizedPrefix && !strings.HasPrefix(rel, normalizedPrefix+"/") {
 			continue
 		}
 
