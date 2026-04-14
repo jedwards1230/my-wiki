@@ -153,6 +153,64 @@ func TestFilesystemStorage_Root(t *testing.T) {
 	}
 }
 
+func TestFilesystemStorage_Rename(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFilesystemStorage(dir)
+
+	if err := s.WriteFile("old.txt", []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Rename("old.txt", "new.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Old file should be gone
+	if _, err := s.Stat("old.txt"); !os.IsNotExist(err) {
+		t.Error("expected old file to be removed")
+	}
+
+	// New file should exist with same content
+	got, err := s.ReadFile("new.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "data" {
+		t.Errorf("expected 'data', got %q", string(got))
+	}
+}
+
+func TestFilesystemStorage_RenameCreatesParentDirs(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFilesystemStorage(dir)
+
+	if err := s.WriteFile("src.txt", []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Rename("src.txt", "deep/nested/dst.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "deep", "nested", "dst.txt")); err != nil {
+		t.Fatal("expected nested destination to exist")
+	}
+}
+
+func TestFilesystemStorage_RenamePathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	s := NewFilesystemStorage(dir)
+
+	if err := s.WriteFile("src.txt", []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Rename("src.txt", "../../etc/evil.txt")
+	if err == nil {
+		t.Fatal("expected path traversal error")
+	}
+}
+
 func TestFilesystemStorage_OpenFile(t *testing.T) {
 	dir := t.TempDir()
 	s := NewFilesystemStorage(dir)

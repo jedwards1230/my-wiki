@@ -295,6 +295,87 @@ func TestPageService_WriteValidation(t *testing.T) {
 	}
 }
 
+func TestPageService_Move(t *testing.T) {
+	storage, dir := setupPagesVault(t)
+	svc := NewPageService(storage)
+
+	err := svc.Move("index", "index-moved")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Source should be gone
+	if _, err := os.Stat(filepath.Join(dir, "index.md")); !os.IsNotExist(err) {
+		t.Error("expected source to be removed")
+	}
+	// Destination should exist
+	if _, err := os.Stat(filepath.Join(dir, "index-moved.md")); err != nil {
+		t.Error("expected destination to exist")
+	}
+}
+
+func TestPageService_MoveSourceNotFound(t *testing.T) {
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
+
+	err := svc.Move("nonexistent", "somewhere")
+	if err == nil {
+		t.Fatal("expected error for nonexistent source")
+	}
+	if !strings.Contains(err.Error(), "source page not found") {
+		t.Errorf("expected 'source page not found', got: %s", err)
+	}
+}
+
+func TestPageService_MoveDestinationExists(t *testing.T) {
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
+
+	err := svc.Move("index", "meta/schema")
+	if err == nil {
+		t.Fatal("expected error for existing destination")
+	}
+	if !strings.Contains(err.Error(), "destination already exists") {
+		t.Errorf("expected 'destination already exists', got: %s", err)
+	}
+}
+
+func TestPageService_MoveToNestedPath(t *testing.T) {
+	storage, dir := setupPagesVault(t)
+	svc := NewPageService(storage)
+
+	err := svc.Move("index", "deep/nested/moved")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "deep", "nested", "moved.md")); err != nil {
+		t.Error("expected nested destination to exist")
+	}
+}
+
+func TestPageService_MoveMutationCallback(t *testing.T) {
+	storage, _ := setupPagesVault(t)
+	var got *MutationEvent
+	svc := NewPageService(storage, WithOnMutation(func(evt MutationEvent) {
+		got = &evt
+	}))
+
+	err := svc.Move("index", "index-moved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected mutation callback to fire")
+	}
+	if got.Kind != MutationMove {
+		t.Errorf("expected MutationMove, got %s", got.Kind)
+	}
+	if !strings.HasSuffix(got.Path, "index-moved.md") {
+		t.Errorf("expected path ending in index-moved.md, got %s", got.Path)
+	}
+}
+
 func TestPageService_PatchValidContent(t *testing.T) {
 	storage, _ := setupPagesVault(t)
 	svc := NewPageService(storage)
