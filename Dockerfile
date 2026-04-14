@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${BUILD_VERSION}" -o 
 FROM node:24-alpine
 
 # System packages + obsidian-headless (rarely changes — keep at top for caching)
-RUN apk add --no-cache git coreutils bash && \
+RUN apk add --no-cache git coreutils bash tzdata && \
     npm install -g obsidian-headless
 
 # Set up Quartz project (only re-runs when Quartz upstream changes)
