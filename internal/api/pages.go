@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/jedwards1230/home-wiki/internal/service"
@@ -132,8 +133,19 @@ func (h *Handler) handlePagePatch(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handlePageList(w http.ResponseWriter, r *http.Request) {
 	prefix := r.URL.Query().Get("prefix")
+	sortBy := r.URL.Query().Get("sort_by")
+	limit := 0
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			limit = n
+		}
+	}
 
-	pages, err := h.pages.List(prefix)
+	pages, err := h.pages.List(service.ListOptions{
+		Prefix: prefix,
+		SortBy: sortBy,
+		Limit:  limit,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

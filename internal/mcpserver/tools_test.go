@@ -937,7 +937,7 @@ func TestMoveHandlerEmptyDestination(t *testing.T) {
 
 // --- recent ---
 
-func TestRecentHandler(t *testing.T) {
+func TestListHandler_SortByModified(t *testing.T) {
 	v := setupTestVault(t)
 
 	now := time.Now()
@@ -949,10 +949,11 @@ func TestRecentHandler(t *testing.T) {
 	_ = os.Chtimes(filepath.Join(v.Dir, "about.md"), middle, middle)
 	_ = os.Chtimes(filepath.Join(v.Dir, "project", "alpha.md"), newest, newest)
 
-	svc := service.NewRecentService(v)
-	handler := recentHandler(svc)
+	pageSvc := service.NewPageService(v.Storage)
+	dirSvc := service.NewDirectoryService(v)
+	handler := listHandler(pageSvc, dirSvc)
 
-	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	result, err := handler(context.Background(), makeReq(map[string]any{"sort_by": "modified"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -977,7 +978,7 @@ func TestRecentHandler(t *testing.T) {
 	}
 
 	// Test with limit
-	result, err = handler(context.Background(), makeReq(map[string]any{"limit": float64(2)}))
+	result, err = handler(context.Background(), makeReq(map[string]any{"sort_by": "modified", "limit": float64(2)}))
 	if err != nil {
 		t.Fatal(err)
 	}
