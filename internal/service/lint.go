@@ -182,6 +182,155 @@ func (s *LintService) checkLinks(report *LintReport) {
 	}
 }
 
+// LintPage runs scoped lint checks on a single page after a create or edit
+// mutation. It checks frontmatter completeness and outbound wikilink validity.
+// Returns only issues introduced by this specific page — not vault-wide issues.
+func (s *LintService) LintPage(relPath string) []LintIssue {
+	if !strings.HasSuffix(relPath, ".md") {
+		relPath += ".md"
+	}
+
+	var issues []LintIssue
+	issues = append(issues, s.lintPageFrontmatter(relPath)...)
+	issues = append(issues, s.lintPageLinks(relPath)...)
+	return issues
+}
+
+// LintDelete checks for newly broken inbound links after a page deletion.
+// It identifies pages that now reference a slug that no longer resolves.
+func (s *LintService) LintDelete(relPath string) []LintIssue {
+	if !strings.HasSuffix(relPath, ".md") {
+		relPath += ".md"
+	}
+
+	// Compute slugs the deleted page contributed.
+	base := strings.TrimSuffix(filepath.Base(relPath), ".md")
+	relNoExt := strings.TrimSuffix(relPath, ".md")
+	deletedSlugs := map[string]bool{
+		strings.ToLower(base):     true,
+		strings.ToLower(relNoExt): true,
+	}
+
+	// Build current slug index (post-deletion — the file is already removed).
+	slugs, err := s.vault.BuildSlugIndex()
+	if err != nil {
+		return nil
+	}
+
+	// If the deleted slugs still resolve (another page has the same basename),
+	// no links are broken.
+	anyOrphaned := false
+	for slug := range deletedSlugs {
+		if !slugs[slug] {
+			anyOrphaned = true
+			break
+		}
+	}
+	if !anyOrphaned {
+		return nil
+	}
+
+	// Walk wiki pages to find links that now point to nothing.
+	pages, err := s.vault.FindWikiPages()
+	if err != nil {
+		return nil
+	}
+
+	var issues []LintIssue
+	for _, page := range pages {
+		rel, _ := filepath.Rel(s.vault.Dir, page)
+		links, err := vault.ExtractWikilinks(page)
+		if err != nil {
+			continue
+		}
+		for _, link := range links {
+			target := strings.ToLower(link)
+			if deletedSlugs[target] && !slugs[target] {
+				issues = append(issues, LintIssue{
+					File: rel, Check: "links", Level: "WARN",
+					Message: fmt.Sprintf("broken link [[%s]] (target was deleted)", link),
+				})
+			}
+		}
+	}
+	return issues
+}
+
+// lintPageFrontmatter checks frontmatter for a single page file.
+func (s *LintService) lintPageFrontmatter(relPath string) []LintIssue {
+	absPath := filepath.Join(s.vault.Dir, relPath)
+	isRaw := strings.HasPrefix(relPath, "raw/") || strings.HasPrefix(relPath, "raw\\")
+
+	fm, err := vault.ParseFrontmatter(absPath)
+	if err != nil {
+		check := "frontmatter"
+		if isRaw {
+			check = "raw"
+		}
+		return []LintIssue{{File: relPath, Check: check, Level: "FAIL", Message: err.Error()}}
+	}
+	if fm == nil {
+		check := "frontmatter"
+		if isRaw {
+			check = "raw"
+		}
+		return []LintIssue{{File: relPath, Check: check, Level: "FAIL", Message: "missing frontmatter"}}
+	}
+
+	var required []string
+	check := "frontmatter"
+	if isRaw {
+		required = []string{"title", "source", "date-added"}
+		check = "raw"
+	} else {
+		required = []string{"title", "tags", "date"}
+	}
+
+	var missing []string
+	for _, key := range required {
+		if _, ok := fm[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		return []LintIssue{{
+			File: relPath, Check: check, Level: "WARN",
+			Message: "missing: " + strings.Join(missing, " "),
+		}}
+	}
+	return nil
+}
+
+// lintPageLinks checks outbound wikilinks for a single page.
+func (s *LintService) lintPageLinks(relPath string) []LintIssue {
+	if strings.HasPrefix(relPath, "raw/") || strings.HasPrefix(relPath, "raw\\") {
+		return nil
+	}
+
+	absPath := filepath.Join(s.vault.Dir, relPath)
+	slugs, err := s.vault.BuildSlugIndex()
+	if err != nil {
+		return nil
+	}
+
+	links, err := vault.ExtractWikilinks(absPath)
+	if err != nil {
+		return nil
+	}
+
+	var issues []LintIssue
+	for _, link := range links {
+		target := strings.ToLower(link)
+		if !slugs[target] {
+			issues = append(issues, LintIssue{
+				File: relPath, Check: "links", Level: "WARN",
+				Message: fmt.Sprintf("broken link [[%s]]", link),
+			})
+		}
+	}
+	return issues
+}
+
 func (s *LintService) checkOrphans(report *LintReport) {
 	pages, err := s.vault.FindWikiPages()
 	if err != nil {

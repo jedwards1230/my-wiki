@@ -240,7 +240,7 @@ func registerTools(
 				mcp.Description("Full markdown content. Should include YAML frontmatter with title, tags, and date fields."),
 			),
 		),
-		createPageHandler(s, pages, vaultDir, notifier),
+		createPageHandler(s, pages, lint, vaultDir, notifier),
 	)
 
 	s.AddTool(
@@ -260,7 +260,7 @@ func registerTools(
 				mcp.Description("Complete replacement markdown content including YAML frontmatter."),
 			),
 		),
-		updatePageHandler(s, pages, vaultDir, notifier),
+		updatePageHandler(s, pages, lint, vaultDir, notifier),
 	)
 
 	s.AddTool(
@@ -276,7 +276,7 @@ func registerTools(
 				mcp.Description("Relative path to the page to delete (e.g., project/old-page or project/old-page.md). The .md extension is added if omitted."),
 			),
 		),
-		deletePageHandler(s, pages, vaultDir, notifier),
+		deletePageHandler(s, pages, lint, vaultDir, notifier),
 	)
 
 	s.AddTool(
@@ -304,7 +304,7 @@ func registerTools(
 				}),
 			),
 		),
-		patchPageHandler(s, pages, vaultDir, notifier),
+		patchPageHandler(s, pages, lint, vaultDir, notifier),
 	)
 
 	s.AddTool(
