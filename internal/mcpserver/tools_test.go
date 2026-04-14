@@ -176,7 +176,10 @@ func TestWriteHandlerDateDefaultsToToday(t *testing.T) {
 		t.Errorf("expected success, got error: %s", getTextContent(result))
 	}
 
-	data, _ := os.ReadFile(filepath.Join(v.Dir, "no-date.md"))
+	data, err := os.ReadFile(filepath.Join(v.Dir, "no-date.md"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
 	today := time.Now().Format("2006-01-02")
 	if !strings.Contains(string(data), "date: "+today) {
 		t.Errorf("expected date to default to today (%s), got:\n%s", today, string(data))
@@ -205,7 +208,10 @@ func TestWriteHandlerWithDescription(t *testing.T) {
 		t.Errorf("expected success, got error: %s", getTextContent(result))
 	}
 
-	data, _ := os.ReadFile(filepath.Join(v.Dir, "with-desc.md"))
+	data, err := os.ReadFile(filepath.Join(v.Dir, "with-desc.md"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
 	if !strings.Contains(string(data), "description: A short summary.") {
 		t.Errorf("expected description in frontmatter, got:\n%s", string(data))
 	}
@@ -233,7 +239,10 @@ func TestWriteHandlerWithExtraFrontmatter(t *testing.T) {
 		t.Errorf("expected success, got error: %s", getTextContent(result))
 	}
 
-	data, _ := os.ReadFile(filepath.Join(v.Dir, "with-extra.md"))
+	data, err := os.ReadFile(filepath.Join(v.Dir, "with-extra.md"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
 	content := string(data)
 	if !strings.Contains(content, "status: wip") {
 		t.Errorf("expected extra_frontmatter 'status: wip', got:\n%s", content)
@@ -266,7 +275,10 @@ func TestWriteHandlerAllOptionalFields(t *testing.T) {
 		t.Errorf("expected success, got error: %s", getTextContent(result))
 	}
 
-	data, _ := os.ReadFile(filepath.Join(v.Dir, "full-page.md"))
+	data, err := os.ReadFile(filepath.Join(v.Dir, "full-page.md"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
 	content := string(data)
 
 	for _, want := range []string{
@@ -286,12 +298,11 @@ func TestWriteHandlerAllOptionalFields(t *testing.T) {
 
 	// Verify frontmatter structure: starts with --- and has closing ---
 	if !strings.HasPrefix(content, "---\n") {
-		t.Error("expected content to start with ---")
+		t.Fatal("expected content to start with ---")
+		return
 	}
-	// After opening ---, there should be a closing ---
 	rest := content[4:]
-	closingIdx := strings.Index(rest, "---\n")
-	if closingIdx == -1 {
+	if strings.Index(rest, "---\n") == -1 {
 		t.Error("expected closing --- in frontmatter")
 	}
 }
@@ -319,7 +330,10 @@ func TestWriteHandlerOverwriteExisting(t *testing.T) {
 	}
 
 	// Verify content was updated
-	data, _ := os.ReadFile(filepath.Join(v.Dir, "index.md"))
+	data, err := os.ReadFile(filepath.Join(v.Dir, "index.md"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
 	if !strings.Contains(string(data), "Updated Home") {
 		t.Error("expected content to be overwritten")
 	}
@@ -403,6 +417,48 @@ func TestWriteHandlerEmptyTags(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected error result for empty tags")
+	}
+}
+
+func TestWriteHandlerExtraFrontmatterDelimiter(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":              "bad-extra.md",
+		"title":             "Bad",
+		"tags":              []interface{}{"test"},
+		"content":           "Body.\n",
+		"extra_frontmatter": "status: wip\n---\ninjected: true",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error when extra_frontmatter contains ---")
+	}
+}
+
+func TestWriteHandlerExtraFrontmatterReservedKey(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path":              "bad-extra2.md",
+		"title":             "Bad",
+		"tags":              []interface{}{"test"},
+		"content":           "Body.\n",
+		"extra_frontmatter": "title: Override",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error when extra_frontmatter redefines reserved key")
 	}
 }
 
