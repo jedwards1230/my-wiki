@@ -622,3 +622,83 @@ func TestBuildSlugIndex(t *testing.T) {
 		}
 	}
 }
+
+func TestWithStorage_MemStorage(t *testing.T) {
+	mem := NewMemStorage()
+	mem.AddFile("index.md", "---\ntitle: Home\n---\nWelcome.\n")
+	mem.AddFile("notes/hello.md", "---\ntitle: Hello\n---\nHello world.\n")
+	mem.AddFile("raw/source.md", "---\ntitle: Source\n---\nRaw content.\n")
+	mem.AddFile("private/secret.md", "---\ntitle: Secret\n---\nPrivate.\n")
+	mem.AddFile(".obsidian/config.json", "{}")
+
+	v := New("/fake/vault", WithStorage(mem))
+
+	t.Run("FindWikiPages", func(t *testing.T) {
+		pages, err := v.FindWikiPages()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var rels []string
+		for _, p := range pages {
+			rel, _ := filepath.Rel("/fake/vault", p)
+			rels = append(rels, rel)
+		}
+		sort.Strings(rels)
+
+		expected := []string{"index.md", "notes/hello.md"}
+		if len(rels) != len(expected) {
+			t.Fatalf("expected %d pages, got %d: %v", len(expected), len(rels), rels)
+		}
+		for i, exp := range expected {
+			if rels[i] != exp {
+				t.Errorf("page %d: expected %s, got %s", i, exp, rels[i])
+			}
+		}
+	})
+
+	t.Run("FindRawFiles", func(t *testing.T) {
+		files, err := v.FindRawFiles()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files) != 1 {
+			t.Fatalf("expected 1 raw file, got %d: %v", len(files), files)
+		}
+		rel, _ := filepath.Rel("/fake/vault", files[0])
+		if rel != "raw/source.md" {
+			t.Errorf("expected raw/source.md, got %s", rel)
+		}
+	})
+
+	t.Run("BuildSlugIndex", func(t *testing.T) {
+		slugs, err := v.BuildSlugIndex()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, slug := range []string{"index", "hello", "notes/hello", "source", "raw/source"} {
+			if !slugs[slug] {
+				t.Errorf("missing slug %q", slug)
+			}
+		}
+		// private and .obsidian should be excluded
+		if slugs["secret"] {
+			t.Error("unexpected slug 'secret' (should be excluded)")
+		}
+	})
+
+	t.Run("FindRawFiles_NoRawDir", func(t *testing.T) {
+		emptyMem := NewMemStorage()
+		emptyMem.AddFile("index.md", "---\ntitle: Home\n---\n")
+		emptyV := New("/fake", WithStorage(emptyMem))
+
+		files, err := emptyV.FindRawFiles()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files) != 0 {
+			t.Errorf("expected no raw files, got %d", len(files))
+		}
+	})
+}
