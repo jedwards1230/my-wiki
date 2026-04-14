@@ -43,9 +43,9 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 	lint := service.NewLintService(v)
 	ingest := service.NewIngestService(v)
 	directory := service.NewDirectoryService(v)
-	logSvc := service.NewLogService(v.Dir)
-	activity := service.NewActivityService(v.Dir)
-	pages := service.NewPageService(v.Dir)
+	logSvc := service.NewLogService(v.Storage)
+	activity := service.NewActivityService(v.Storage)
+	pages := service.NewPageService(v.Storage)
 	recent := service.NewRecentService(v)
 
 	registerResources(s, pages)

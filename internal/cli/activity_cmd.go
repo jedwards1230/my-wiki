@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jedwards1230/home-wiki/internal/service"
+	"github.com/jedwards1230/home-wiki/internal/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +40,7 @@ func runActivity(cmd *cobra.Command, args []string) error {
 		timeStr = time.Now().Format("15:04")
 	}
 
-	svc := service.NewActivityService(vaultDir)
+	svc := service.NewActivityService(vault.NewFilesystemStorage(vaultDir))
 
 	entry := service.ActivityEntry{
 		Type:    actType,

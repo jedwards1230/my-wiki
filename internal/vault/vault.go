@@ -11,12 +11,16 @@ import (
 
 // Vault provides operations on a wiki vault directory.
 type Vault struct {
-	Dir string
+	Dir     string
+	Storage Storage
 }
 
 // New creates a Vault rooted at dir.
 func New(dir string) *Vault {
-	return &Vault{Dir: dir}
+	return &Vault{
+		Dir:     dir,
+		Storage: NewFilesystemStorage(dir),
+	}
 }
 
 // FindWikiPages returns all .md files excluding raw/, private/, .obsidian/.

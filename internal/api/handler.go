@@ -62,9 +62,9 @@ func NewHandler(v *vault.Vault, searchSvc *service.SearchService, opts ...Handle
 		lint:      service.NewLintService(v),
 		ingest:    service.NewIngestService(v),
 		directory: service.NewDirectoryService(v),
-		log:       service.NewLogService(v.Dir),
-		activity:  service.NewActivityService(v.Dir),
-		pages:     service.NewPageService(v.Dir),
+		log:       service.NewLogService(v.Storage),
+		activity:  service.NewActivityService(v.Storage),
+		pages:     service.NewPageService(v.Storage),
 		recent:    service.NewRecentService(v),
 		search:    searchSvc,
 	}
