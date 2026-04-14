@@ -54,6 +54,11 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 	}
 
 	report.Total = len(report.Issues)
+	for _, issue := range report.Issues {
+		if issue.Level != "INFO" {
+			report.Errors++
+		}
+	}
 	return report, nil
 }
 
@@ -176,8 +181,11 @@ func (s *LintService) checkRawFrontmatter(report *LintReport) {
 	}
 }
 
+// minPagesPerTag is the minimum page count before a tag is considered established.
+const minPagesPerTag = 3
+
 func (s *LintService) checkTags(report *LintReport, required bool) {
-	allowed, err := s.tagSvc.AllowedTags()
+	taxonomy, err := s.tagSvc.ParseTaxonomy()
 	if err != nil {
 		level := "WARN"
 		message := fmt.Sprintf("tags check skipped: %v", err)
@@ -191,6 +199,15 @@ func (s *LintService) checkTags(report *LintReport, required bool) {
 		return
 	}
 
+	// Build allow-set from taxonomy.
+	allowed := make(map[string]bool)
+	for _, e := range taxonomy {
+		allowed[e.Domain] = true
+		for _, st := range e.SubTags {
+			allowed[st] = true
+		}
+	}
+
 	pages, err := s.vault.FindWikiPages()
 	if err != nil {
 		report.Issues = append(report.Issues, LintIssue{
@@ -199,6 +216,8 @@ func (s *LintService) checkTags(report *LintReport, required bool) {
 		return
 	}
 
+	// Single pass: validate per-page tags and count usage (skipping generated pages).
+	tagCounts := make(map[string]int)
 	for _, page := range pages {
 		rel, _ := filepath.Rel(s.vault.Dir, page)
 		fm, fmErr := vault.ParseFrontmatter(page)
@@ -219,8 +238,9 @@ func (s *LintService) checkTags(report *LintReport, required bool) {
 			if tag == "" {
 				continue
 			}
+			tagCounts[tag]++
+
 			if !allowed[tag] {
-				// Check if the domain prefix is valid (allow new sub-tags under known domains).
 				domain := tag
 				if idx := strings.IndexByte(tag, '/'); idx >= 0 {
 					domain = tag[:idx]
@@ -237,6 +257,31 @@ func (s *LintService) checkTags(report *LintReport, required bool) {
 					})
 				}
 			}
+		}
+	}
+
+	// Taxonomy-level: flag unused domains and under-threshold tags.
+	for _, e := range taxonomy {
+		domainTotal := tagCounts[e.Domain]
+		for _, st := range e.SubTags {
+			domainTotal += tagCounts[st]
+		}
+		if domainTotal == 0 {
+			report.Issues = append(report.Issues, LintIssue{
+				Check: "tags", Level: "INFO",
+				Message: fmt.Sprintf("taxonomy domain %q has 0 pages — consider removing or populating", e.Domain),
+			})
+		}
+	}
+	for tag, count := range tagCounts {
+		if !allowed[tag] {
+			continue // already reported per-page above
+		}
+		if count < minPagesPerTag {
+			report.Issues = append(report.Issues, LintIssue{
+				Check: "tags", Level: "INFO",
+				Message: fmt.Sprintf("tag %q used on %d page(s) (schema recommends %d+ before adding a tag)", tag, count, minPagesPerTag),
+			})
 		}
 	}
 }

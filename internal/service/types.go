@@ -4,7 +4,7 @@ package service
 type LintIssue struct {
 	File    string `json:"file"`
 	Check   string `json:"check"`
-	Level   string `json:"level"` // "FAIL", "WARN", "ERROR"
+	Level   string `json:"level"` // "FAIL", "WARN", "ERROR", "INFO"
 	Message string `json:"message"`
 }
 
@@ -12,6 +12,7 @@ type LintIssue struct {
 type LintReport struct {
 	Issues []LintIssue `json:"issues"`
 	Total  int         `json:"total"`
+	Errors int         `json:"errors"` // count of FAIL + WARN + ERROR (excludes INFO)
 }
 
 // RawFileInfo describes an unprocessed raw source file.
