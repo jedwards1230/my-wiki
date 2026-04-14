@@ -290,7 +290,7 @@ func registerTools(
 	s.AddTool(
 		mcp.NewTool("lint",
 			mcp.WithTitleAnnotation("Lint Vault"),
-			mcp.WithDescription("Run vault-wide health checks. Returns issues grouped by check.\n\nChecks:\n- frontmatter: required fields (title, tags, date) on wiki pages; skips generated pages\n- raw: required fields (title, source, date-added) on raw/ source files\n- tags: validates page tags against the taxonomy in meta/schema\n- links: broken [[wikilinks]] — deduplicates by target, lists all source files per missing page\n- orphans: pages with no inbound wikilinks\n- size: pages exceeding 1000 words\n- log: hash mismatches between meta/log.md index and daily activity files"),
+			mcp.WithDescription("Run vault-wide mechanical health checks. Returns issues grouped by check. These are structural/metadata checks only — content-level issues (stale facts, contradictions, outdated references) require manual review or the semantic lint layer.\n\nChecks:\n- frontmatter: required fields (title, tags, date) on wiki pages; skips generated pages\n- raw: required fields (title, source, date-added) on raw/ source files\n- tags: validates page tags against the taxonomy in meta/schema; flags unused domains and under-threshold tags\n- links: broken [[wikilinks]] — deduplicates by target, lists all source files per missing page\n- orphans: pages with no inbound wikilinks\n- size: pages exceeding 1000 words\n- log: hash mismatches between meta/log.md index and daily activity files"),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),

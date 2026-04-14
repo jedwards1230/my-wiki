@@ -179,12 +179,20 @@ func tagsHandler(svc *service.TagService) server.ToolHandlerFunc {
 }
 
 func whoamiHandler(vaultDir string) server.ToolHandlerFunc {
-	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		info := map[string]string{
+	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		info := map[string]any{
 			"name":       "home-wiki",
 			"version":    version.Value,
 			"vault_dir":  filepath.Base(vaultDir),
 			"go_version": runtime.Version(),
+		}
+		if u := middleware.UserFromContext(ctx); u != nil {
+			info["user"] = map[string]any{
+				"username": u.Username,
+				"email":    u.Email,
+				"name":     u.Name,
+				"groups":   u.Groups,
+			}
 		}
 		return mcp.NewToolResultText(toJSON(info)), nil
 	}

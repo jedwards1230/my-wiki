@@ -450,21 +450,28 @@ func TestLintService_Tags(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// bad-tag.md should have unknown domain, new-sub.md should warn about missing sub-tag
-	if report.Total != 2 {
-		t.Errorf("expected 2 tag issues, got %d", report.Total)
-		for _, issue := range report.Issues {
-			t.Logf("  %s: %s", issue.File, issue.Message)
-		}
-	}
-
+	// Expect WARN for bad-tag.md (unknown domain) and new-sub.md (missing sub-tag),
+	// plus INFO issues for under-threshold tags.
+	var warns, infos int
 	for _, issue := range report.Issues {
+		switch issue.Level {
+		case "WARN":
+			warns++
+		case "INFO":
+			infos++
+		}
 		if issue.File == "bad-tag.md" && !strings.Contains(issue.Message, "unknown domain") {
 			t.Errorf("expected 'unknown domain' for bad-tag.md, got: %s", issue.Message)
 		}
 		if issue.File == "new-sub.md" && !strings.Contains(issue.Message, "add sub-tag to schema") {
 			t.Errorf("expected 'add sub-tag' for new-sub.md, got: %s", issue.Message)
 		}
+	}
+	if warns != 2 {
+		t.Errorf("expected 2 WARN issues, got %d", warns)
+	}
+	if infos == 0 {
+		t.Error("expected INFO issues for under-threshold tags")
 	}
 }
 

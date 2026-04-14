@@ -176,8 +176,11 @@ func (s *LintService) checkRawFrontmatter(report *LintReport) {
 	}
 }
 
+// minPagesPerTag is the minimum page count before a tag is considered established.
+const minPagesPerTag = 3
+
 func (s *LintService) checkTags(report *LintReport, required bool) {
-	allowed, err := s.tagSvc.AllowedTags()
+	tagReport, err := s.tagSvc.List()
 	if err != nil {
 		level := "WARN"
 		message := fmt.Sprintf("tags check skipped: %v", err)
@@ -191,6 +194,15 @@ func (s *LintService) checkTags(report *LintReport, required bool) {
 		return
 	}
 
+	// Build allow-set from taxonomy.
+	allowed := make(map[string]bool)
+	for _, e := range tagReport.Taxonomy {
+		allowed[e.Domain] = true
+		for _, st := range e.SubTags {
+			allowed[st] = true
+		}
+	}
+
 	pages, err := s.vault.FindWikiPages()
 	if err != nil {
 		report.Issues = append(report.Issues, LintIssue{
@@ -199,6 +211,7 @@ func (s *LintService) checkTags(report *LintReport, required bool) {
 		return
 	}
 
+	// Per-page: check tags against taxonomy.
 	for _, page := range pages {
 		rel, _ := filepath.Rel(s.vault.Dir, page)
 		fm, fmErr := vault.ParseFrontmatter(page)
@@ -237,6 +250,27 @@ func (s *LintService) checkTags(report *LintReport, required bool) {
 					})
 				}
 			}
+		}
+	}
+
+	// Taxonomy-level: flag unused domains and under-threshold tags.
+	for _, e := range tagReport.Taxonomy {
+		if e.PageCount == 0 {
+			report.Issues = append(report.Issues, LintIssue{
+				Check: "tags", Level: "INFO",
+				Message: fmt.Sprintf("taxonomy domain %q has 0 pages — consider removing or populating", e.Domain),
+			})
+		}
+	}
+	for _, u := range tagReport.Used {
+		if !allowed[u.Tag] {
+			continue // already reported per-page above
+		}
+		if u.Count < minPagesPerTag {
+			report.Issues = append(report.Issues, LintIssue{
+				Check: "tags", Level: "INFO",
+				Message: fmt.Sprintf("tag %q used on %d page(s) (schema recommends %d+ before adding a tag)", u.Tag, u.Count, minPagesPerTag),
+			})
 		}
 	}
 }

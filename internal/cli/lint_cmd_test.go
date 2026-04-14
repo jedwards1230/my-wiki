@@ -118,8 +118,10 @@ func TestLintAll_Clean(t *testing.T) {
 		"<!-- end:tag-taxonomy -->\n"
 
 	files := map[string]string{
-		"index.md":       "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[about]] and [[meta/schema]]\n",
-		"about.md":       "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[index]] and [[meta/schema]]\n",
+		"index.md":       "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[about]] and [[meta/schema]] and [[page-a]] and [[page-b]]\n",
+		"about.md":       "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[index]] and [[meta/schema]] and [[page-a]] and [[page-b]]\n",
+		"page-a.md":      "---\ntitle: Page A\ntags:\n  - root\n  - info\n  - meta\ndate: 2026-01-01\n---\n\n[[index]] and [[about]] and [[page-b]]\n",
+		"page-b.md":      "---\ntitle: Page B\ntags:\n  - root\n  - info\n  - meta\ndate: 2026-01-01\n---\n\n[[index]] and [[about]] and [[page-a]]\n",
 		"meta/schema.md": schema,
 	}
 	for name, content := range files {
