@@ -158,8 +158,7 @@ func (s *PageService) List(prefix string) ([]PageInfo, error) {
 			return err
 		}
 		if d.IsDir() {
-			base := filepath.Base(rel)
-			switch base {
+			switch rel {
 			case "raw", "private", ".obsidian":
 				return filepath.SkipDir
 			}
@@ -171,10 +170,13 @@ func (s *PageService) List(prefix string) ([]PageInfo, error) {
 
 		info := PageInfo{Path: rel}
 
-		// Try to get title from frontmatter
-		data, readErr := s.storage.ReadFile(rel)
+		// Try to get title from frontmatter (read only a small prefix)
+		f, readErr := s.storage.OpenFile(rel, os.O_RDONLY, 0)
 		if readErr == nil {
-			if title := extractTitle(data); title != "" {
+			buf := make([]byte, 1024)
+			n, _ := f.Read(buf)
+			f.Close()
+			if title := extractTitle(buf[:n]); title != "" {
 				info.Title = title
 				info.HasMeta = true
 			}
