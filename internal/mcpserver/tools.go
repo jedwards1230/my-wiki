@@ -166,19 +166,92 @@ func readHandler(svc *service.PageService) server.ToolHandlerFunc {
 	}
 }
 
+// buildFrontmatter assembles YAML frontmatter from structured parameters.
+// sanitizeScalar strips newlines and trims whitespace to ensure a value
+// stays on a single YAML line.
+func sanitizeScalar(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", "")
+	return strings.TrimSpace(s)
+}
+
+// reservedFrontmatterKeys are keys managed by structured params and must
+// not appear in extra_frontmatter.
+var reservedFrontmatterKeys = []string{"title", "tags", "date", "description"}
+
+// validateExtraFrontmatter checks that extra_frontmatter does not contain
+// a YAML document delimiter or override reserved keys.
+func validateExtraFrontmatter(extra string) error {
+	for _, line := range strings.Split(extra, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "---" {
+			return fmt.Errorf("extra_frontmatter must not contain YAML delimiter '---'")
+		}
+		for _, key := range reservedFrontmatterKeys {
+			if strings.HasPrefix(trimmed, key+":") {
+				return fmt.Errorf("extra_frontmatter must not redefine reserved key %q (use the dedicated parameter instead)", key)
+			}
+		}
+	}
+	return nil
+}
+
+func buildFrontmatter(title string, tags []string, date, description, extraFrontmatter string) string {
+	var b strings.Builder
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "title: %s\n", sanitizeScalar(title))
+	b.WriteString("tags:\n")
+	for _, tag := range tags {
+		fmt.Fprintf(&b, "  - %s\n", sanitizeScalar(tag))
+	}
+	fmt.Fprintf(&b, "date: %s\n", sanitizeScalar(date))
+	if description != "" {
+		fmt.Fprintf(&b, "description: %s\n", sanitizeScalar(description))
+	}
+	if extraFrontmatter != "" {
+		b.WriteString(extraFrontmatter)
+		if !strings.HasSuffix(extraFrontmatter, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("---\n")
+	return b.String()
+}
+
 func writeHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
+		title := getStringArg(req, "title")
+		tags := getStringArrayArg(req, "tags")
 		content := getStringArg(req, "content")
+		date := getStringArg(req, "date")
+		description := getStringArg(req, "description")
+		extraFrontmatter := getStringArg(req, "extra_frontmatter")
 
 		if path == "" {
 			return mcp.NewToolResultError("path is required"), nil
 		}
+		if title == "" {
+			return mcp.NewToolResultError("title is required"), nil
+		}
+		if len(tags) == 0 {
+			return mcp.NewToolResultError("tags is required and must not be empty"), nil
+		}
 		if content == "" {
 			return mcp.NewToolResultError("content is required"), nil
 		}
+		if date == "" {
+			date = time.Now().Format("2006-01-02")
+		}
+		if extraFrontmatter != "" {
+			if err := validateExtraFrontmatter(extraFrontmatter); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		}
 
-		if err := svc.Write(path, content); err != nil {
+		fullContent := buildFrontmatter(title, tags, date, description, extraFrontmatter) + "\n" + content
+
+		if err := svc.Write(path, fullContent); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
