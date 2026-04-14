@@ -47,15 +47,20 @@ func runLint(cmd *cobra.Command, args []string) error {
 		if report.Total == 0 {
 			fmt.Println("All checks passed.")
 		} else {
-			fmt.Printf("%d issue(s) found.\n", report.Total)
+			fmt.Printf("%d issue(s) found", report.Total)
+			if report.Errors < report.Total {
+				fmt.Printf(" (%d errors, %d info)", report.Errors, report.Total-report.Errors)
+			}
+			fmt.Println(".")
 		}
 	} else {
 		printLintSection(check, report, check)
 	}
 
-	if report.Total > 0 {
+	// Only fail on actual errors (FAIL/WARN/ERROR), not INFO-level findings.
+	if report.Errors > 0 {
 		cmd.SilenceErrors = true
-		return fmt.Errorf("%d issue(s) found", report.Total)
+		return fmt.Errorf("%d issue(s) found", report.Errors)
 	}
 	return nil
 }
