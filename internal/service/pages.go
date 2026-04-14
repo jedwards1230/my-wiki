@@ -249,6 +249,35 @@ func (s *PageService) List(prefix string) ([]PageInfo, error) {
 	return pages, nil
 }
 
+// Move renames/relocates a wiki page from src to dst.
+// Both paths have .md ensured. Fails if source does not exist or destination already exists.
+func (s *PageService) Move(src, dst string) error {
+	src = ensureMD(src)
+	dst = ensureMD(dst)
+
+	if _, err := s.storage.Stat(src); os.IsNotExist(err) {
+		return fmt.Errorf("source page not found: %s", src)
+	} else if err != nil {
+		return err
+	}
+
+	if _, err := s.storage.Stat(dst); err == nil {
+		return fmt.Errorf("destination already exists: %s", dst)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := s.storage.Rename(src, dst); err != nil {
+		return err
+	}
+
+	if s.onMutation != nil {
+		s.onMutation(MutationEvent{Kind: MutationMove, Path: filepath.ToSlash(dst)})
+	}
+
+	return nil
+}
+
 // Patch applies a series of find-and-replace operations to an existing page.
 // If any find string is not found, it returns an error without writing.
 func (s *PageService) Patch(relPath string, ops []PatchOp) (string, error) {

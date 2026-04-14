@@ -7,6 +7,7 @@ const (
 	MutationCreate MutationKind = "create"
 	MutationEdit   MutationKind = "edit"
 	MutationDelete MutationKind = "delete"
+	MutationMove   MutationKind = "move"
 )
 
 // MutationEvent is passed to the OnMutation callback after a successful page mutation.

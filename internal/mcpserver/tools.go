@@ -93,6 +93,16 @@ func getIntArg(req mcp.CallToolRequest, key string) int {
 	return 0
 }
 
+func getBoolArg(req mcp.CallToolRequest, key string) bool {
+	args := req.GetArguments()
+	if v, ok := args[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
 func getStringArrayArg(req mcp.CallToolRequest, key string) []string {
 	args := req.GetArguments()
 	v, ok := args[key]
@@ -138,71 +148,182 @@ func toJSON(v any) string {
 	return string(data)
 }
 
-func lintHandler(svc *service.LintService) server.ToolHandlerFunc {
+// --- Tool handlers ---
+
+func readHandler(svc *service.PageService) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		check := getStringArg(req, "check")
-		if check == "" {
-			check = "all"
+		path := getStringArg(req, "path")
+		if path == "" {
+			return mcp.NewToolResultError("path is required"), nil
 		}
 
-		report, err := svc.Run(check)
+		content, err := svc.Read(path)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		return mcp.NewToolResultText(toJSON(report)), nil
+		return mcp.NewToolResultText(content), nil
 	}
 }
 
-func directoryListHandler(svc *service.DirectoryService) server.ToolHandlerFunc {
-	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		entries, err := svc.List()
+func writeHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		path := getStringArg(req, "path")
+		content := getStringArg(req, "content")
+
+		if path == "" {
+			return mcp.NewToolResultError("path is required"), nil
+		}
+		if content == "" {
+			return mcp.NewToolResultError("content is required"), nil
+		}
+
+		if err := svc.Write(path, content); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		markDirty(notifier, vaultDir, path)
+		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+			"action": "write", "path": path,
+		})
+		return resultWithLintWarnings(ctx, s, fmt.Sprintf("Wrote page: %s", path), lint.LintPage(path)), nil
+	}
+}
+
+func editHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		path := getStringArg(req, "path")
+		if path == "" {
+			return mcp.NewToolResultError("path is required"), nil
+		}
+
+		ops, err := getPatchOps(req)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		if len(ops) == 0 {
+			return mcp.NewToolResultError("operations is required and must not be empty"), nil
+		}
+
+		content, err := svc.Patch(path, ops)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		markDirty(notifier, vaultDir, path)
+		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+			"action": "edit", "path": path, "operations": len(ops),
+		})
+		return resultWithLintWarnings(ctx, s, content, lint.LintPage(path)), nil
+	}
+}
+
+func listHandler(pageSvc *service.PageService, dirSvc *service.DirectoryService) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		prefix := getStringArg(req, "prefix")
+		detail := getBoolArg(req, "detail")
+
+		if detail {
+			entries, err := dirSvc.List(prefix)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(toJSON(entries)), nil
+		}
+
+		pages, err := pageSvc.List(prefix)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(toJSON(pages)), nil
+	}
+}
+
+func searchHandler(svc *service.SearchService) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		query := getStringArg(req, "query")
+		if query == "" {
+			return mcp.NewToolResultError("query is required"), nil
+		}
+		if len(query) < 2 {
+			return mcp.NewToolResultError("query must be at least 2 characters"), nil
+		}
+
+		limit := getIntArg(req, "limit")
+		if limit <= 0 {
+			limit = 20
+		}
+
+		engine := getStringArg(req, "engine")
+
+		resp, err := svc.Search(query, limit, engine)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		return mcp.NewToolResultText(toJSON(resp)), nil
+	}
+}
+
+func deleteHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		path := getStringArg(req, "path")
+		if path == "" {
+			return mcp.NewToolResultError("path is required"), nil
+		}
+
+		if err := svc.Delete(path); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		markDirty(notifier, vaultDir, path)
+		mcpLog(ctx, s, mcp.LoggingLevelWarning, "vault", map[string]any{
+			"action": "delete", "path": path,
+		})
+		return resultWithLintWarnings(ctx, s, fmt.Sprintf("deleted: %s", path), lint.LintDelete(path)), nil
+	}
+}
+
+func moveHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		source := getStringArg(req, "source")
+		destination := getStringArg(req, "destination")
+
+		if source == "" {
+			return mcp.NewToolResultError("source is required"), nil
+		}
+		if destination == "" {
+			return mcp.NewToolResultError("destination is required"), nil
+		}
+
+		if err := svc.Move(source, destination); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		markDirty(notifier, vaultDir, source)
+		markDirty(notifier, vaultDir, destination)
+		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+			"action": "move", "source": source, "destination": destination,
+		})
+		// Lint the destination for broken links caused by the move.
+		return resultWithLintWarnings(ctx, s, fmt.Sprintf("moved: %s -> %s", source, destination), lint.LintDelete(source)), nil
+	}
+}
+
+func recentHandler(svc *service.RecentService) server.ToolHandlerFunc {
+	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		limit := getIntArg(req, "limit")
+		if limit <= 0 {
+			limit = 20
+		}
+
+		entries, err := svc.List(limit)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		return mcp.NewToolResultText(toJSON(entries)), nil
-	}
-}
-
-func directoryGenerateHandler(s *server.MCPServer, svc *service.DirectoryService) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		_, count, err := svc.Generate()
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
-			"action": "directory_generate", "pages_indexed": count,
-		})
-		result := map[string]any{"pages_indexed": count}
-		return mcp.NewToolResultText(toJSON(result)), nil
-	}
-}
-
-func ingestListHandler(svc *service.IngestService) server.ToolHandlerFunc {
-	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		items, err := svc.List()
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(items)), nil
-	}
-}
-
-func ingestGenerateHandler(s *server.MCPServer, svc *service.IngestService) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path, count, err := svc.Generate()
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
-			"action": "ingest_generate", "path": path, "count": count,
-		})
-		result := map[string]any{"path": path, "count": count}
-		return mcp.NewToolResultText(toJSON(result)), nil
 	}
 }
 
@@ -228,133 +349,6 @@ func activityHandler(s *server.MCPServer, svc *service.ActivityService, vaultDir
 			"action": "log", "type": entry.Type, "title": entry.Title,
 		})
 		return mcp.NewToolResultText("Activity logged successfully"), nil
-	}
-}
-
-func readPageHandler(svc *service.PageService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path := getStringArg(req, "path")
-		if path == "" {
-			return mcp.NewToolResultError("path is required"), nil
-		}
-
-		content, err := svc.Read(path)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(content), nil
-	}
-}
-
-func createPageHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path := getStringArg(req, "path")
-		content := getStringArg(req, "content")
-
-		if path == "" {
-			return mcp.NewToolResultError("path is required"), nil
-		}
-
-		if content == "" {
-			return mcp.NewToolResultError("content is required"), nil
-		}
-
-		// Check if page already exists
-		if _, err := svc.Read(path); err == nil {
-			return mcp.NewToolResultError(fmt.Sprintf("page already exists: %s (use wiki_update_page to modify)", path)), nil
-		}
-
-		if err := svc.Write(path, content); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		markDirty(notifier, vaultDir, path)
-		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
-			"action": "create_page", "path": path,
-		})
-		return resultWithLintWarnings(ctx, s, fmt.Sprintf("Created page: %s", path), lint.LintPage(path)), nil
-	}
-}
-
-func updatePageHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path := getStringArg(req, "path")
-		content := getStringArg(req, "content")
-
-		if path == "" {
-			return mcp.NewToolResultError("path is required"), nil
-		}
-
-		if content == "" {
-			return mcp.NewToolResultError("content is required"), nil
-		}
-
-		// Check if page exists before overwriting
-		if _, err := svc.Read(path); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("page not found: %s — use wiki_create_page for new pages", path)), nil
-		}
-
-		if err := svc.Write(path, content); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		markDirty(notifier, vaultDir, path)
-		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
-			"action": "update_page", "path": path,
-		})
-		return resultWithLintWarnings(ctx, s, fmt.Sprintf("Updated page: %s", path), lint.LintPage(path)), nil
-	}
-}
-
-func deletePageHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path := getStringArg(req, "path")
-		if path == "" {
-			return mcp.NewToolResultError("path is required"), nil
-		}
-
-		if err := svc.Delete(path); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		// Mark deleted path dirty to trigger index regeneration.
-		// os.Chtimes will no-op (IsNotExist ignored in flush),
-		// but the flush still regenerates directory index and ingest queue.
-		markDirty(notifier, vaultDir, path)
-		mcpLog(ctx, s, mcp.LoggingLevelWarning, "vault", map[string]any{
-			"action": "delete_page", "path": path,
-		})
-		return resultWithLintWarnings(ctx, s, fmt.Sprintf("deleted: %s", path), lint.LintDelete(path)), nil
-	}
-}
-
-func patchPageHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path := getStringArg(req, "path")
-		if path == "" {
-			return mcp.NewToolResultError("path is required"), nil
-		}
-
-		ops, err := getPatchOps(req)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		if len(ops) == 0 {
-			return mcp.NewToolResultError("operations is required and must not be empty"), nil
-		}
-
-		content, err := svc.Patch(path, ops)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		markDirty(notifier, vaultDir, path)
-		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
-			"action": "patch_page", "path": path, "operations": len(ops),
-		})
-		return resultWithLintWarnings(ctx, s, content, lint.LintPage(path)), nil
 	}
 }
 
@@ -402,59 +396,4 @@ func getPatchOps(req mcp.CallToolRequest) ([]service.PatchOp, error) {
 	}
 
 	return ops, nil
-}
-
-func listPagesHandler(svc *service.PageService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		prefix := getStringArg(req, "prefix")
-
-		pages, err := svc.List(prefix)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(pages)), nil
-	}
-}
-
-func recentListHandler(svc *service.RecentService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		limit := getIntArg(req, "limit")
-		if limit <= 0 {
-			limit = 20
-		}
-
-		entries, err := svc.List(limit)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(entries)), nil
-	}
-}
-
-func searchHandler(svc *service.SearchService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query := getStringArg(req, "query")
-		if query == "" {
-			return mcp.NewToolResultError("query is required"), nil
-		}
-		if len(query) < 2 {
-			return mcp.NewToolResultError("query must be at least 2 characters"), nil
-		}
-
-		limit := getIntArg(req, "limit")
-		if limit <= 0 {
-			limit = 20
-		}
-
-		engine := getStringArg(req, "engine")
-
-		resp, err := svc.Search(query, limit, engine)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(resp)), nil
-	}
 }

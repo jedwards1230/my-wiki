@@ -3,7 +3,7 @@ package api
 import "net/http"
 
 func (h *Handler) handleDirectoryList(w http.ResponseWriter, r *http.Request) {
-	entries, err := h.directory.List()
+	entries, err := h.directory.List("")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
