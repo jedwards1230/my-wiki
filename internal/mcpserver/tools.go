@@ -170,14 +170,14 @@ func readHandler(svc *service.PageService) server.ToolHandlerFunc {
 func buildFrontmatter(title string, tags []string, date, description, extraFrontmatter string) string {
 	var b strings.Builder
 	b.WriteString("---\n")
-	b.WriteString(fmt.Sprintf("title: %s\n", title))
+	fmt.Fprintf(&b, "title: %s\n", title)
 	b.WriteString("tags:\n")
 	for _, tag := range tags {
-		b.WriteString(fmt.Sprintf("  - %s\n", tag))
+		fmt.Fprintf(&b, "  - %s\n", tag)
 	}
-	b.WriteString(fmt.Sprintf("date: %s\n", date))
+	fmt.Fprintf(&b, "date: %s\n", date)
 	if description != "" {
-		b.WriteString(fmt.Sprintf("description: %s\n", description))
+		fmt.Fprintf(&b, "description: %s\n", description)
 	}
 	if extraFrontmatter != "" {
 		b.WriteString(extraFrontmatter)
