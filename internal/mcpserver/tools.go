@@ -13,6 +13,7 @@ import (
 	"github.com/jedwards1230/home-wiki/internal/middleware"
 	"github.com/jedwards1230/home-wiki/internal/notify"
 	"github.com/jedwards1230/home-wiki/internal/service"
+	"github.com/jedwards1230/home-wiki/internal/version"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -181,7 +182,7 @@ func whoamiHandler(vaultDir string) server.ToolHandlerFunc {
 	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		info := map[string]string{
 			"name":       "home-wiki",
-			"version":    "0.1.0",
+			"version":    version.Value,
 			"vault_dir":  filepath.Base(vaultDir),
 			"go_version": runtime.Version(),
 		}

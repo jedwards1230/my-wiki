@@ -6,6 +6,7 @@ import (
 	"github.com/jedwards1230/home-wiki/internal/notify"
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/home-wiki/internal/version"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -41,7 +42,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 	}
 	s := server.NewMCPServer(
 		"home-wiki",
-		"0.1.0",
+		version.Value,
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
 		server.WithLogging(),

@@ -10,7 +10,7 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 ARG BUILD_VERSION=dev
-RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${BUILD_VERSION}" -o /wiki-server ./cmd/wiki-server
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/jedwards1230/home-wiki/internal/version.Value=${BUILD_VERSION}" -o /wiki-server ./cmd/wiki-server
 
 # --- Main image ---
 FROM node:24-alpine
