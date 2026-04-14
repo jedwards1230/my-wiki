@@ -93,15 +93,6 @@ func getIntArg(req mcp.CallToolRequest, key string) int {
 	return 0
 }
 
-func getBoolArg(req mcp.CallToolRequest, key string) bool {
-	args := req.GetArguments()
-	if v, ok := args[key]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return false
-}
 
 func getStringArrayArg(req mcp.CallToolRequest, key string) []string {
 	args := req.GetArguments()
