@@ -82,7 +82,6 @@ func (s *ActivityService) Append(entry ActivityEntry) error {
 
 	// Build entry line
 	entryLine := fmt.Sprintf("### %s | %s | %s", entry.Time, entry.Type, entry.Title)
-	desc := BuildDescription(entry.Summary, entry.Touched)
 
 	// Append entry
 	f, err := s.storage.OpenFile(dailyRelPath, os.O_APPEND|os.O_WRONLY, 0o644)
@@ -93,8 +92,13 @@ func (s *ActivityService) Append(entry ActivityEntry) error {
 
 	_, _ = fmt.Fprintln(f)
 	_, _ = fmt.Fprintln(f, entryLine)
-	if desc != "" {
-		_, _ = fmt.Fprintln(f, desc)
+
+	// Auto-logged entries are compact audit lines — no description body.
+	if !entry.AutoLogged {
+		desc := BuildDescription(entry.Summary, entry.Touched)
+		if desc != "" {
+			_, _ = fmt.Fprintln(f, desc)
+		}
 	}
 
 	return s.updateLogIndex(dailyRelPath, today, entry.Title)

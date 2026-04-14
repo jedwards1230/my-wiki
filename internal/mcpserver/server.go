@@ -45,7 +45,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
 		server.WithLogging(),
-		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete operations are automatically logged. Use wiki_activity for non-page activities (ingest, lint, note, migrate)."),
+		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete mutations are auto-logged as compact audit entries — do NOT call wiki_activity for individual page changes. Use wiki_activity only for narrative summaries of multi-page work sessions or non-page activities (ingest, lint, note, migrate)."),
 	)
 
 	logSvc := service.NewLogService(v.Storage)
@@ -179,7 +179,7 @@ func registerTools(
 	s.AddTool(
 		mcp.NewTool("wiki_activity",
 			mcp.WithTitleAnnotation("Log Activity"),
-			mcp.WithDescription("Append an entry to today's activity log and update meta/log.md index. Call after completing wiki work to maintain the audit trail."),
+			mcp.WithDescription("Append a narrative entry to today's activity log. Individual page mutations (create/edit/delete) are auto-logged — do NOT duplicate them here. Use this for summaries of multi-page work sessions or non-page activities like ingest, lint, or migrate."),
 			mcp.WithReadOnlyHintAnnotation(false),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(false),

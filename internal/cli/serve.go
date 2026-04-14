@@ -147,10 +147,11 @@ func buildAuthMiddlewares(ctx context.Context, logger *slog.Logger, cfg *middlew
 func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify.RebuildNotifier, vaultDir string, logger *slog.Logger) func(service.MutationEvent) {
 	var mu sync.Mutex
 	return func(evt service.MutationEvent) {
+		pagePath := strings.TrimSuffix(evt.Path, ".md")
 		entry := service.ActivityEntry{
-			Type:    string(evt.Kind),
-			Title:   fmt.Sprintf("%s %s", evt.Kind, filepath.Base(strings.TrimSuffix(evt.Path, ".md"))),
-			Touched: []string{strings.TrimSuffix(evt.Path, ".md")},
+			Type:       string(evt.Kind),
+			Title:      fmt.Sprintf("[[%s]]", pagePath),
+			AutoLogged: true,
 		}
 		mu.Lock()
 		defer mu.Unlock()
