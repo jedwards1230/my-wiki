@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -166,6 +167,28 @@ func lintHandler(lint *service.LintService) server.ToolHandlerFunc {
 	}
 }
 
+func tagsHandler(svc *service.TagService) server.ToolHandlerFunc {
+	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		report, err := svc.List()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(toJSON(report)), nil
+	}
+}
+
+func whoamiHandler(vaultDir string) server.ToolHandlerFunc {
+	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		info := map[string]string{
+			"name":       "home-wiki",
+			"version":    "0.1.0",
+			"vault_dir":  filepath.Base(vaultDir),
+			"go_version": runtime.Version(),
+		}
+		return mcp.NewToolResultText(toJSON(info)), nil
+	}
+}
+
 func readHandler(svc *service.PageService) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := getStringArg(req, "path")
@@ -312,6 +335,8 @@ func listHandler(pageSvc *service.PageService, dirSvc *service.DirectoryService)
 	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		prefix := getStringArg(req, "prefix")
 		detail := getBoolArg(req, "detail")
+		sortBy := getStringArg(req, "sort_by")
+		limit := getIntArg(req, "limit")
 
 		if detail {
 			entries, err := dirSvc.List(prefix)
@@ -321,7 +346,11 @@ func listHandler(pageSvc *service.PageService, dirSvc *service.DirectoryService)
 			return mcp.NewToolResultText(toJSON(entries)), nil
 		}
 
-		pages, err := pageSvc.List(prefix)
+		pages, err := pageSvc.List(service.ListOptions{
+			Prefix: prefix,
+			SortBy: sortBy,
+			Limit:  limit,
+		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -397,22 +426,6 @@ func moveHandler(s *server.MCPServer, svc *service.PageService, lint *service.Li
 		})
 		// Lint the source for broken inbound links caused by removing the old path.
 		return resultWithLintWarnings(ctx, s, fmt.Sprintf("moved: %s -> %s", source, destination), lint.LintDelete(source)), nil
-	}
-}
-
-func recentHandler(svc *service.RecentService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		limit := getIntArg(req, "limit")
-		if limit <= 0 {
-			limit = 20
-		}
-
-		entries, err := svc.List(limit)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(entries)), nil
 	}
 }
 

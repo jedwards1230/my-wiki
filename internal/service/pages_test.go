@@ -146,7 +146,7 @@ func TestPageService_List(t *testing.T) {
 	storage, _ := setupPagesVault(t)
 	svc := NewPageService(storage)
 
-	pages, err := svc.List("")
+	pages, err := svc.List(ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestPageService_ListPrefix(t *testing.T) {
 	storage, _ := setupPagesVault(t)
 	svc := NewPageService(storage)
 
-	pages, err := svc.List("project")
+	pages, err := svc.List(ListOptions{Prefix: "project"})
 	if err != nil {
 		t.Fatal(err)
 	}

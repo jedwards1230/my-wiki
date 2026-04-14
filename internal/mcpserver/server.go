@@ -52,7 +52,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 	lint := service.NewLintService(v, logSvc)
 	directory := service.NewDirectoryService(v)
 	activity := service.NewActivityService(v.Storage)
-	recent := service.NewRecentService(v)
+	tags := service.NewTagService(v)
 
 	var pages *service.PageService
 	if cfg.pages != nil {
@@ -62,7 +62,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 	}
 
 	registerResources(s, pages)
-	registerTools(s, v.Dir, cfg.notifier, lint, directory, activity, pages, recent, searchSvc)
+	registerTools(s, v.Dir, cfg.notifier, lint, directory, activity, pages, tags, searchSvc)
 
 	return s
 }
@@ -107,7 +107,7 @@ func registerTools(
 	directory *service.DirectoryService,
 	activity *service.ActivityService,
 	pages *service.PageService,
-	recent *service.RecentService,
+	tags *service.TagService,
 	searchSvc *service.SearchService,
 ) {
 	// --- read: Read a wiki page ---
@@ -199,7 +199,7 @@ func registerTools(
 	s.AddTool(
 		mcp.NewTool("list",
 			mcp.WithTitleAnnotation("List Pages"),
-			mcp.WithDescription("List wiki pages (excludes raw/, private/, .obsidian/). With detail=false (default), returns JSON array of {path, title, has_meta}. With detail=true, returns rich entries with {path, title, description, tags} from frontmatter."),
+			mcp.WithDescription("List wiki pages (excludes raw/, private/, .obsidian/). With detail=false (default), returns {path, title, has_meta} per page. With detail=true, returns rich entries with {path, title, description, tags} from frontmatter. Use sort_by='modified' with limit to get recently changed pages."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
@@ -209,6 +209,13 @@ func registerTools(
 			),
 			mcp.WithBoolean("detail",
 				mcp.Description("When true, return rich directory entries with description and tags from frontmatter. Default: false."),
+			),
+			mcp.WithString("sort_by",
+				mcp.Enum("name", "modified"),
+				mcp.Description("Sort order: 'name' (default, alphabetical) or 'modified' (newest first, includes modified timestamp). When 'modified', activity log files are excluded."),
+			),
+			mcp.WithNumber("limit",
+				mcp.Description("Maximum pages to return. Default: unlimited. Useful with sort_by='modified' to get recent pages."),
 			),
 		),
 		listHandler(pages, directory),
@@ -244,7 +251,7 @@ func registerTools(
 	s.AddTool(
 		mcp.NewTool("delete",
 			mcp.WithTitleAnnotation("Delete Page"),
-			mcp.WithDescription("Delete a wiki page. Returns an error if the page does not exist."),
+			mcp.WithDescription("Delete a wiki page. Returns an error if the page does not exist. Returns lint warnings about broken wikilinks caused by the deletion."),
 			mcp.WithReadOnlyHintAnnotation(false),
 			mcp.WithDestructiveHintAnnotation(true),
 			mcp.WithIdempotentHintAnnotation(false),
@@ -282,33 +289,43 @@ func registerTools(
 	s.AddTool(
 		mcp.NewTool("lint",
 			mcp.WithTitleAnnotation("Lint Vault"),
-			mcp.WithDescription("Run vault health checks. Returns issues grouped by check. The 'links' check deduplicates by target page, listing all source files per missing page."),
+			mcp.WithDescription("Run vault-wide health checks. Returns issues grouped by check.\n\nChecks:\n- frontmatter: required fields (title, tags, date) on wiki pages; skips generated pages\n- raw: required fields (title, source, date-added) on raw/ source files\n- tags: validates page tags against the taxonomy in meta/schema\n- links: broken [[wikilinks]] — deduplicates by target, lists all source files per missing page\n- orphans: pages with no inbound wikilinks\n- size: pages exceeding 1000 words\n- log: hash mismatches between meta/log.md index and daily activity files"),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("check",
 				mcp.Description("Which check to run. Default: all."),
-				mcp.Enum("all", "frontmatter", "raw", "links", "orphans", "log"),
+				mcp.Enum("all", "frontmatter", "raw", "tags", "links", "orphans", "size", "log"),
 			),
 		),
 		lintHandler(lint),
 	)
 
-	// --- recent: Recently modified pages ---
+	// --- tags: List tag taxonomy and usage ---
 	s.AddTool(
-		mcp.NewTool("recent",
-			mcp.WithTitleAnnotation("Recent Pages"),
-			mcp.WithDescription("List recently modified wiki pages sorted by modification time. Returns JSON array of {path, title, modified}. Excludes activity log files."),
+		mcp.NewTool("tags",
+			mcp.WithTitleAnnotation("List Tags"),
+			mcp.WithDescription("List the tag taxonomy (from meta/schema) and tag usage across all wiki pages. Returns the allowed domains and sub-tags with page counts, plus a flat list of all used tags sorted by frequency."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
-			mcp.WithNumber("limit",
-				mcp.Description("Maximum pages to return. Default: 20."),
-			),
 		),
-		recentHandler(recent),
+		tagsHandler(tags),
+	)
+
+	// --- whoami: Server identity ---
+	s.AddTool(
+		mcp.NewTool("whoami",
+			mcp.WithTitleAnnotation("Server Info"),
+			mcp.WithDescription("Returns server identity: name, version, vault directory, and Go runtime version. Useful for verifying which wiki instance you're connected to."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithIdempotentHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
+		),
+		whoamiHandler(vaultDir),
 	)
 
 	// --- activity: Append to activity log ---
