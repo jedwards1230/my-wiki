@@ -66,7 +66,7 @@ func getTextContent(result *mcp.CallToolResult) string {
 
 func TestLintHandler(t *testing.T) {
 	v := setupTestVault(t)
-	svc := service.NewLintService(v)
+	svc := service.NewLintService(v, nil)
 	handler := lintHandler(svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{"check": "all"}))
@@ -85,7 +85,7 @@ func TestLintHandler(t *testing.T) {
 
 func TestLintHandlerInvalidCheck(t *testing.T) {
 	v := setupTestVault(t)
-	svc := service.NewLintService(v)
+	svc := service.NewLintService(v, nil)
 	handler := lintHandler(svc)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{"check": "invalid"}))
@@ -153,56 +153,6 @@ func TestIngestListHandler(t *testing.T) {
 	text := getTextContent(result)
 	if !strings.Contains(text, "unprocessed") {
 		t.Errorf("expected unprocessed in result, got:\n%s", text)
-	}
-}
-
-func TestLogIndexHandler(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewLogService(v.Storage)
-	handler := logIndexHandler(svc)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	text := getTextContent(result)
-	if !strings.Contains(text, "2026-04-06") {
-		t.Errorf("expected date in result, got:\n%s", text)
-	}
-}
-
-func TestLogDayHandler(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewLogService(v.Storage)
-	handler := logDayHandler(svc)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{
-		"date":   "2026-04-06",
-		"detail": true,
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	text := getTextContent(result)
-	if !strings.Contains(text, "First thing") {
-		t.Errorf("expected entry in result, got:\n%s", text)
-	}
-}
-
-func TestLogDayHandlerMissing(t *testing.T) {
-	v := setupTestVault(t)
-	svc := service.NewLogService(v.Storage)
-	handler := logDayHandler(svc)
-
-	result, err := handler(context.Background(), makeReq(map[string]any{"date": "2099-01-01"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error result for missing day")
 	}
 }
 

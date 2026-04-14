@@ -10,16 +10,17 @@ import (
 
 // LintService provides vault lint operations.
 type LintService struct {
-	vault *vault.Vault
+	vault  *vault.Vault
+	logSvc *LogService
 }
 
 // NewLintService creates a LintService for the given vault.
-func NewLintService(v *vault.Vault) *LintService {
-	return &LintService{vault: v}
+func NewLintService(v *vault.Vault, logSvc *LogService) *LintService {
+	return &LintService{vault: v, logSvc: logSvc}
 }
 
 // Run executes the specified lint check and returns a report.
-// Valid checks: "all", "frontmatter", "raw", "links", "orphans".
+// Valid checks: "all", "frontmatter", "raw", "links", "orphans", "log".
 func (s *LintService) Run(check string) (*LintReport, error) {
 	report := &LintReport{}
 
@@ -29,6 +30,7 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 		s.checkRawFrontmatter(report)
 		s.checkLinks(report)
 		s.checkOrphans(report)
+		s.checkLog(report)
 	case "frontmatter":
 		s.checkFrontmatter(report)
 	case "raw":
@@ -37,12 +39,32 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 		s.checkLinks(report)
 	case "orphans":
 		s.checkOrphans(report)
+	case "log":
+		s.checkLog(report)
 	default:
-		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, raw, links, or orphans", check)
+		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, raw, links, orphans, or log", check)
 	}
 
 	report.Total = len(report.Issues)
 	return report, nil
+}
+
+func (s *LintService) checkLog(report *LintReport) {
+	if s.logSvc == nil {
+		return
+	}
+	issues, err := s.logSvc.Lint()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "log", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+	for _, issue := range issues {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "log", Level: "WARN", Message: issue.Message,
+		})
+	}
 }
 
 func (s *LintService) checkFrontmatter(report *LintReport) {

@@ -238,8 +238,8 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	defer notifier.Close()
 
 	// Shared PageService with auto-activity logging on mutations.
-	activitySvc := service.NewActivityService(vaultDir)
-	pageSvc := service.NewPageService(vaultDir, service.WithOnMutation(
+	activitySvc := service.NewActivityService(v.Storage)
+	pageSvc := service.NewPageService(v.Storage, service.WithOnMutation(
 		makeActivityCallback(activitySvc, notifier, vaultDir, logger),
 	))
 
@@ -406,8 +406,8 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	defer mcpNotifier.Close()
 
 	// Shared PageService with auto-activity logging on mutations.
-	mcpActivitySvc := service.NewActivityService(vaultDir)
-	mcpPageSvc := service.NewPageService(vaultDir, service.WithOnMutation(
+	mcpActivitySvc := service.NewActivityService(v.Storage)
+	mcpPageSvc := service.NewPageService(v.Storage, service.WithOnMutation(
 		makeActivityCallback(mcpActivitySvc, mcpNotifier, vaultDir, logger),
 	))
 

@@ -198,48 +198,6 @@ func ingestGenerateHandler(s *server.MCPServer, svc *service.IngestService) serv
 	}
 }
 
-func logIndexHandler(svc *service.LogService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		n := getIntArg(req, "n")
-
-		entries, err := svc.Index(n)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(entries)), nil
-	}
-}
-
-func logDayHandler(svc *service.LogService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		date := getStringArg(req, "date")
-		detail := getBoolArg(req, "detail")
-
-		if date == "" {
-			return mcp.NewToolResultError("date is required"), nil
-		}
-
-		dayLog, err := svc.Day(date, detail)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(dayLog)), nil
-	}
-}
-
-func logLintHandler(svc *service.LogService) server.ToolHandlerFunc {
-	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		issues, err := svc.Lint()
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(toJSON(issues)), nil
-	}
-}
-
 func activityHandler(s *server.MCPServer, svc *service.ActivityService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		touched := getStringArrayArg(req, "touched")

@@ -28,7 +28,7 @@ func runLint(cmd *cobra.Command, args []string) error {
 		check = args[0]
 	}
 
-	svc := service.NewLintService(v)
+	svc := service.NewLintService(v, nil)
 	report, err := svc.Run(check)
 	if err != nil {
 		return err
