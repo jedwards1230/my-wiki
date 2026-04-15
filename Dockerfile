@@ -19,9 +19,10 @@ FROM node:24-alpine
 RUN apk add --no-cache git coreutils bash tzdata && \
     npm install -g obsidian-headless
 
-# Set up Quartz project (only re-runs when Quartz upstream changes)
+# Set up Quartz project (only re-runs when QUARTZ_VERSION changes)
+ARG QUARTZ_VERSION=v4.5.2
 WORKDIR /quartz
-RUN git clone --depth 1 https://github.com/jackyzha0/quartz.git . && \
+RUN git clone --depth 1 --branch "${QUARTZ_VERSION}" https://github.com/jackyzha0/quartz.git . && \
     npm ci --ignore-scripts && \
     rm -rf .git
 
