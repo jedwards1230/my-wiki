@@ -74,7 +74,7 @@ func registerResources(s *server.MCPServer, pages *service.PageService) {
 		mcp.NewResource(
 			"wiki://schema",
 			"Wiki Schema",
-			mcp.WithResourceDescription("Operating manual for AI agents — page conventions, frontmatter rules, tag taxonomy, ingestion workflows, and activity logging format."),
+			mcp.WithResourceDescription("Operating manual for AI agents — page conventions, frontmatter rules, ingestion workflows, and activity logging format."),
 			mcp.WithMIMEType("text/markdown"),
 		),
 		func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
@@ -303,11 +303,11 @@ func registerTools(
 		lintHandler(lint),
 	)
 
-	// --- tags: List tag taxonomy and usage ---
+	// --- tags: List all tags in use ---
 	s.AddTool(
 		mcp.NewTool("tags",
 			mcp.WithTitleAnnotation("List Tags"),
-			mcp.WithDescription("List the tag taxonomy (from meta/schema) and tag usage across all wiki pages. Returns the allowed domains and sub-tags with page counts, plus a flat list of all used tags sorted by frequency."),
+			mcp.WithDescription("List all tags used across wiki pages with page counts, sorted by frequency. Use to discover existing tags before creating new pages."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
