@@ -29,7 +29,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           pinned=$(grep -oP 'ARG QUARTZ_VERSION=\K\S+' Dockerfile)
-          latest=$(gh api repos/jackyzha0/quartz/releases/latest --jq '.tag_name')
+          pinned_major=$(echo "$pinned" | grep -oP '^v?\K[0-9]+')
+
+          # Quartz publishes tags but not GitHub Releases for v4+, so use tags API
+          latest=$(gh api --paginate repos/jackyzha0/quartz/tags --jq '.[].name' \
+            | grep -E "^v${pinned_major}\.[0-9]+\.[0-9]+$" \
+            | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+          latest="v${latest}"
+
           echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "Pinned: $pinned, Latest: $latest"
@@ -83,7 +90,7 @@ jobs:
           |-----------|-----|-----|
           | Quartz | \`${PINNED}\` | \`${LATEST}\` |
 
-          **Changelog**: https://github.com/jackyzha0/quartz/releases/tag/${LATEST}
+          **Changelog**: https://github.com/jackyzha0/quartz/compare/${PINNED}...${LATEST}
 
           _Created automatically by check-quartz-update workflow._"
           # Strip leading whitespace from each line (indented for YAML readability)
@@ -130,40 +137,25 @@ jobs:
             exit 0
           fi
 
-          # Get publish date of pinned version to find all releases since then
-          PINNED_DATE=""
-          PINNED_BARE="${PINNED#v}"
-          for tag in "$PINNED" "v${PINNED_BARE}"; do
-            result=$(gh api "repos/jackyzha0/quartz/releases/tags/${tag}" 2>/dev/null || true)
-            if [ -n "$result" ] && echo "$result" | jq -e '.published_at' >/dev/null 2>&1; then
-              PINNED_DATE=$(echo "$result" | jq -r '.published_at')
-              break
-            fi
-          done
-
+          # Quartz v4+ uses tags (not GitHub Releases), so try releases first, fall back to compare URL
           NOTES=""
-          if [ -n "$PINNED_DATE" ]; then
-            NOTES=$(gh api --paginate "repos/jackyzha0/quartz/releases" | jq -s -r \
-              --arg cutoff "$PINNED_DATE" \
-              'add | [.[] | select(.published_at > $cutoff and .draft == false and .prerelease == false)]
-               | sort_by(.published_at)
-               | .[] | "## " + .tag_name + "\n\n" + (.body // "_No release notes._") + "\n"' \
-              2>/dev/null || true)
+          rn=$(gh api "repos/jackyzha0/quartz/releases/tags/${LATEST}" --jq '.body // empty' 2>/dev/null || true)
+          if [ -n "$rn" ]; then
+            NOTES=$(printf '## %s\n\n%s' "$LATEST" "$rn")
           fi
 
-          # Fallback: just get the latest release notes
+          COMPARE_URL="https://github.com/jackyzha0/quartz/compare/${PINNED}...${LATEST}"
+
           if [ -z "$NOTES" ]; then
-            rn=$(gh api "repos/jackyzha0/quartz/releases/tags/${LATEST}" --jq '.body // empty' 2>/dev/null || true)
-            if [ -n "$rn" ]; then
-              NOTES=$(printf '## %s\n\n%s' "$LATEST" "$rn")
-            else
-              NOTES="No release notes found."
-            fi
-          fi
+            NOTES="No GitHub Release found for ${LATEST} (Quartz publishes via tags, not Releases).
 
-          # Truncate if too long
-          if [ "${#NOTES}" -gt 65000 ]; then
-            NOTES="${NOTES:0:65000}"$'\n\n'"> Truncated. See https://github.com/jackyzha0/quartz/releases for full changelog."
+          See the full diff: [${PINNED}...${LATEST}](${COMPARE_URL})"
+          else
+            NOTES="${NOTES}
+
+          ---
+
+          Full diff: [${PINNED}...${LATEST}](${COMPARE_URL})"
           fi
 
           COMMENT=$(printf '%s\n\n%s' "$COMMENT_HEADER" "$NOTES")
