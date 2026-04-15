@@ -77,19 +77,17 @@ jobs:
           git commit -m "$TITLE"
           git push --force-with-lease origin "$BRANCH"
 
-          PR_BODY=$(cat <<'EOFHEADER'
-Automated Quartz version bump.
+          PR_BODY="Automated Quartz version bump.
 
-| Component | Old | New |
-|-----------|-----|-----|
-EOFHEADER
-          )
-          PR_BODY="${PR_BODY}
-| Quartz | \`${PINNED}\` | \`${LATEST}\` |
+          | Component | Old | New |
+          |-----------|-----|-----|
+          | Quartz | \`${PINNED}\` | \`${LATEST}\` |
 
-**Changelog**: https://github.com/jackyzha0/quartz/releases/tag/${LATEST}
+          **Changelog**: https://github.com/jackyzha0/quartz/releases/tag/${LATEST}
 
-_Created automatically by check-quartz-update workflow._"
+          _Created automatically by check-quartz-update workflow._"
+          # Strip leading whitespace from each line (indented for YAML readability)
+          PR_BODY=$(echo "$PR_BODY" | sed 's/^          //')
 
           EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
 
