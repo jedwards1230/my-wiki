@@ -420,23 +420,13 @@ func TestLintService_Size(t *testing.T) {
 	}
 }
 
-func TestLintService_Tags(t *testing.T) {
+func TestLintService_Tags_KebabCase(t *testing.T) {
 	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, "meta"), 0o755)
-
-	schema := "---\ntitle: Schema\ntags:\n  - meta\ndate: 2026-01-01\n---\n\n" +
-		"<!-- begin:tag-taxonomy -->\n" +
-		"| Domain | Use for | Sub-tag examples |\n" +
-		"|--------|---------|------------------|\n" +
-		"| `homelab` | Infrastructure | `homelab/service`, `homelab/host` |\n" +
-		"| `meta` | Wiki ops | `meta/activity` |\n" +
-		"<!-- end:tag-taxonomy -->\n"
 
 	files := map[string]string{
-		"meta/schema.md": schema,
-		"good.md":        "---\ntitle: Good\ntags:\n  - homelab\ndate: 2026-01-01\n---\n\n[[meta/schema]]\n",
-		"bad-tag.md":     "---\ntitle: Bad\ntags:\n  - invalid-domain\ndate: 2026-01-01\n---\n\n[[meta/schema]]\n",
-		"new-sub.md":     "---\ntitle: New Sub\ntags:\n  - homelab/new-thing\ndate: 2026-01-01\n---\n\n[[meta/schema]]\n",
+		"good.md":      "---\ntitle: Good\ntags:\n  - homelab\ndate: 2026-01-01\n---\n\n[[bad-case]]\n",
+		"bad-case.md":  "---\ntitle: Bad Case\ntags:\n  - HomeLab\ndate: 2026-01-01\n---\n\n[[good]]\n",
+		"bad-under.md": "---\ntitle: Bad Under\ntags:\n  - home_lab\ndate: 2026-01-01\n---\n\n[[good]]\n",
 	}
 	for name, content := range files {
 		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
@@ -450,36 +440,96 @@ func TestLintService_Tags(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Expect WARN for bad-tag.md (unknown domain) and new-sub.md (missing sub-tag),
-	// plus INFO issues for under-threshold tags.
-	var warns, infos int
+	// Expect WARN for non-kebab-case tags.
+	var warns int
 	for _, issue := range report.Issues {
-		switch issue.Level {
-		case "WARN":
+		if issue.Level == "WARN" && strings.Contains(issue.Message, "not kebab-case") {
 			warns++
-		case "INFO":
-			infos++
-		}
-		if issue.File == "bad-tag.md" && !strings.Contains(issue.Message, "unknown domain") {
-			t.Errorf("expected 'unknown domain' for bad-tag.md, got: %s", issue.Message)
-		}
-		if issue.File == "new-sub.md" && !strings.Contains(issue.Message, "add sub-tag to schema") {
-			t.Errorf("expected 'add sub-tag' for new-sub.md, got: %s", issue.Message)
 		}
 	}
 	if warns != 2 {
-		t.Errorf("expected 2 WARN issues, got %d", warns)
+		t.Errorf("expected 2 kebab-case WARN issues, got %d", warns)
+		for _, issue := range report.Issues {
+			t.Logf("  %s: %s", issue.Level, issue.Message)
+		}
 	}
-	if infos == 0 {
-		t.Error("expected INFO issues for under-threshold tags")
+}
+
+func TestLintService_Tags_SinglePage(t *testing.T) {
+	dir := t.TempDir()
+
+	files := map[string]string{
+		"a.md": "---\ntitle: A\ntags:\n  - common\ndate: 2026-01-01\n---\n\n[[b]] [[c]]\n",
+		"b.md": "---\ntitle: B\ntags:\n  - common\ndate: 2026-01-01\n---\n\n[[a]] [[c]]\n",
+		"c.md": "---\ntitle: C\ntags:\n  - rare\ndate: 2026-01-01\n---\n\n[[a]] [[b]]\n",
+	}
+	for name, content := range files {
+		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+
+	report, err := svc.Run("tags")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "rare" is used on only 1 page — should get INFO.
+	var found bool
+	for _, issue := range report.Issues {
+		if issue.Level == "INFO" && strings.Contains(issue.Message, `"rare"`) && strings.Contains(issue.Message, "only 1 page") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected INFO for single-page tag 'rare'")
+		for _, issue := range report.Issues {
+			t.Logf("  %s: %s", issue.Level, issue.Message)
+		}
+	}
+}
+
+func TestLintService_Tags_OrphanSubTag(t *testing.T) {
+	dir := t.TempDir()
+
+	files := map[string]string{
+		"a.md": "---\ntitle: A\ntags:\n  - foo/bar\ndate: 2026-01-01\n---\n\n[[b]]\n",
+		"b.md": "---\ntitle: B\ntags:\n  - foo/bar\ndate: 2026-01-01\n---\n\n[[a]]\n",
+	}
+	for name, content := range files {
+		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+
+	report, err := svc.Run("tags")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "foo/bar" has no pages tagged "foo" — should get INFO.
+	var found bool
+	for _, issue := range report.Issues {
+		if issue.Level == "INFO" && strings.Contains(issue.Message, "no pages using parent domain") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected INFO for orphan sub-tag foo/bar")
+		for _, issue := range report.Issues {
+			t.Logf("  %s: %s", issue.Level, issue.Message)
+		}
 	}
 }
 
 func TestLintService_CleanVault(t *testing.T) {
 	dir := t.TempDir()
+	// Each tag used on 2+ pages to avoid single-page INFO issues.
 	files := map[string]string{
 		"index.md": "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[about]]\n",
-		"about.md": "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[index]]\n",
+		"about.md": "---\ntitle: About\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[index]]\n",
 	}
 	for name, content := range files {
 		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
@@ -493,12 +543,7 @@ func TestLintService_CleanVault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The only expected issue is a WARN about tags check being skipped
-	// (no meta/schema.md with taxonomy markers in this test vault).
 	for _, issue := range report.Issues {
-		if issue.Check == "tags" && issue.Level == "WARN" && strings.Contains(issue.Message, "skipped") {
-			continue
-		}
 		t.Errorf("unexpected issue: %s: %s - %s", issue.File, issue.Check, issue.Message)
 	}
 }
