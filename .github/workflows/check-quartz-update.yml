@@ -15,6 +15,7 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   check:
@@ -76,18 +77,19 @@ jobs:
           git commit -m "$TITLE"
           git push --force-with-lease origin "$BRANCH"
 
-          PR_BODY=$(cat <<EOF
-          Automated Quartz version bump.
+          PR_BODY=$(cat <<'EOFHEADER'
+Automated Quartz version bump.
 
-          | Component | Old | New |
-          |-----------|-----|-----|
-          | Quartz | \`${PINNED}\` | \`${LATEST}\` |
-
-          **Changelog**: https://github.com/jackyzha0/quartz/releases/tag/${LATEST}
-
-          _Created automatically by check-quartz-update workflow._
-          EOF
+| Component | Old | New |
+|-----------|-----|-----|
+EOFHEADER
           )
+          PR_BODY="${PR_BODY}
+| Quartz | \`${PINNED}\` | \`${LATEST}\` |
+
+**Changelog**: https://github.com/jackyzha0/quartz/releases/tag/${LATEST}
+
+_Created automatically by check-quartz-update workflow._"
 
           EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
 
@@ -124,8 +126,7 @@ jobs:
 
           # Skip if already commented
           ALREADY=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-            | jq --arg h "$COMMENT_HEADER" '[.[] | select(.body | contains($h))] | length' \
-            | awk '{s+=$1} END{print s}')
+            | jq -s --arg h "$COMMENT_HEADER" '[add // [] | .[] | select(.body | contains($h))] | length')
           if [ "$ALREADY" != "0" ]; then
             echo "Release notes already posted, skipping"
             exit 0
@@ -144,9 +145,9 @@ jobs:
 
           NOTES=""
           if [ -n "$PINNED_DATE" ]; then
-            NOTES=$(gh api --paginate "repos/jackyzha0/quartz/releases" | jq -r \
+            NOTES=$(gh api --paginate "repos/jackyzha0/quartz/releases" | jq -s -r \
               --arg cutoff "$PINNED_DATE" \
-              '[.[] | select(.published_at > $cutoff and .draft == false and .prerelease == false)]
+              'add | [.[] | select(.published_at > $cutoff and .draft == false and .prerelease == false)]
                | sort_by(.published_at)
                | .[] | "## " + .tag_name + "\n\n" + (.body // "_No release notes._") + "\n"' \
               2>/dev/null || true)
