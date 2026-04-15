@@ -1,0 +1,183 @@
+# Checks for new Quartz releases and opens a PR to bump QUARTZ_VERSION in the
+# Dockerfile, with upstream release notes attached as a comment.
+name: Check Quartz Update
+run-name: "Check Quartz update${{ github.event_name == 'workflow_dispatch' && ' (manual)' || '' }}"
+
+on:
+  schedule:
+    - cron: "0 12 * * 1" # Weekly on Monday at noon UTC
+  workflow_dispatch:
+
+concurrency:
+  group: check-quartz-update
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get pinned and latest versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pinned=$(grep -oP 'ARG QUARTZ_VERSION=\K\S+' Dockerfile)
+          latest=$(gh api repos/jackyzha0/quartz/releases/latest --jq '.tag_name')
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "Pinned: $pinned, Latest: $latest"
+
+      - name: Close stale PRs when up to date
+        if: steps.versions.outputs.pinned == steps.versions.outputs.latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          STALE_PRS=$(gh pr list --state open --json number,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("auto-update/quartz-")) | .number] | .[]')
+          for pr in $STALE_PRS; do
+            echo "Closing stale PR #${pr}"
+            gh pr close "$pr" \
+              --comment "Closing: main branch already contains this version or a newer one." \
+              --delete-branch || true
+          done
+
+      - name: Create or update PR
+        if: steps.versions.outputs.pinned != steps.versions.outputs.latest
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.versions.outputs.pinned }}
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="auto-update/quartz-${LATEST}"
+          TITLE="chore(quartz): bump ${PINNED} → ${LATEST}"
+
+          git checkout -B "$BRANCH" origin/main
+
+          sed -i "s/ARG QUARTZ_VERSION=${PINNED}/ARG QUARTZ_VERSION=${LATEST}/" Dockerfile
+          git add Dockerfile
+
+          if git diff --cached --quiet; then
+            echo "No changes — skipping"
+            exit 0
+          fi
+
+          git commit -m "$TITLE"
+          git push --force-with-lease origin "$BRANCH"
+
+          PR_BODY=$(cat <<EOF
+          Automated Quartz version bump.
+
+          | Component | Old | New |
+          |-----------|-----|-----|
+          | Quartz | \`${PINNED}\` | \`${LATEST}\` |
+
+          **Changelog**: https://github.com/jackyzha0/quartz/releases/tag/${LATEST}
+
+          _Created automatically by check-quartz-update workflow._
+          EOF
+          )
+
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Updating existing PR #${EXISTING_PR}"
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${EXISTING_PR}" \
+              -X PATCH -f title="$TITLE" -f body="$PR_BODY"
+          else
+            gh pr create --title "$TITLE" --body "$PR_BODY" --head "$BRANCH" --base main
+            EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+          fi
+
+          # Close superseded PRs for older versions
+          OLD_PRS=$(gh pr list --state open --json number,headRefName \
+            --jq "[.[] | select(.headRefName | startswith(\"auto-update/quartz-\")) | select(.headRefName != \"${BRANCH}\") | .number] | .[]")
+          for pr in $OLD_PRS; do
+            echo "Closing superseded PR #${pr}"
+            gh pr close "$pr" --comment "Superseded by ${LATEST}" --delete-branch || true
+          done
+
+          echo "pr_number=${EXISTING_PR}" >> "$GITHUB_OUTPUT"
+
+      - name: Add release notes comment
+        if: steps.pr.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          PINNED: ${{ steps.versions.outputs.pinned }}
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          set -euo pipefail
+
+          COMMENT_HEADER="## Release Notes: ${PINNED} → ${LATEST}"
+
+          # Skip if already commented
+          ALREADY=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            | jq --arg h "$COMMENT_HEADER" '[.[] | select(.body | contains($h))] | length' \
+            | awk '{s+=$1} END{print s}')
+          if [ "$ALREADY" != "0" ]; then
+            echo "Release notes already posted, skipping"
+            exit 0
+          fi
+
+          # Get publish date of pinned version to find all releases since then
+          PINNED_DATE=""
+          PINNED_BARE="${PINNED#v}"
+          for tag in "$PINNED" "v${PINNED_BARE}"; do
+            result=$(gh api "repos/jackyzha0/quartz/releases/tags/${tag}" 2>/dev/null || true)
+            if [ -n "$result" ] && echo "$result" | jq -e '.published_at' >/dev/null 2>&1; then
+              PINNED_DATE=$(echo "$result" | jq -r '.published_at')
+              break
+            fi
+          done
+
+          NOTES=""
+          if [ -n "$PINNED_DATE" ]; then
+            NOTES=$(gh api --paginate "repos/jackyzha0/quartz/releases" | jq -r \
+              --arg cutoff "$PINNED_DATE" \
+              '[.[] | select(.published_at > $cutoff and .draft == false and .prerelease == false)]
+               | sort_by(.published_at)
+               | .[] | "## " + .tag_name + "\n\n" + (.body // "_No release notes._") + "\n"' \
+              2>/dev/null || true)
+          fi
+
+          # Fallback: just get the latest release notes
+          if [ -z "$NOTES" ]; then
+            rn=$(gh api "repos/jackyzha0/quartz/releases/tags/${LATEST}" --jq '.body // empty' 2>/dev/null || true)
+            if [ -n "$rn" ]; then
+              NOTES=$(printf '## %s\n\n%s' "$LATEST" "$rn")
+            else
+              NOTES="No release notes found."
+            fi
+          fi
+
+          # Truncate if too long
+          if [ "${#NOTES}" -gt 65000 ]; then
+            NOTES="${NOTES:0:65000}"$'\n\n'"> Truncated. See https://github.com/jackyzha0/quartz/releases for full changelog."
+          fi
+
+          COMMENT=$(printf '%s\n\n%s' "$COMMENT_HEADER" "$NOTES")
+          gh pr comment "$PR_NUMBER" --body "$COMMENT"
+
+      - name: Summary
+        if: always()
+        env:
+          PINNED: ${{ steps.versions.outputs.pinned }}
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          if [ "$PINNED" = "$LATEST" ]; then
+            echo "### :white_check_mark: Quartz ${PINNED}: up to date" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### :arrow_up: Quartz: ${PINNED} → ${LATEST}" >> "$GITHUB_STEP_SUMMARY"
+          fi
