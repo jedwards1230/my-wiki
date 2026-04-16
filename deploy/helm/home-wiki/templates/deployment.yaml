@@ -19,6 +19,12 @@
 {{- if and .Values.auth.jwt.enabled (not .Values.auth.jwt.allowedGroups) (not .Values.auth.jwt.allowAnyUser) -}}
 {{- fail "auth.jwt.enabled with empty auth.jwt.allowedGroups requires auth.jwt.allowAnyUser=true to explicitly opt in to granting any authenticated user full write access." -}}
 {{- end -}}
+{{- if and .Values.obsidianSync.standalone (or (not .Values.persistence.enabled) (ne .Values.persistence.accessMode "ReadWriteMany")) -}}
+{{- fail "obsidianSync.standalone requires persistence.enabled=true and persistence.accessMode=ReadWriteMany — both Deployments must mount the same PVC." -}}
+{{- end -}}
+{{- if and (gt (int .Values.replicaCount) 1) (or (not .Values.persistence.enabled) (ne .Values.persistence.accessMode "ReadWriteMany")) -}}
+{{- fail "replicaCount > 1 requires persistence.enabled=true and persistence.accessMode=ReadWriteMany for shared volume access." -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -49,6 +55,7 @@ spec:
       {{- end }}
 
       initContainers:
+        {{- if not .Values.obsidianSync.standalone }}
         - name: setup-sync
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -105,7 +112,14 @@ spec:
               mountPath: /data
           resources:
             {{- toYaml .Values.resources.setupSync | nindent 12 }}
+        {{- end }}
 
+        {{- /* In standalone mode, the sync Deployment may not have completed its
+             initial sync before setup-quartz runs. This is acceptable: the vault
+             data persists on the RWX PVC across restarts, so only the very first
+             deploy on an empty PVC hits this race. The readiness probe waits for
+             public/index.html, and VaultWatcher triggers a Quartz rebuild once
+             sync writes arrive. */}}
         - name: setup-quartz
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -152,6 +166,7 @@ spec:
             {{- toYaml .Values.resources.setupQuartz | nindent 12 }}
 
       containers:
+        {{- if not .Values.obsidianSync.standalone }}
         - name: sync
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -171,7 +186,9 @@ spec:
               mountPath: /data
           resources:
             {{- toYaml .Values.resources.sync | nindent 12 }}
+        {{- end }}
 
+        {{- if not .Values.quartz.serverManaged }}
         - name: quartz
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -191,6 +208,7 @@ spec:
               mountPath: /data
           resources:
             {{- toYaml .Values.resources.quartz | nindent 12 }}
+        {{- end }}
 
         - name: wiki-server
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -209,6 +227,10 @@ spec:
               value: "/data/vault"
             - name: WIKI_PORT
               value: "8080"
+            {{- if .Values.quartz.serverManaged }}
+            - name: WIKI_QUARTZ_DIR
+              value: "/data/quartz"
+            {{- end }}
             {{- if .Values.auth.jwt.enabled }}
             - name: WIKI_AUTH_ISSUER
               value: {{ required "auth.jwt.issuer is required when auth.jwt.enabled=true" .Values.auth.jwt.issuer | quote }}
