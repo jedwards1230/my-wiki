@@ -29,7 +29,8 @@ obsidian:
 
 # When true, obsidian-headless runs as a separate single-replica Deployment
 # instead of as init+sidecar in the main server pod. Requires
-# persistence.accessMode=ReadWriteMany so both Deployments can mount the PVC.
+# persistence.enabled=true and persistence.accessMode=ReadWriteMany so both
+# Deployments can mount the PVC and share data.
 obsidianSync:
   standalone: false
 
@@ -39,7 +40,8 @@ quartz:
   repoUrl: "https://github.com/jedwards1230/home-wiki/releases"
   # When true, wiki-server triggers Quartz builds via WIKI_QUARTZ_DIR instead
   # of running the quartz --watch sidecar. The setup-quartz init container
-  # still runs for the initial build.
+  # still runs on every pod start for the initial build (it wipes and
+  # recreates /data/quartz and /data/public).
   serverManaged: false
 
 persistence:
