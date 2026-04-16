@@ -19,11 +19,11 @@
 {{- if and .Values.auth.jwt.enabled (not .Values.auth.jwt.allowedGroups) (not .Values.auth.jwt.allowAnyUser) -}}
 {{- fail "auth.jwt.enabled with empty auth.jwt.allowedGroups requires auth.jwt.allowAnyUser=true to explicitly opt in to granting any authenticated user full write access." -}}
 {{- end -}}
-{{- if and .Values.obsidianSync.standalone (eq .Values.persistence.accessMode "ReadWriteOnce") -}}
-{{- fail "obsidianSync.standalone requires persistence.accessMode=ReadWriteMany — both Deployments must mount the same PVC." -}}
+{{- if and .Values.obsidianSync.standalone (or (not .Values.persistence.enabled) (ne .Values.persistence.accessMode "ReadWriteMany")) -}}
+{{- fail "obsidianSync.standalone requires persistence.enabled=true and persistence.accessMode=ReadWriteMany — both Deployments must mount the same PVC." -}}
 {{- end -}}
-{{- if and (gt (int .Values.replicaCount) 1) (eq .Values.persistence.accessMode "ReadWriteOnce") -}}
-{{- fail "replicaCount > 1 requires persistence.accessMode=ReadWriteMany for shared volume access." -}}
+{{- if and (gt (int .Values.replicaCount) 1) (or (not .Values.persistence.enabled) (ne .Values.persistence.accessMode "ReadWriteMany")) -}}
+{{- fail "replicaCount > 1 requires persistence.enabled=true and persistence.accessMode=ReadWriteMany for shared volume access." -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -36,11 +36,7 @@ metadata:
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy:
-    {{- if .Values.obsidianSync.standalone }}
-    type: RollingUpdate
-    {{- else }}
     type: Recreate
-    {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: wiki
@@ -118,6 +114,12 @@ spec:
             {{- toYaml .Values.resources.setupSync | nindent 12 }}
         {{- end }}
 
+        {{- /* In standalone mode, the sync Deployment may not have completed its
+             initial sync before setup-quartz runs. This is acceptable: the vault
+             data persists on the RWX PVC across restarts, so only the very first
+             deploy on an empty PVC hits this race. The readiness probe waits for
+             public/index.html, and VaultWatcher triggers a Quartz rebuild once
+             sync writes arrive. */}}
         - name: setup-quartz
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
