@@ -9,7 +9,7 @@ const config: QuartzConfig = {
     enablePopovers: true,
     analytics: null,
     locale: "en-US",
-    baseUrl: "%%BASE_URL%%",
+    baseUrl: process.env.QUARTZ_BASE_URL || "wiki.example.com",
     ignorePatterns: ["private", ".obsidian", "raw"],
     defaultDateType: "modified",
     theme: {
