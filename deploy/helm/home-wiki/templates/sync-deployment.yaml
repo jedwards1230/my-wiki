@@ -24,6 +24,9 @@ spec:
     spec:
       securityContext:
         fsGroup: 100
+        {{- with .Values.podSecurityContext.fsGroupChangePolicy }}
+        fsGroupChangePolicy: {{ . }}
+        {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
