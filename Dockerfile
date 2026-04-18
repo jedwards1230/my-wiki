@@ -35,11 +35,7 @@ COPY quartz/styles/custom.scss ./quartz/styles/custom.scss
 RUN echo 'export { default as RawLink } from "./RawLink"' >> ./quartz/components/index.ts && \
     echo 'export { default as SidebarToggle } from "./SidebarToggle"' >> ./quartz/components/index.ts
 ARG BUILD_VERSION=dev
-ARG BASE_URL
-ARG REPO_URL
-RUN sed -i "s/%%BUILD_VERSION%%/v${BUILD_VERSION}/" ./quartz.layout.ts && \
-    if [ -n "${BASE_URL}" ]; then sed -i "s|%%BASE_URL%%|${BASE_URL}|" ./quartz.config.ts; fi && \
-    if [ -n "${REPO_URL}" ]; then sed -i "s|%%REPO_URL%%|${REPO_URL}|" ./quartz.layout.ts; fi
+RUN sed -i "s/%%BUILD_VERSION%%/v${BUILD_VERSION}/" ./quartz.layout.ts
 
 # Create non-root user (uid 1001 — node:alpine already uses uid 1000 for 'node')
 RUN adduser -D -u 1001 wiki && mkdir -p /data && chown -R wiki:wiki /data

@@ -140,16 +140,6 @@ spec:
               cp -r /quartz /data/quartz
 
               cd /data/quartz
-              if [ -n "$QUARTZ_BASE_URL" ]; then
-                echo "Setting baseUrl to $QUARTZ_BASE_URL..."
-                escaped=$(printf '%s' "$QUARTZ_BASE_URL" | sed 's/[&|\\]/\\&/g')
-                sed -i "s|%%BASE_URL%%|$escaped|" quartz.config.ts
-              fi
-              if [ -n "$QUARTZ_REPO_URL" ]; then
-                echo "Setting repoUrl to $QUARTZ_REPO_URL..."
-                escaped=$(printf '%s' "$QUARTZ_REPO_URL" | sed 's/[&|\\]/\\&/g')
-                sed -i "s|%%REPO_URL%%|$escaped|" quartz.layout.ts
-              fi
 
               echo "Generating index files..."
               wiki-server --vault /data/vault directory --generate
@@ -196,6 +186,11 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["sh", "-c"]
+          env:
+            - name: QUARTZ_BASE_URL
+              value: {{ .Values.quartz.baseUrl | quote }}
+            - name: QUARTZ_REPO_URL
+              value: {{ .Values.quartz.repoUrl | quote }}
           args:
             - |
               echo "Starting Quartz in watch mode..."
@@ -233,6 +228,10 @@ spec:
             {{- if .Values.quartz.serverManaged }}
             - name: WIKI_QUARTZ_DIR
               value: "/data/quartz"
+            - name: QUARTZ_BASE_URL
+              value: {{ .Values.quartz.baseUrl | quote }}
+            - name: QUARTZ_REPO_URL
+              value: {{ .Values.quartz.repoUrl | quote }}
             {{- end }}
             {{- if .Values.auth.jwt.enabled }}
             - name: WIKI_AUTH_ISSUER
