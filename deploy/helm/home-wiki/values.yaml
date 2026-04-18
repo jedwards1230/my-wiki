@@ -50,6 +50,14 @@ persistence:
   accessMode: ReadWriteOnce
   size: 5Gi
 
+# Pod-level securityContext applied to both the wiki server and (when standalone)
+# wiki-sync Deployments. fsGroup is hardcoded to 100 because the wiki image
+# expects files to be group-writable by the users (100) group. fsGroupChangePolicy
+# defaults to OnRootMismatch to skip kubelet's recursive chown on every rollout
+# once the volume root has the right group — important for large NFS volumes.
+podSecurityContext:
+  fsGroupChangePolicy: OnRootMismatch
+
 # Name of the K8s Secret containing OBSIDIAN_EMAIL, OBSIDIAN_PASSWORD, OBSIDIAN_E2E_PASSWORD.
 # Create this secret however you like (kubectl, Sealed Secrets, External Secrets, etc.)
 obsidianSecretName: ""  # defaults to {{ .Release.Name }}-obsidian
