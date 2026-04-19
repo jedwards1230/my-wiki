@@ -1,28 +1,39 @@
 # --- Go builder stage ---
-FROM golang:1.25.6-alpine AS go-builder
+# Runs natively on the build host and cross-compiles to $TARGETARCH,
+# avoiding QEMU emulation for multi-arch builds.
+FROM --platform=$BUILDPLATFORM golang:1.25.6-alpine AS go-builder
 WORKDIR /src
+
+ARG TARGETOS
+ARG TARGETARCH
 
 # Cache dependency downloads (layer busted only when go.mod/go.sum change)
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 # Build binary (layer busted when source changes)
 COPY cmd/ cmd/
 COPY internal/ internal/
 ARG BUILD_VERSION=dev
-RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/jedwards1230/home-wiki/internal/version.Value=${BUILD_VERSION}" -o /wiki-server ./cmd/wiki-server
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags="-s -w -X github.com/jedwards1230/home-wiki/internal/version.Value=${BUILD_VERSION}" -o /wiki-server ./cmd/wiki-server
 
 # --- Main image ---
 FROM node:24-alpine
 
 # System packages + obsidian-headless (rarely changes — keep at top for caching)
-RUN apk add --no-cache git coreutils bash tzdata && \
+RUN --mount=type=cache,target=/root/.npm \
+    apk add --no-cache git coreutils bash tzdata && \
     npm install -g obsidian-headless
 
 # Set up Quartz project (only re-runs when QUARTZ_VERSION changes)
 ARG QUARTZ_VERSION=v4.5.2
 WORKDIR /quartz
-RUN git clone --depth 1 --branch "${QUARTZ_VERSION}" https://github.com/jackyzha0/quartz.git . && \
+RUN --mount=type=cache,target=/root/.npm \
+    git clone --depth 1 --branch "${QUARTZ_VERSION}" https://github.com/jackyzha0/quartz.git . && \
     npm ci --ignore-scripts && \
     rm -rf .git
 
