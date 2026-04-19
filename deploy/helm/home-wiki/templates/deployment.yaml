@@ -132,20 +132,24 @@ spec:
               value: {{ .Values.quartz.baseUrl | quote }}
             - name: QUARTZ_REPO_URL
               value: {{ .Values.quartz.repoUrl | quote }}
+            - name: HOME
+              value: /tmp
+            - name: NPM_CONFIG_CACHE
+              value: /tmp/.npm
           args:
             - |
               set -e
-              echo "Copying Quartz project to PVC..."
+              # One-time cleanup of legacy /data/quartz PVC copy (pre-0.2.4
+              # charts cp'd the whole Quartz project here). rm -rf is
+              # already idempotent on missing dirs; genuine IO/permission
+              # errors still fail the init.
               rm -rf /data/quartz
-              cp -r /quartz /data/quartz
-
-              cd /data/quartz
 
               echo "Generating index files..."
               wiki-server --vault /data/vault directory --generate
 
               echo "Building Quartz..."
-              npx quartz build --output /data/public --directory ../vault
+              cd /quartz && npx quartz build --output /data/public --directory /data/vault
               echo "Quartz build complete."
           securityContext:
             allowPrivilegeEscalation: false
@@ -155,6 +159,10 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: quartz-cache
+              mountPath: /quartz/quartz/.quartz-cache
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- toYaml .Values.resources.setupQuartz | nindent 12 }}
 
@@ -191,11 +199,14 @@ spec:
               value: {{ .Values.quartz.baseUrl | quote }}
             - name: QUARTZ_REPO_URL
               value: {{ .Values.quartz.repoUrl | quote }}
+            - name: HOME
+              value: /tmp
+            - name: NPM_CONFIG_CACHE
+              value: /tmp/.npm
           args:
             - |
               echo "Starting Quartz in watch mode..."
-              cd /data/quartz
-              npx quartz build --watch --concurrency {{ .Values.quartz.concurrency }} --output /data/public --directory ../vault
+              cd /quartz && npx quartz build --watch --concurrency {{ .Values.quartz.concurrency }} --output /data/public --directory /data/vault
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
@@ -204,6 +215,10 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: quartz-cache
+              mountPath: /quartz/quartz/.quartz-cache
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- toYaml .Values.resources.quartz | nindent 12 }}
         {{- end }}
@@ -227,11 +242,15 @@ spec:
               value: "8080"
             {{- if .Values.quartz.serverManaged }}
             - name: WIKI_QUARTZ_DIR
-              value: "/data/quartz"
+              value: "/quartz"
             - name: QUARTZ_BASE_URL
               value: {{ .Values.quartz.baseUrl | quote }}
             - name: QUARTZ_REPO_URL
               value: {{ .Values.quartz.repoUrl | quote }}
+            - name: HOME
+              value: /tmp
+            - name: NPM_CONFIG_CACHE
+              value: /tmp/.npm
             {{- end }}
             {{- if .Values.auth.jwt.enabled }}
             - name: WIKI_AUTH_ISSUER
@@ -273,6 +292,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.quartz.serverManaged }}
+            - name: quartz-cache
+              mountPath: /quartz/quartz/.quartz-cache
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -343,6 +368,17 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        # Quartz hardcodes its esbuild cache at <project>/quartz/.quartz-cache.
+        # wiki-server runs with readOnlyRootFilesystem=true, so it can't write
+        # anywhere on the image layer — mount an emptyDir at the cache path
+        # to give Quartz a writable location. setup-quartz and the --watch
+        # sidecar use the same mount for consistency.
+        - name: quartz-cache
+          emptyDir: {}
+        # Writable /tmp for HOME + npm cache. Required by wiki-server's
+        # readOnlyRootFilesystem=true; harmless on the other containers.
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.auth.discovery.enabled }}
         - name: oauth-metadata-conf
           configMap:
