@@ -140,9 +140,10 @@ spec:
             - |
               set -e
               # One-time cleanup of legacy /data/quartz PVC copy (pre-0.2.4
-              # charts cp'd the whole Quartz project here). Idempotent on
-              # fresh PVCs.
-              rm -rf /data/quartz 2>/dev/null || true
+              # charts cp'd the whole Quartz project here). rm -rf is
+              # already idempotent on missing dirs; genuine IO/permission
+              # errors still fail the init.
+              rm -rf /data/quartz
 
               echo "Generating index files..."
               wiki-server --vault /data/vault directory --generate
@@ -368,12 +369,14 @@ spec:
           emptyDir: {}
           {{- end }}
         # Quartz hardcodes its esbuild cache at <project>/quartz/.quartz-cache.
-        # Since /quartz is now read-only (served from the image), we mount an
-        # emptyDir there so Quartz can write its transpile cache.
+        # wiki-server runs with readOnlyRootFilesystem=true, so it can't write
+        # anywhere on the image layer — mount an emptyDir at the cache path
+        # to give Quartz a writable location. setup-quartz and the --watch
+        # sidecar use the same mount for consistency.
         - name: quartz-cache
           emptyDir: {}
-        # Writable /tmp for npm cache + HOME when readOnlyRootFilesystem is
-        # on the wiki-server container.
+        # Writable /tmp for HOME + npm cache. Required by wiki-server's
+        # readOnlyRootFilesystem=true; harmless on the other containers.
         - name: tmp
           emptyDir: {}
         {{- if .Values.auth.discovery.enabled }}
