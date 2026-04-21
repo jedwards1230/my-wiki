@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -105,8 +106,13 @@ func (s *IngestService) Generate() (string, int, error) {
 		}
 	}
 
-	if err := os.WriteFile(queueFile, []byte(b.String()), 0o644); err != nil {
-		return "", 0, err
+	newContent := []byte(b.String())
+	// Skip the write if bytes are unchanged — see DirectoryService.Generate for
+	// the rationale (fsnotify feedback loop in serve mode).
+	if existing, err := os.ReadFile(queueFile); err != nil || !bytes.Equal(existing, newContent) {
+		if err := os.WriteFile(queueFile, newContent, 0o644); err != nil {
+			return "", 0, err
+		}
 	}
 
 	return queueFile, len(items), nil

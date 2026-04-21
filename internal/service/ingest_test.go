@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jedwards1230/home-wiki/internal/vault"
 )
@@ -101,5 +102,39 @@ func TestIngestService_Generate(t *testing.T) {
 	}
 	if strings.Contains(content, "raw/processed.md") {
 		t.Error("should not contain processed.md")
+	}
+}
+
+// TestIngestService_Generate_Idempotent guards against an fsnotify feedback
+// loop: regenerating with no changes must not rewrite meta/ingest-queue.md.
+// See DirectoryService.Generate for the full rationale.
+func TestIngestService_Generate_Idempotent(t *testing.T) {
+	v := setupIngestVault(t)
+	svc := NewIngestService(v)
+
+	path, _, err := svc.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	infoBefore, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+
+	if _, _, err := svc.Generate(); err != nil {
+		t.Fatal(err)
+	}
+
+	infoAfter, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infoAfter.ModTime().Equal(infoBefore.ModTime()) {
+		t.Errorf("meta/ingest-queue.md was rewritten on second Generate "+
+			"(mtime changed %v → %v); this will cause an fsnotify rebuild loop",
+			infoBefore.ModTime(), infoAfter.ModTime())
 	}
 }
