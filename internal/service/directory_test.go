@@ -72,11 +72,35 @@ func TestDirectoryService_Generate(t *testing.T) {
 	}
 }
 
+// stampPast sets the given file's atime and mtime to a fixed past instant and
+// returns the actual mtime the filesystem stored (which can differ from the
+// requested time under coarse-resolution mtime, e.g. 1s on HFS+). Comparing
+// against the stored value — not the requested value — is what makes the
+// idempotency assertions deterministic without sleeping.
+func stampPast(t *testing.T, path string) time.Time {
+	t.Helper()
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, past, past); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.ModTime()
+}
+
 // TestDirectoryService_Generate_Idempotent guards against an fsnotify feedback
 // loop: when nothing in the vault has changed, a second Generate call must not
 // rewrite any index files. Rewriting with identical bytes still bumps mtime,
 // which fsnotify reports as a Write event — causing the watcher to re-queue a
 // rebuild that calls Generate again, forever.
+//
+// We force each index file's mtime backwards via os.Chtimes rather than
+// sleeping past filesystem mtime resolution: it's deterministic, ~instant, and
+// immune to unlikely-but-possible date-rollover during the test (the root
+// index embeds today's date, so a sleep that crossed midnight would produce a
+// false positive).
 func TestDirectoryService_Generate_Idempotent(t *testing.T) {
 	v := setupDirectoryVault(t)
 	svc := NewDirectoryService(v)
@@ -85,7 +109,6 @@ func TestDirectoryService_Generate_Idempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Capture mtimes of every generated index file.
 	indexFiles := []string{
 		"index.md",
 		"home/index.md",
@@ -94,18 +117,10 @@ func TestDirectoryService_Generate_Idempotent(t *testing.T) {
 		"research/index.md",
 		"research/aerospace/index.md",
 	}
-	before := make(map[string]time.Time, len(indexFiles))
+	stamped := make(map[string]time.Time, len(indexFiles))
 	for _, rel := range indexFiles {
-		info, err := os.Stat(filepath.Join(v.Dir, rel))
-		if err != nil {
-			t.Fatal(err)
-		}
-		before[rel] = info.ModTime()
+		stamped[rel] = stampPast(t, filepath.Join(v.Dir, rel))
 	}
-
-	// Sleep past filesystem mtime resolution (macOS HFS+ is 1s; APFS/ext4/xfs
-	// are finer but a full second is safe and test-run noise is negligible).
-	time.Sleep(1100 * time.Millisecond)
 
 	if _, _, err := svc.Generate(); err != nil {
 		t.Fatal(err)
@@ -116,10 +131,10 @@ func TestDirectoryService_Generate_Idempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !info.ModTime().Equal(before[rel]) {
+		if !info.ModTime().Equal(stamped[rel]) {
 			t.Errorf("index %s was rewritten on second Generate (mtime changed %v → %v); "+
 				"this will cause an fsnotify rebuild loop in serve mode",
-				rel, before[rel], info.ModTime())
+				rel, stamped[rel], info.ModTime())
 		}
 	}
 }
@@ -136,12 +151,7 @@ func TestDirectoryService_Generate_WritesOnContentChange(t *testing.T) {
 	}
 
 	homeIndex := filepath.Join(v.Dir, "home/index.md")
-	infoBefore, err := os.Stat(homeIndex)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	time.Sleep(1100 * time.Millisecond)
+	stamped := stampPast(t, homeIndex)
 
 	// Add a new page under home/ — the home/index.md should be rewritten.
 	newPage := filepath.Join(v.Dir, "home/new-page.md")
@@ -153,11 +163,11 @@ func TestDirectoryService_Generate_WritesOnContentChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	infoAfter, err := os.Stat(homeIndex)
+	info, err := os.Stat(homeIndex)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if infoAfter.ModTime().Equal(infoBefore.ModTime()) {
+	if info.ModTime().Equal(stamped) {
 		t.Error("home/index.md mtime unchanged after adding a new page — fix is too aggressive")
 	}
 
