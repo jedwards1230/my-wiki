@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -152,10 +153,28 @@ func (s *DirectoryService) Generate() (string, int, error) {
 		if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(indexPath, []byte(content), 0o644); err != nil {
-			return err
+		newContent := []byte(content)
+		// Skip the write if bytes are unchanged. Rewriting with identical content
+		// still bumps mtime, which fsnotify reports as a Write event — causing a
+		// self-sustaining rebuild loop when Generate is wired to the vault watcher
+		// in serve mode.
+		//
+		// Only treat "does not exist" as reason to fall through to the write.
+		// Other read errors (permissions, IO) are surfaced rather than quietly
+		// overwritten — otherwise a transient read failure would mask itself
+		// *and* reintroduce the feedback loop on every call.
+		existing, readErr := os.ReadFile(indexPath)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return readErr
 		}
-		filesWritten++
+		if readErr == nil && bytes.Equal(existing, newContent) {
+			// No change — skip write.
+		} else {
+			if err := os.WriteFile(indexPath, newContent, 0o644); err != nil {
+				return err
+			}
+			filesWritten++
+		}
 
 		for _, child := range node.children {
 			if err := writeIndexes(child); err != nil {

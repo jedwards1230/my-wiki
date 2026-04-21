@@ -103,3 +103,34 @@ func TestIngestService_Generate(t *testing.T) {
 		t.Error("should not contain processed.md")
 	}
 }
+
+// TestIngestService_Generate_Idempotent guards against an fsnotify feedback
+// loop: regenerating with no changes must not rewrite meta/ingest-queue.md.
+// See DirectoryService.Generate for the full rationale. Uses os.Chtimes
+// (via stampPast) instead of time.Sleep so the assertion is deterministic
+// and immune to date-rollover flakes.
+func TestIngestService_Generate_Idempotent(t *testing.T) {
+	v := setupIngestVault(t)
+	svc := NewIngestService(v)
+
+	path, _, err := svc.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stamped := stampPast(t, path)
+
+	if _, _, err := svc.Generate(); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(stamped) {
+		t.Errorf("meta/ingest-queue.md was rewritten on second Generate "+
+			"(mtime changed %v → %v); this will cause an fsnotify rebuild loop",
+			stamped, info.ModTime())
+	}
+}
