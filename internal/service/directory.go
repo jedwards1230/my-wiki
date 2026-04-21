@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -152,10 +153,17 @@ func (s *DirectoryService) Generate() (string, int, error) {
 		if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(indexPath, []byte(content), 0o644); err != nil {
-			return err
+		newContent := []byte(content)
+		// Skip the write if bytes are unchanged. Rewriting with identical content
+		// still bumps mtime, which fsnotify reports as a Write event — causing a
+		// self-sustaining rebuild loop when Generate is wired to the vault watcher
+		// in serve mode.
+		if existing, err := os.ReadFile(indexPath); err != nil || !bytes.Equal(existing, newContent) {
+			if err := os.WriteFile(indexPath, newContent, 0o644); err != nil {
+				return err
+			}
+			filesWritten++
 		}
-		filesWritten++
 
 		for _, child := range node.children {
 			if err := writeIndexes(child); err != nil {
