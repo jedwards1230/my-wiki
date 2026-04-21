@@ -108,11 +108,17 @@ func (s *IngestService) Generate() (string, int, error) {
 
 	newContent := []byte(b.String())
 	// Skip the write if bytes are unchanged — see DirectoryService.Generate for
-	// the rationale (fsnotify feedback loop in serve mode).
-	if existing, err := os.ReadFile(queueFile); err != nil || !bytes.Equal(existing, newContent) {
-		if err := os.WriteFile(queueFile, newContent, 0o644); err != nil {
-			return "", 0, err
-		}
+	// the rationale (fsnotify feedback loop in serve mode). Only "does not
+	// exist" read errors trigger a write; other read errors are surfaced.
+	existing, readErr := os.ReadFile(queueFile)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return "", 0, readErr
+	}
+	if readErr == nil && bytes.Equal(existing, newContent) {
+		return queueFile, len(items), nil
+	}
+	if err := os.WriteFile(queueFile, newContent, 0o644); err != nil {
+		return "", 0, err
 	}
 
 	return queueFile, len(items), nil
