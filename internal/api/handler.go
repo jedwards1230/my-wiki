@@ -51,7 +51,6 @@ func WithPageService(ps *service.PageService) HandlerOption {
 type Handler struct {
 	vaultDir  string
 	lint      *service.LintService
-	ingest    *service.IngestService
 	directory *service.DirectoryService
 	activity  *service.ActivityService
 	pages     *service.PageService
@@ -69,7 +68,6 @@ func NewHandler(v *vault.Vault, searchSvc *service.SearchService, opts ...Handle
 	h := &Handler{
 		vaultDir:  v.Dir,
 		lint:      service.NewLintService(v, logSvc),
-		ingest:    service.NewIngestService(v),
 		directory: service.NewDirectoryService(v),
 		activity:  service.NewActivityService(v.Storage),
 		pages:     service.NewPageService(v.Storage),
@@ -89,7 +87,6 @@ func NewHandler(v *vault.Vault, searchSvc *service.SearchService, opts ...Handle
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Read-only routes — optionally auth-protected when read auth is enabled
 	mux.Handle("GET /api/lint", h.wrapRead(http.HandlerFunc(h.handleLint)))
-	mux.Handle("GET /api/ingest", h.wrapRead(http.HandlerFunc(h.handleIngestList)))
 	mux.Handle("GET /api/directory", h.wrapRead(http.HandlerFunc(h.handleDirectoryList)))
 	mux.Handle("GET /api/pages/{path...}", h.wrapRead(http.HandlerFunc(h.handlePageRead)))
 	mux.Handle("GET /api/pages", h.wrapRead(http.HandlerFunc(h.handlePageList)))
@@ -99,7 +96,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/whoami", h.wrapRead(http.HandlerFunc(h.handleWhoami)))
 
 	// Mutating routes — protected by auth middleware when configured
-	mux.Handle("POST /api/ingest/generate", h.wrapMutating(http.HandlerFunc(h.handleIngestGenerate)))
 	mux.Handle("POST /api/directory/generate", h.wrapMutating(http.HandlerFunc(h.handleDirectoryGenerate)))
 	mux.Handle("POST /api/activity", h.wrapMutating(http.HandlerFunc(h.handleActivityAppend)))
 	mux.Handle("PUT /api/pages/{path...}", h.wrapMutating(http.HandlerFunc(h.handlePageWrite)))

@@ -104,38 +104,6 @@ func TestLintEndpointInvalidCheck(t *testing.T) {
 	}
 }
 
-func TestIngestEndpoint(t *testing.T) {
-	mux, _ := setupTestMux(t)
-
-	r := httptest.NewRequest(http.MethodGet, "/api/ingest", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	var resp response
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.Error != "" {
-		t.Fatalf("unexpected error: %s", resp.Error)
-	}
-}
-
-func TestIngestGenerateEndpoint(t *testing.T) {
-	mux, _ := setupTestMux(t)
-
-	r := httptest.NewRequest(http.MethodPost, "/api/ingest/generate", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-}
-
 func TestActivityEndpoint(t *testing.T) {
 	mux, _ := setupTestMux(t)
 
@@ -669,7 +637,6 @@ func TestAuthMutatingRoutesRequireAuth(t *testing.T) {
 		{"DELETE", "/api/pages/about.md", ""},
 		{"PATCH", "/api/pages/project/alpha.md", `{"operations":[{"find":"Content.","replace":"New."}]}`},
 		{"POST", "/api/activity", `{"type":"note","title":"Test","time":"15:00"}`},
-		{"POST", "/api/ingest/generate", ""},
 		{"POST", "/api/directory/generate", ""},
 	}
 
@@ -708,7 +675,6 @@ func TestAuthReadRoutesRemainOpen(t *testing.T) {
 		{"/api/pages/index.md"},
 		{"/api/pages"},
 		{"/api/lint"},
-		{"/api/ingest"},
 		{"/api/directory"},
 		{"/api/recent"},
 		{"/api/search?q=Alpha"},
@@ -741,7 +707,6 @@ func TestAuthReadsProtectsGetRoutes(t *testing.T) {
 		"/api/pages/index.md",
 		"/api/pages",
 		"/api/lint",
-		"/api/ingest",
 		"/api/directory",
 		"/api/recent",
 		"/api/search?q=Alpha",
