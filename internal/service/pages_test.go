@@ -251,28 +251,16 @@ func TestPageService_WriteValidation(t *testing.T) {
 			wantErr: "missing frontmatter block",
 		},
 		{
-			name:    "valid raw file",
-			path:    "raw/paper.md",
-			content: "---\ntitle: Research Paper\nsource: https://example.com/paper.pdf\ndate-added: 2026-03-15\n---\n\nSummary.\n",
+			name:    "raw file skips validation",
+			path:    "raw/anything.md",
+			content: "no frontmatter, no rules.\n",
 			wantErr: "",
 		},
 		{
-			name:    "raw file missing source",
-			path:    "raw/bad.md",
-			content: "---\ntitle: No Source\ndate-added: 2026-03-15\n---\n\nSummary.\n",
-			wantErr: "missing required frontmatter field: source",
-		},
-		{
-			name:    "raw file missing date-added",
-			path:    "raw/bad.md",
-			content: "---\ntitle: No Date\nsource: https://example.com\n---\n\nSummary.\n",
-			wantErr: "missing required frontmatter field: date-added",
-		},
-		{
-			name:    "raw file invalid date-added",
-			path:    "raw/bad.md",
-			content: "---\ntitle: Bad Date\nsource: https://example.com\ndate-added: March 2026\n---\n\nSummary.\n",
-			wantErr: "invalid date-added format: expected YYYY-MM-DD, got",
+			name:    "raw path traversal does not skip validation",
+			path:    "raw/../somepage.md",
+			content: "Just plain text without frontmatter.\n",
+			wantErr: "missing frontmatter block",
 		},
 	}
 

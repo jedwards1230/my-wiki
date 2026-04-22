@@ -15,13 +15,6 @@ type LintReport struct {
 	Errors int         `json:"errors"` // count of FAIL + WARN + ERROR (excludes INFO)
 }
 
-// RawFileInfo describes an unprocessed raw source file.
-type RawFileInfo struct {
-	Path      string `json:"path"`
-	Title     string `json:"title"`
-	DateAdded string `json:"date_added,omitempty"`
-}
-
 // LogEntry represents one line from the log index.
 type LogEntry struct {
 	Date        string `json:"date"`

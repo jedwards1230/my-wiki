@@ -234,7 +234,6 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 
 	// Build services needed by the rebuild notifier
 	directorySvc := service.NewDirectoryService(v)
-	ingestSvc := service.NewIngestService(v)
 
 	// Create Quartz builder if quartz-dir is configured. This replaces
 	// Quartz's built-in --watch mode: the Go server triggers one-shot
@@ -249,9 +248,6 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	notifier := notify.New(2*time.Second, func(paths []string) {
 		if _, _, err := directorySvc.Generate(); err != nil {
 			logger.Warn("rebuild notifier: directory generate failed", "error", err)
-		}
-		if _, _, err := ingestSvc.Generate(); err != nil {
-			logger.Warn("rebuild notifier: ingest generate failed", "error", err)
 		}
 		if quartzBuilder != nil {
 			quartzBuilder.Build()
@@ -426,14 +422,10 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	v := vault.New(vaultDir)
 
 	directorySvc := service.NewDirectoryService(v)
-	ingestSvc := service.NewIngestService(v)
 
 	mcpNotifier := notify.New(2*time.Second, func(paths []string) {
 		if _, _, err := directorySvc.Generate(); err != nil {
 			logger.Warn("rebuild notifier: directory generate failed", "error", err)
-		}
-		if _, _, err := ingestSvc.Generate(); err != nil {
-			logger.Warn("rebuild notifier: ingest generate failed", "error", err)
 		}
 		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
 	})
