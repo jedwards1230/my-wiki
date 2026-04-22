@@ -39,7 +39,6 @@ gofmt -w .
 
 # CLI subcommands (operate on vault directly)
 ./wiki-server lint --vault /path/to/vault
-./wiki-server ingest --vault /path/to/vault
 ./wiki-server directory --vault /path/to/vault
 ./wiki-server log --vault /path/to/vault
 ./wiki-server activity --vault /path/to/vault
@@ -50,7 +49,7 @@ gofmt -w .
 ```
 cmd/wiki-server/main.go    Entry point — delegates to cli package
 internal/
-  cli/                     Cobra command tree (serve, lint, ingest, directory, log, activity)
+  cli/                     Cobra command tree (serve, lint, directory, log, activity)
   server/                  HTTP server setup, static/markdown/raw handlers, middleware chain
   api/                     REST API handler — registers routes on /api/*, delegates to services
   mcpserver/               MCP server (mcp-go) — registers wiki_* tools, streamable-http transport
