@@ -36,7 +36,6 @@ func NewRootCmd() *cobra.Command {
 
 	cmd.AddCommand(newServeCmd())
 	cmd.AddCommand(newLintCmd())
-	cmd.AddCommand(newIngestCmd())
 	cmd.AddCommand(newDirectoryCmd())
 	cmd.AddCommand(newLogCmd())
 	cmd.AddCommand(newActivityCmd())

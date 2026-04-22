@@ -130,9 +130,18 @@ func (e *ValidationError) Error() string { return e.Message }
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 // validateFrontmatter checks that content has the required frontmatter fields
-// for the given path. Wiki pages require title, tags, and date. Raw files
-// require title, source, and date-added.
+// for the given path. Wiki pages require title, tags, and date. Files under
+// raw/ are plain static hosting and skip page-level validation entirely.
+//
+// The raw/ check runs against the cleaned, forward-slash form of relPath so
+// paths like "raw/../foo.md" (which the storage layer resolves to "foo.md")
+// don't bypass wiki-page validation.
 func validateFrontmatter(relPath, content string) error {
+	normalizedRelPath := filepath.ToSlash(filepath.Clean(relPath))
+	if normalizedRelPath == "raw" || strings.HasPrefix(normalizedRelPath, "raw/") {
+		return nil
+	}
+
 	fm, err := vault.ParseFrontmatterString(content)
 	if err != nil {
 		return &ValidationError{Message: fmt.Sprintf("failed to parse frontmatter: %v", err)}
@@ -141,11 +150,6 @@ func validateFrontmatter(relPath, content string) error {
 		return &ValidationError{Message: "missing frontmatter block (expected --- delimiters)"}
 	}
 
-	isRaw := strings.HasPrefix(relPath, "raw/") || strings.HasPrefix(relPath, "raw\\")
-
-	if isRaw {
-		return validateRawFrontmatter(fm)
-	}
 	return validateWikiFrontmatter(fm)
 }
 
@@ -163,23 +167,6 @@ func validateWikiFrontmatter(fm map[string]string) error {
 	}
 	if !dateRe.MatchString(dateVal) {
 		return &ValidationError{Message: fmt.Sprintf("invalid date format: expected YYYY-MM-DD, got %q", dateVal)}
-	}
-	return nil
-}
-
-func validateRawFrontmatter(fm map[string]string) error {
-	if fm["title"] == "" {
-		return &ValidationError{Message: "missing required frontmatter field: title"}
-	}
-	if fm["source"] == "" {
-		return &ValidationError{Message: "missing required frontmatter field: source"}
-	}
-	dateVal, hasDate := fm["date-added"]
-	if !hasDate || dateVal == "" {
-		return &ValidationError{Message: "missing required frontmatter field: date-added"}
-	}
-	if !dateRe.MatchString(dateVal) {
-		return &ValidationError{Message: fmt.Sprintf("invalid date-added format: expected YYYY-MM-DD, got %q", dateVal)}
 	}
 	return nil
 }
