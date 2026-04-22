@@ -24,7 +24,7 @@ type captureRun struct {
 }
 
 func (c *captureDispatcher) Dispatch(_ context.Context, consumer Consumer, envelope Envelope) error {
-	// Stable ordering for assertion.
+	// Copy + sort the paths slice defensively for deterministic assertion.
 	paths := append([]string{}, envelope.Paths...)
 	sort.Strings(paths)
 	envelope.Paths = paths
@@ -42,6 +42,12 @@ func (c *captureDispatcher) snapshot() []captureRun {
 	out := make([]captureRun, len(c.runs))
 	copy(out, c.runs)
 	return out
+}
+
+func (c *captureDispatcher) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.runs)
 }
 
 // fastConfig returns a minimal Config with a very short debounce window,
@@ -81,7 +87,8 @@ func TestEventRouter_NilConfigNoOp(t *testing.T) {
 
 func TestEventRouter_APIMutationSuppressesFSNotify(t *testing.T) {
 	cap := &captureDispatcher{}
-	cfg := fastConfig(30*time.Millisecond, []Consumer{
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
 		{
 			Name:        "n8n",
 			URL:         "https://n8n.example.com/hook",
@@ -98,8 +105,7 @@ func TestEventRouter_APIMutationSuppressesFSNotify(t *testing.T) {
 	// FS sees the same path immediately afterwards — should be absorbed.
 	r.RecordInboxFSChange("inbox/foo.md")
 
-	// Wait for the debounce to flush.
-	time.Sleep(120 * time.Millisecond)
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
 
 	runs := cap.snapshot()
 	if len(runs) != 1 {
@@ -112,7 +118,8 @@ func TestEventRouter_APIMutationSuppressesFSNotify(t *testing.T) {
 
 func TestEventRouter_DifferentPathNotSuppressed(t *testing.T) {
 	cap := &captureDispatcher{}
-	cfg := fastConfig(30*time.Millisecond, []Consumer{
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
 		{
 			Name:        "n8n",
 			URL:         "https://n8n.example.com/hook",
@@ -127,7 +134,7 @@ func TestEventRouter_DifferentPathNotSuppressed(t *testing.T) {
 	r.RecordMutation(MutationEvent{Kind: "edit", Path: "inbox/foo.md"})
 	r.RecordInboxFSChange("inbox/bar.md") // different path, should be recorded
 
-	time.Sleep(120 * time.Millisecond)
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
 
 	runs := cap.snapshot()
 	if len(runs) != 1 {
@@ -142,6 +149,7 @@ func TestEventRouter_DifferentPathNotSuppressed(t *testing.T) {
 func TestEventRouter_ConsumerEventFilterSkipsNonMatching(t *testing.T) {
 	cap := &captureDispatcher{}
 
+	window := 30 * time.Millisecond
 	// Add a second event type to the config so we can register a consumer
 	// that only watches that other event. Validation expects the prompt.
 	cfg := &Config{
@@ -171,8 +179,8 @@ func TestEventRouter_ConsumerEventFilterSkipsNonMatching(t *testing.T) {
 		},
 	}
 	cfg.applyDefaults()
-	cfg.Defaults.Debounce[EventInboxChanged] = duration{D: 30 * time.Millisecond}
-	cfg.Defaults.Debounce[EventType("other")] = duration{D: 30 * time.Millisecond}
+	cfg.Defaults.Debounce[EventInboxChanged] = duration{D: window}
+	cfg.Defaults.Debounce[EventType("other")] = duration{D: window}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -181,20 +189,14 @@ func TestEventRouter_ConsumerEventFilterSkipsNonMatching(t *testing.T) {
 	defer func() { _ = r.Close() }()
 
 	r.RecordInboxFSChange("inbox/x.md")
-	time.Sleep(120 * time.Millisecond)
+
+	// Wait long enough that any (incorrect) dispatch to other-listener
+	// would have surfaced, then assert only inbox-listener received.
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
+	// Sleep briefly to give any spurious extra dispatch a chance to appear.
+	time.Sleep(window * 2)
 
 	runs := cap.snapshot()
-	// Both consumers subscribe to events with matching path filters, but
-	// RecordInboxFSChange is event-specific — only inbox.changed should fire.
-	// Since the "other" event is dispatched via observe() as well (observe
-	// fans to all configured events), we want to confirm only the
-	// inbox-listener receives because its event list matches the observed event.
-	//
-	// The router iterates over all events; both events are configured. The
-	// consumer filter is "events this consumer subscribes to", so
-	// other-listener should be dispatched only when the observation is for
-	// the "other" event. RecordInboxFSChange observes as inbox.changed →
-	// inbox-listener dispatches, other-listener is skipped.
 	if len(runs) != 1 {
 		t.Fatalf("expected 1 dispatch, got %d: %+v", len(runs), runs)
 	}
@@ -205,7 +207,8 @@ func TestEventRouter_ConsumerEventFilterSkipsNonMatching(t *testing.T) {
 
 func TestEventRouter_IncludeFilterDropsConsumer(t *testing.T) {
 	cap := &captureDispatcher{}
-	cfg := fastConfig(30*time.Millisecond, []Consumer{
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
 		{
 			Name:        "pickier",
 			URL:         "https://picky.example.com/hook",
@@ -226,7 +229,9 @@ func TestEventRouter_IncludeFilterDropsConsumer(t *testing.T) {
 
 	r.RecordInboxFSChange("inbox/not-important.md")
 
-	time.Sleep(120 * time.Millisecond)
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
+	// Ensure no second dispatch sneaks in.
+	time.Sleep(window * 2)
 
 	runs := cap.snapshot()
 	if len(runs) != 1 {
@@ -239,7 +244,8 @@ func TestEventRouter_IncludeFilterDropsConsumer(t *testing.T) {
 
 func TestEventRouter_ExcludeFilter(t *testing.T) {
 	cap := &captureDispatcher{}
-	cfg := fastConfig(30*time.Millisecond, []Consumer{
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
 		{
 			Name:      "x",
 			URL:       "https://x.example.com/hook",
@@ -255,13 +261,12 @@ func TestEventRouter_ExcludeFilter(t *testing.T) {
 	defer func() { _ = r.Close() }()
 
 	r.RecordInboxFSChange("inbox/drafts/wip.md")
-	time.Sleep(120 * time.Millisecond)
-	if got := cap.snapshot(); len(got) != 0 {
-		t.Fatalf("expected 0 dispatches (excluded), got %d", len(got))
-	}
+	// Give it a bounded chance to (incorrectly) dispatch.
+	waitStable(t, window*3, window*5, func() bool { return cap.count() == 0 })
 
 	r.RecordInboxFSChange("inbox/ok.md")
-	time.Sleep(120 * time.Millisecond)
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
+
 	got := cap.snapshot()
 	if len(got) != 1 {
 		t.Fatalf("expected 1 dispatch after non-excluded path, got %d", len(got))
@@ -270,7 +275,8 @@ func TestEventRouter_ExcludeFilter(t *testing.T) {
 
 func TestEventRouter_EnvelopeContainsConfiguredFields(t *testing.T) {
 	cap := &captureDispatcher{}
-	cfg := fastConfig(30*time.Millisecond, []Consumer{
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
 		{
 			Name:        "n8n",
 			URL:         "https://n8n.example.com/hook",
@@ -283,7 +289,7 @@ func TestEventRouter_EnvelopeContainsConfiguredFields(t *testing.T) {
 	defer func() { _ = r.Close() }()
 
 	r.RecordMutation(MutationEvent{Kind: "create", Path: "inbox/new.md"})
-	time.Sleep(120 * time.Millisecond)
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
 
 	runs := cap.snapshot()
 	if len(runs) != 1 {
@@ -330,6 +336,7 @@ func TestEventRouter_Reconcile_DispatchesImmediately(t *testing.T) {
 
 	r.RecordReconcile([]string{"inbox/stale-1.md", "inbox/stale-2.md", "outside/skip.md"})
 
+	// Reconcile is synchronous — no need to wait.
 	runs := cap.snapshot()
 	if len(runs) != 1 {
 		t.Fatalf("expected 1 dispatch, got %d", len(runs))
@@ -345,7 +352,8 @@ func TestEventRouter_Reconcile_DispatchesImmediately(t *testing.T) {
 
 func TestEventRouter_Close_DropsPending(t *testing.T) {
 	cap := &captureDispatcher{}
-	cfg := fastConfig(500*time.Millisecond, []Consumer{
+	window := 50 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
 		{
 			Name:        "n8n",
 			URL:         "https://n8n.example.com/hook",
@@ -361,8 +369,34 @@ func TestEventRouter_Close_DropsPending(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Wait beyond the debounce window; nothing should have flushed.
-	time.Sleep(600 * time.Millisecond)
+	// Bounded wait: nothing must flush even after the window elapses.
+	waitStable(t, window*3, window*6, func() bool { return cap.count() == 0 })
+}
+
+func TestEventRouter_Close_BlocksSubsequentRecordCalls(t *testing.T) {
+	cap := &captureDispatcher{}
+	window := 40 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
+		{
+			Name:        "n8n",
+			URL:         "https://n8n.example.com/hook",
+			Events:      []EventType{EventInboxChanged},
+			SecretEnv:   "S",
+			PathFilters: PathFilters{Include: []string{"inbox/"}},
+		},
+	})
+	r := NewEventRouter(cfg, cap, quietLogger())
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Every Record* entry point must be a no-op after Close.
+	r.RecordMutation(MutationEvent{Kind: "edit", Path: "inbox/a.md"})
+	r.RecordInboxFSChange("inbox/b.md")
+	r.RecordReconcile([]string{"inbox/c.md"})
+
+	waitStable(t, window*3, window*5, func() bool { return cap.count() == 0 })
+
 	if got := cap.snapshot(); len(got) != 0 {
 		t.Fatalf("expected no dispatches after Close, got %+v", got)
 	}
@@ -370,7 +404,8 @@ func TestEventRouter_Close_DropsPending(t *testing.T) {
 
 func TestEventRouter_MultipleConsumersSameEvent(t *testing.T) {
 	cap := &captureDispatcher{}
-	cfg := fastConfig(30*time.Millisecond, []Consumer{
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
 		{
 			Name:        "c1",
 			URL:         "https://c1.example.com/hook",
@@ -390,7 +425,7 @@ func TestEventRouter_MultipleConsumersSameEvent(t *testing.T) {
 	defer func() { _ = r.Close() }()
 
 	r.RecordInboxFSChange("inbox/x.md")
-	time.Sleep(120 * time.Millisecond)
+	waitUntil(t, window*5, func() bool { return cap.count() >= 2 })
 
 	runs := cap.snapshot()
 	if len(runs) != 2 {

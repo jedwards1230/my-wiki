@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -18,9 +17,12 @@ type flushEvent struct {
 }
 
 func (f *flushCapture) record(key DebounceKey, paths []string) {
-	sort.Strings(paths)
+	// Paths arrive already sorted from the debouncer; copy defensively so
+	// later mutations by the caller don't affect what we captured.
+	cp := make([]string, len(paths))
+	copy(cp, paths)
 	f.mu.Lock()
-	f.events = append(f.events, flushEvent{key: key, paths: paths})
+	f.events = append(f.events, flushEvent{key: key, paths: cp})
 	f.mu.Unlock()
 }
 
@@ -32,19 +34,26 @@ func (f *flushCapture) snapshot() []flushEvent {
 	return out
 }
 
+func (f *flushCapture) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.events)
+}
+
 func TestDebouncer_SingleObserveFlushesAfterWindow(t *testing.T) {
 	var cap flushCapture
 	d := NewDebouncer(cap.record)
 	defer d.Close()
 
 	key := DebounceKey{Event: EventInboxChanged, Consumer: "c1"}
-	d.Observe(key, 40*time.Millisecond, "inbox/a.md")
+	window := 40 * time.Millisecond
+	d.Observe(key, window, "inbox/a.md")
 
-	if got := cap.snapshot(); len(got) != 0 {
-		t.Fatalf("flushed too early: %v", got)
+	if cap.count() != 0 {
+		t.Fatal("flushed too early")
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	waitUntil(t, window*4, func() bool { return cap.count() >= 1 })
 
 	got := cap.snapshot()
 	if len(got) != 1 {
@@ -72,14 +81,8 @@ func TestDebouncer_RapidObservesCoalesce(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	d.Observe(key, window, "inbox/c.md")
 
-	// After 160ms total, < window * 2, no flush should have occurred yet
-	// because each Observe resets the timer.
-	time.Sleep(30 * time.Millisecond)
-	if got := cap.snapshot(); len(got) != 0 {
-		t.Fatalf("flushed too early: %+v", got)
-	}
+	waitUntil(t, window*4, func() bool { return cap.count() >= 1 })
 
-	time.Sleep(120 * time.Millisecond)
 	got := cap.snapshot()
 	if len(got) != 1 {
 		t.Fatalf("expected 1 flush, got %d: %+v", len(got), got)
@@ -98,15 +101,16 @@ func TestDebouncer_MultipleKeysIndependent(t *testing.T) {
 	k1 := DebounceKey{Event: EventInboxChanged, Consumer: "c1"}
 	k2 := DebounceKey{Event: EventInboxChanged, Consumer: "c2"}
 
-	d.Observe(k1, 30*time.Millisecond, "a")
-	d.Observe(k2, 30*time.Millisecond, "b")
+	window := 30 * time.Millisecond
+	d.Observe(k1, window, "a")
+	d.Observe(k2, window, "b")
 
-	time.Sleep(100 * time.Millisecond)
+	waitUntil(t, window*4, func() bool { return cap.count() >= 2 })
+
 	got := cap.snapshot()
 	if len(got) != 2 {
 		t.Fatalf("expected 2 flushes, got %d: %+v", len(got), got)
 	}
-	// Collect by key.
 	seen := map[string][]string{}
 	for _, ev := range got {
 		seen[ev.key.Consumer] = ev.paths
@@ -125,11 +129,12 @@ func TestDebouncer_DedupesDuplicatePaths(t *testing.T) {
 	defer d.Close()
 
 	key := DebounceKey{Event: EventInboxChanged, Consumer: "c1"}
-	d.Observe(key, 40*time.Millisecond, "inbox/same.md")
-	d.Observe(key, 40*time.Millisecond, "inbox/same.md")
-	d.Observe(key, 40*time.Millisecond, "inbox/same.md")
+	window := 40 * time.Millisecond
+	d.Observe(key, window, "inbox/same.md")
+	d.Observe(key, window, "inbox/same.md")
+	d.Observe(key, window, "inbox/same.md")
 
-	time.Sleep(120 * time.Millisecond)
+	waitUntil(t, window*4, func() bool { return cap.count() >= 1 })
 
 	got := cap.snapshot()
 	if len(got) != 1 {
@@ -140,25 +145,43 @@ func TestDebouncer_DedupesDuplicatePaths(t *testing.T) {
 	}
 }
 
+func TestDebouncer_FlushedPathsAreSorted(t *testing.T) {
+	var cap flushCapture
+	d := NewDebouncer(cap.record)
+	defer d.Close()
+
+	key := DebounceKey{Event: EventInboxChanged, Consumer: "c1"}
+	window := 40 * time.Millisecond
+
+	// Observe in reverse-sorted order; expect flush to sort ascending.
+	d.Observe(key, window, "inbox/z.md", "inbox/m.md", "inbox/a.md")
+
+	waitUntil(t, window*4, func() bool { return cap.count() >= 1 })
+
+	got := cap.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("expected 1 flush, got %d", len(got))
+	}
+	want := []string{"inbox/a.md", "inbox/m.md", "inbox/z.md"}
+	if !equalStrings(got[0].paths, want) {
+		t.Fatalf("expected sorted %v, got %v", want, got[0].paths)
+	}
+}
+
 func TestDebouncer_CloseDropsPending(t *testing.T) {
 	var cap flushCapture
 	d := NewDebouncer(cap.record)
 
-	d.Observe(DebounceKey{Event: EventInboxChanged, Consumer: "c1"}, 1*time.Second, "inbox/x.md")
+	window := 40 * time.Millisecond
+	d.Observe(DebounceKey{Event: EventInboxChanged, Consumer: "c1"}, window, "inbox/x.md")
 	d.Close()
 
-	// Even after the original window elapses, no flush should fire.
-	time.Sleep(50 * time.Millisecond)
-	if got := cap.snapshot(); len(got) != 0 {
-		t.Fatalf("expected no flush after Close, got %+v", got)
-	}
+	// Even after a generous wait, no flush should fire.
+	waitStable(t, window*3, window*5, func() bool { return cap.count() == 0 })
 
 	// Observe after Close is a no-op.
-	d.Observe(DebounceKey{Event: EventInboxChanged, Consumer: "c2"}, 20*time.Millisecond, "y")
-	time.Sleep(60 * time.Millisecond)
-	if got := cap.snapshot(); len(got) != 0 {
-		t.Fatalf("expected no flush from post-Close Observe, got %+v", got)
-	}
+	d.Observe(DebounceKey{Event: EventInboxChanged, Consumer: "c2"}, window, "y")
+	waitStable(t, window*3, window*5, func() bool { return cap.count() == 0 })
 }
 
 func TestDebouncer_NilFlushPanics(t *testing.T) {

@@ -203,13 +203,24 @@ func (c *Config) Validate() error {
 	if c == nil {
 		return errors.New("config is nil")
 	}
-	// Event map + prompt names.
+	// Event map + prompt names. Reject leading/trailing whitespace loudly
+	// rather than silently normalizing so typos in configs fail on load
+	// instead of manifesting as broken prompt URLs or mis-routed events.
 	for evt, ec := range c.Events {
-		if strings.TrimSpace(string(evt)) == "" {
+		raw := string(evt)
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
 			return errors.New("events: empty event key is not allowed")
 		}
-		if strings.TrimSpace(ec.Prompt) == "" {
+		if raw != trimmed {
+			return fmt.Errorf("events[%q]: event key must not have leading or trailing whitespace", raw)
+		}
+		promptTrimmed := strings.TrimSpace(ec.Prompt)
+		if promptTrimmed == "" {
 			return fmt.Errorf("events[%s]: prompt must be non-empty", evt)
+		}
+		if ec.Prompt != promptTrimmed {
+			return fmt.Errorf("events[%s]: prompt must not have leading or trailing whitespace", evt)
 		}
 	}
 
@@ -280,14 +291,25 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("consumers[%s]: secret_env must be non-empty (HMAC required)", cons.Name)
 		}
 
+		// Path filter entries are prefix-matched verbatim; an entry like
+		// "inbox/ " would validate but never match. Reject whitespace to
+		// prevent silently inert configs.
 		for j, p := range cons.PathFilters.Include {
-			if strings.TrimSpace(p) == "" {
+			trimmed := strings.TrimSpace(p)
+			if trimmed == "" {
 				return fmt.Errorf("consumers[%s]: path_filters.include[%d] must be non-empty", cons.Name, j)
+			}
+			if trimmed != p {
+				return fmt.Errorf("consumers[%s]: path_filters.include[%d] must not have leading or trailing whitespace", cons.Name, j)
 			}
 		}
 		for j, p := range cons.PathFilters.Exclude {
-			if strings.TrimSpace(p) == "" {
+			trimmed := strings.TrimSpace(p)
+			if trimmed == "" {
 				return fmt.Errorf("consumers[%s]: path_filters.exclude[%d] must be non-empty", cons.Name, j)
+			}
+			if trimmed != p {
+				return fmt.Errorf("consumers[%s]: path_filters.exclude[%d] must not have leading or trailing whitespace", cons.Name, j)
 			}
 		}
 

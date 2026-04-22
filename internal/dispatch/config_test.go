@@ -290,6 +290,67 @@ wiki: {base_url: https://w, mcp_url: https://w/m}
 			want: "path_filters.include[1]",
 		},
 		{
+			name: "include filter entry with trailing whitespace",
+			body: `
+events:
+  inbox.changed: {prompt: inbox-manager}
+consumers:
+  - name: x
+    url: https://x/y
+    events: [inbox.changed]
+    path_filters:
+      include: ["inbox/ "]
+    secret_env: S
+wiki: {base_url: https://w, mcp_url: https://w/m}
+`,
+			want: "path_filters.include[0] must not have leading or trailing whitespace",
+		},
+		{
+			name: "exclude filter entry with leading whitespace",
+			body: `
+events:
+  inbox.changed: {prompt: inbox-manager}
+consumers:
+  - name: x
+    url: https://x/y
+    events: [inbox.changed]
+    path_filters:
+      include: ["inbox/"]
+      exclude: [" inbox/drafts/"]
+    secret_env: S
+wiki: {base_url: https://w, mcp_url: https://w/m}
+`,
+			want: "path_filters.exclude[0] must not have leading or trailing whitespace",
+		},
+		{
+			name: "prompt with trailing whitespace",
+			body: `
+events:
+  inbox.changed: {prompt: "inbox-manager "}
+consumers:
+  - name: x
+    url: https://x/y
+    events: [inbox.changed]
+    secret_env: S
+wiki: {base_url: https://w, mcp_url: https://w/m}
+`,
+			want: "prompt must not have leading or trailing whitespace",
+		},
+		{
+			name: "event key with leading whitespace",
+			body: `
+events:
+  " inbox.changed": {prompt: inbox-manager}
+consumers:
+  - name: x
+    url: https://x/y
+    events: [inbox.changed]
+    secret_env: S
+wiki: {base_url: https://w, mcp_url: https://w/m}
+`,
+			want: "event key must not have leading or trailing whitespace",
+		},
+		{
 			name: "missing wiki base_url with consumers",
 			body: `
 events:

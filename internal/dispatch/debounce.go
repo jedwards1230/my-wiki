@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -109,6 +110,10 @@ func (d *Debouncer) flushIfCurrent(key DebounceKey, gen uint64) {
 	if len(paths) == 0 {
 		return
 	}
+	// Sort before flushing so downstream envelope payloads (and future
+	// HMAC signatures) are stable across runs. Map iteration order is
+	// deliberately nondeterministic in Go.
+	sort.Strings(paths)
 	d.flush(key, paths)
 }
 

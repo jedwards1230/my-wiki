@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"log/slog"
+	"net/url"
 )
 
 // Dispatcher delivers an Envelope to a single Consumer. Implementations may
@@ -32,14 +33,36 @@ func NewLoggingDispatcher(logger *slog.Logger) *LoggingDispatcher {
 
 // Dispatch logs the envelope summary and returns nil. It performs no
 // network calls; it's a safe default when no HTTP dispatcher is wired.
+// The consumer URL is sanitized before logging so credentials embedded
+// in userinfo or tokens in query strings do not leak into log sinks.
 func (d *LoggingDispatcher) Dispatch(_ context.Context, consumer Consumer, envelope Envelope) error {
 	d.logger.Info("dispatch.stub",
 		slog.String("consumer_name", consumer.Name),
-		slog.String("consumer_url", consumer.URL),
+		slog.String("consumer_url", SanitizeURL(consumer.URL)),
 		slog.String("event", string(envelope.Event)),
 		slog.String("delivery_id", envelope.DeliveryID),
 		slog.Int("paths_count", len(envelope.Paths)),
 		slog.String("source", string(envelope.Source)),
 	)
 	return nil
+}
+
+// SanitizeURL returns the URL stripped of userinfo, query, and fragment
+// components — suitable for logs. Only scheme, host, and path are retained.
+// If the input cannot be parsed, it is returned verbatim (the log still
+// ends up with a string; better to see the literal than to swallow it).
+// Exported so Phase 3's HTTP dispatcher can reuse the same redaction logic.
+func SanitizeURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	// Reconstruct scheme://host/path; dropping User (userinfo),
+	// RawQuery/ForceQuery, and Fragment.
+	safe := url.URL{
+		Scheme: u.Scheme,
+		Host:   u.Host,
+		Path:   u.Path,
+	}
+	return safe.String()
 }

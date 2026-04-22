@@ -79,6 +79,9 @@ func (r *EventRouter) RecordMutation(evt MutationEvent) {
 	if path == "" {
 		return
 	}
+	if r.isClosed() {
+		return
+	}
 
 	r.rememberAPI(path)
 	// A move also implies the source path is gone; stash it too so a
@@ -101,6 +104,9 @@ func (r *EventRouter) RecordInboxFSChange(path string) {
 	if path == "" {
 		return
 	}
+	if r.isClosed() {
+		return
+	}
 	if r.seenRecently(path) {
 		r.logger.Debug("dispatch.fsnotify.dedupe", slog.String("path", path))
 		return
@@ -117,6 +123,9 @@ func (r *EventRouter) RecordReconcile(paths []string) {
 		return
 	}
 	if len(paths) == 0 {
+		return
+	}
+	if r.isClosed() {
 		return
 	}
 
@@ -142,8 +151,9 @@ func (r *EventRouter) RecordReconcile(paths []string) {
 	}
 }
 
-// Close stops pending timers. Phase 2 policy is to drop in-flight work;
-// Phase 3 may choose to flush synchronously.
+// Close stops pending timers and prevents further dispatches. Phase 2 policy
+// is to drop in-flight work; Phase 3 may choose to flush synchronously.
+// Subsequent Record* calls become no-ops.
 func (r *EventRouter) Close() error {
 	r.mu.Lock()
 	if r.closed {
@@ -157,6 +167,14 @@ func (r *EventRouter) Close() error {
 		r.debouncer.Close()
 	}
 	return nil
+}
+
+// isClosed reports whether Close has been called. Exposed as a helper so
+// each Record* entry point can short-circuit under the same lock.
+func (r *EventRouter) isClosed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed
 }
 
 // observe fans a single-path observation for event out to every consumer
