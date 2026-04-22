@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -40,6 +41,10 @@ func NewVaultWatcher(vaultDir string, sink Sink, opts ...WatcherOption) (*VaultW
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
+	}
+	if sink == nil {
+		_ = fsw.Close()
+		return nil, fmt.Errorf("notify: sink is required")
 	}
 
 	vw := &VaultWatcher{

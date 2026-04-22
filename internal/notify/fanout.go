@@ -14,13 +14,26 @@ type FanoutSink struct {
 }
 
 // NewFanoutSink returns a FanoutSink pre-populated with the given sinks.
+// Any nil sinks in the argument list are silently skipped so callers can
+// wire optional consumers without guarding each one.
 func NewFanoutSink(sinks ...Sink) *FanoutSink {
-	return &FanoutSink{sinks: append([]Sink(nil), sinks...)}
+	filtered := make([]Sink, 0, len(sinks))
+	for _, s := range sinks {
+		if s == nil {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	return &FanoutSink{sinks: filtered}
 }
 
 // Add registers an additional sink. Calls made after Add receive the new
-// sink; calls already in flight are unaffected.
+// sink; calls already in flight are unaffected. A nil sink is silently
+// ignored so optional consumers can be wired without extra guards.
 func (f *FanoutSink) Add(sink Sink) {
+	if sink == nil {
+		return
+	}
 	f.mu.Lock()
 	f.sinks = append(f.sinks, sink)
 	f.mu.Unlock()
