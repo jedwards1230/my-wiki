@@ -256,6 +256,12 @@ func TestPageService_WriteValidation(t *testing.T) {
 			content: "no frontmatter, no rules.\n",
 			wantErr: "",
 		},
+		{
+			name:    "raw path traversal does not skip validation",
+			path:    "raw/../somepage.md",
+			content: "Just plain text without frontmatter.\n",
+			wantErr: "missing frontmatter block",
+		},
 	}
 
 	for _, tc := range tests {

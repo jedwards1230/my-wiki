@@ -132,8 +132,13 @@ var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 // validateFrontmatter checks that content has the required frontmatter fields
 // for the given path. Wiki pages require title, tags, and date. Files under
 // raw/ are plain static hosting and skip page-level validation entirely.
+//
+// The raw/ check runs against the cleaned, forward-slash form of relPath so
+// paths like "raw/../foo.md" (which the storage layer resolves to "foo.md")
+// don't bypass wiki-page validation.
 func validateFrontmatter(relPath, content string) error {
-	if strings.HasPrefix(relPath, "raw/") || strings.HasPrefix(relPath, "raw\\") {
+	normalizedRelPath := filepath.ToSlash(filepath.Clean(relPath))
+	if normalizedRelPath == "raw" || strings.HasPrefix(normalizedRelPath, "raw/") {
 		return nil
 	}
 
