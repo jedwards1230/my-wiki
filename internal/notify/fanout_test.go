@@ -141,6 +141,26 @@ func TestFanoutSinkAddRegistersForFuturesOnly(t *testing.T) {
 	}
 }
 
+func TestFanoutSinkSkipsNilSinks(t *testing.T) {
+	s1 := &recordingSink{}
+	s2 := &recordingSink{}
+
+	// NewFanoutSink: nil sinks interspersed with real ones are filtered out.
+	f := NewFanoutSink(s1, nil, s2)
+
+	// Add(nil) is a no-op; must not panic and must not grow the sink slice.
+	f.Add(nil)
+
+	f.MarkDirty("x.md")
+
+	if got := s1.snapshot(); len(got) != 1 || got[0] != "x.md" {
+		t.Fatalf("s1: want [x.md], got %v", got)
+	}
+	if got := s2.snapshot(); len(got) != 1 || got[0] != "x.md" {
+		t.Fatalf("s2: want [x.md], got %v", got)
+	}
+}
+
 // sinkFunc adapts a plain function into a Sink for tests.
 type sinkFunc func(path string)
 
