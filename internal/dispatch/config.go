@@ -14,11 +14,13 @@ import (
 // Default values applied when corresponding config fields are unset. Exposed
 // as vars (not consts) so tests can reference them.
 var (
-	defaultTimeout            = 10 * time.Second
-	defaultRetriesMaxAttempts = 5
-	defaultRetriesInitial     = 2 * time.Second
-	defaultRetriesMaxBackoff  = 2 * time.Minute
-	defaultInboxChangedWindow = 90 * time.Second
+	defaultTimeout                 = 10 * time.Second
+	defaultRetriesMaxAttempts      = 5
+	defaultRetriesInitial          = 2 * time.Second
+	defaultRetriesMaxBackoff       = 2 * time.Minute
+	defaultInboxChangedWindow      = 90 * time.Second
+	defaultCircuitBreakerThreshold = 5
+	defaultCircuitBreakerCooldown  = 60 * time.Second
 )
 
 // duration wraps time.Duration so yaml.v2 can parse values like "15s" or
@@ -73,17 +75,25 @@ type WikiConfig struct {
 
 // Defaults holds values applied to every consumer unless overridden.
 type Defaults struct {
-	Timeout  duration               `yaml:"timeout"`
-	Retries  Retries                `yaml:"retries"`
-	Debounce map[EventType]duration `yaml:"debounce"`
+	Timeout        duration               `yaml:"timeout"`
+	Retries        Retries                `yaml:"retries"`
+	CircuitBreaker CircuitBreaker         `yaml:"circuit_breaker"`
+	Debounce       map[EventType]duration `yaml:"debounce"`
 }
 
-// Retries configures HTTP retry behavior. Phase 3 implements the actual
-// retry loop; Phase 2 only loads and validates the values.
+// Retries configures HTTP retry behavior.
 type Retries struct {
 	MaxAttempts    int      `yaml:"max_attempts"`
 	InitialBackoff duration `yaml:"initial_backoff"`
 	MaxBackoff     duration `yaml:"max_backoff"`
+}
+
+// CircuitBreaker configures per-consumer failure tripping. Threshold is the
+// number of consecutive failures that trips the breaker open; Cooldown is the
+// duration to remain open before allowing a half-open probe.
+type CircuitBreaker struct {
+	Threshold int      `yaml:"threshold"`
+	Cooldown  duration `yaml:"cooldown"`
 }
 
 // EventConfig binds an event type to the Claude prompt a consumer should
@@ -100,17 +110,18 @@ type PathFilters struct {
 	Exclude []string `yaml:"exclude"`
 }
 
-// Consumer is one webhook receiver. Phase 2 validates the shape; Phase 3
-// consumes SecretEnv/BearerTokenEnv when issuing HTTP POSTs.
+// Consumer is one webhook receiver. The HTTP dispatcher consumes
+// SecretEnv/BearerTokenEnv at send time.
 type Consumer struct {
-	Name           string      `yaml:"name"`
-	URL            string      `yaml:"url"`
-	Events         []EventType `yaml:"events"`
-	PathFilters    PathFilters `yaml:"path_filters"`
-	SecretEnv      string      `yaml:"secret_env"`
-	BearerTokenEnv string      `yaml:"bearer_token_env"`
-	Timeout        duration    `yaml:"timeout"`
-	Retries        Retries     `yaml:"retries"`
+	Name           string         `yaml:"name"`
+	URL            string         `yaml:"url"`
+	Events         []EventType    `yaml:"events"`
+	PathFilters    PathFilters    `yaml:"path_filters"`
+	SecretEnv      string         `yaml:"secret_env"`
+	BearerTokenEnv string         `yaml:"bearer_token_env"`
+	Timeout        duration       `yaml:"timeout"`
+	Retries        Retries        `yaml:"retries"`
+	CircuitBreaker CircuitBreaker `yaml:"circuit_breaker"`
 }
 
 // EffectiveTimeout returns the per-consumer timeout if set, else the
@@ -136,6 +147,20 @@ func (c Consumer) EffectiveRetries(defaults Defaults) Retries {
 		r.MaxBackoff = defaults.Retries.MaxBackoff
 	}
 	return r
+}
+
+// EffectiveCircuitBreaker returns the per-consumer circuit breaker config if
+// set, otherwise the defaults. Threshold and Cooldown are resolved
+// independently so partial per-consumer overrides are allowed.
+func (c Consumer) EffectiveCircuitBreaker(defaults Defaults) CircuitBreaker {
+	cb := c.CircuitBreaker
+	if cb.Threshold == 0 {
+		cb.Threshold = defaults.CircuitBreaker.Threshold
+	}
+	if cb.Cooldown.D == 0 {
+		cb.Cooldown = defaults.CircuitBreaker.Cooldown
+	}
+	return cb
 }
 
 // LoadConfig reads path, parses YAML, applies defaults, and validates.
@@ -176,6 +201,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Defaults.Retries.MaxBackoff.D == 0 {
 		c.Defaults.Retries.MaxBackoff.D = defaultRetriesMaxBackoff
+	}
+	if c.Defaults.CircuitBreaker.Threshold == 0 {
+		c.Defaults.CircuitBreaker.Threshold = defaultCircuitBreakerThreshold
+	}
+	if c.Defaults.CircuitBreaker.Cooldown.D == 0 {
+		c.Defaults.CircuitBreaker.Cooldown.D = defaultCircuitBreakerCooldown
 	}
 	if c.Defaults.Debounce == nil {
 		c.Defaults.Debounce = make(map[EventType]duration)
@@ -236,6 +267,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Defaults.Retries.MaxAttempts < 0 {
 		return errors.New("defaults.retries.max_attempts must be non-negative")
+	}
+	if c.Defaults.CircuitBreaker.Threshold <= 0 {
+		return errors.New("defaults.circuit_breaker.threshold must be positive")
+	}
+	if c.Defaults.CircuitBreaker.Cooldown.D < 0 {
+		return errors.New("defaults.circuit_breaker.cooldown must be non-negative")
 	}
 	for evt, d := range c.Defaults.Debounce {
 		if d.D < 0 {
@@ -324,6 +361,12 @@ func (c *Config) Validate() error {
 		}
 		if cons.Retries.MaxBackoff.D < 0 {
 			return fmt.Errorf("consumers[%s]: retries.max_backoff must be non-negative", cons.Name)
+		}
+		if cons.CircuitBreaker.Threshold < 0 {
+			return fmt.Errorf("consumers[%s]: circuit_breaker.threshold must be non-negative", cons.Name)
+		}
+		if cons.CircuitBreaker.Cooldown.D < 0 {
+			return fmt.Errorf("consumers[%s]: circuit_breaker.cooldown must be non-negative", cons.Name)
 		}
 	}
 
