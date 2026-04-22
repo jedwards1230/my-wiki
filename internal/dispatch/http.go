@@ -1,0 +1,634 @@
+package dispatch
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"math/rand/v2"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// defaultQueueDepth is the bounded per-consumer channel size. A full queue
+// drops the event with outcome=dropped rather than backpressuring upstream
+// producers.
+const defaultQueueDepth = 100
+
+// Outcome label values for wiki_webhook_dispatch_total. Each delivery
+// increments exactly one outcome so the metric sum equals total deliveries:
+//   - success: delivered OK (2xx on final attempt)
+//   - dropped: terminal — retry exhaustion, queue full, or post-close send
+//   - circuit_open: didn't attempt because the breaker was open
+//
+// Intermediate per-attempt failures are tracked in wiki_webhook_retry_total,
+// not here — mixing them in this counter would double-count deliveries.
+const (
+	outcomeSuccess     = "success"
+	outcomeDropped     = "dropped"
+	outcomeCircuitOpen = "circuit_open"
+)
+
+// errDispatcherClosed is returned by Dispatch after Close has been called.
+var errDispatcherClosed = errors.New("dispatch: dispatcher closed")
+
+// HTTPDispatcher delivers envelopes over HTTP with HMAC signing, exponential
+// backoff retries, and a per-consumer circuit breaker. Each consumer gets a
+// dedicated worker goroutine and bounded queue so a slow consumer cannot
+// backpressure others.
+//
+// It satisfies Dispatcher. Create once at startup and call Close during
+// shutdown to drain and stop workers.
+type HTTPDispatcher struct {
+	cfg    *Config
+	logger *slog.Logger
+	client *http.Client
+
+	// now is injected to make retry/circuit-breaker tests deterministic.
+	now func() time.Time
+
+	// rng is a per-dispatcher PRNG for backoff jitter. math/rand/v2's
+	// *rand.Rand is not safe for concurrent use, so the worker goroutines
+	// serialize access via rngMu. Seeding per-dispatcher (rather than using
+	// the global) avoids correlated sequences across replicas that start
+	// near-simultaneously.
+	rng   *rand.Rand
+	rngMu sync.Mutex
+
+	// workers keyed by consumer name. Populated in NewHTTPDispatcher; never
+	// mutated after.
+	workers map[string]*consumerWorker
+
+	// metrics
+	dispatchTotal    *prometheus.CounterVec
+	dispatchDuration *prometheus.HistogramVec
+	retryTotal       *prometheus.CounterVec
+	queueDepth       *prometheus.GaugeVec
+
+	// closed flips to true on Close so Dispatch returns cleanly without
+	// touching the (possibly-racing) worker channels. closeCh is closed
+	// once by Close; workers select on it to exit.
+	closed    atomic.Bool
+	closeCh   chan struct{}
+	closeOnce sync.Once
+}
+
+// consumerWorker owns the per-consumer queue, HMAC secret cache, and circuit
+// breaker state. One goroutine pulls from ch and attempts delivery. The
+// channel is never closed — workers exit via the dispatcher's closeCh
+// signal. This avoids the send-on-closed-channel panic that would otherwise
+// race with concurrent Dispatch callers during shutdown.
+type consumerWorker struct {
+	consumer Consumer
+	dispatch *HTTPDispatcher
+
+	ch   chan workItem
+	done chan struct{}
+
+	// secret cache: read lazily on first send. Protected by mu.
+	mu            sync.Mutex
+	cachedSecret  string
+	consecFails   int
+	breakerOpenAt time.Time // zero when closed; nonzero while open
+}
+
+type workItem struct {
+	ctx context.Context
+	env Envelope
+}
+
+// NewHTTPDispatcher constructs an HTTPDispatcher ready to deliver envelopes.
+// cfg must be non-nil and already validated (LoadConfig output). logger
+// defaults to slog.Default if nil. registerer may be nil in which case
+// metrics are registered on prometheus.DefaultRegisterer — tests should pass
+// a fresh prometheus.NewRegistry() to avoid collisions.
+func NewHTTPDispatcher(cfg *Config, logger *slog.Logger, registerer prometheus.Registerer) (*HTTPDispatcher, error) {
+	if cfg == nil {
+		return nil, errors.New("dispatch: cfg must not be nil")
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if registerer == nil {
+		registerer = prometheus.DefaultRegisterer
+	}
+
+	// Seed the PCG (default math/rand/v2 source) per-dispatcher so replicas
+	// don't share a deterministic jitter sequence. Mixing PID in defends
+	// against the (vanishingly rare) case of two replicas drawing the same
+	// wall-clock nanosecond.
+	seed1 := uint64(time.Now().UnixNano())
+	seed2 := uint64(os.Getpid())
+	d := &HTTPDispatcher{
+		cfg:    cfg,
+		logger: logger,
+		client: &http.Client{
+			// Per-request timeout is enforced via request context rather than
+			// client.Timeout so retries can each have their own deadline.
+			Transport: http.DefaultTransport,
+		},
+		now:     time.Now,
+		rng:     rand.New(rand.NewPCG(seed1, seed2)),
+		workers: make(map[string]*consumerWorker, len(cfg.Consumers)),
+		closeCh: make(chan struct{}),
+	}
+
+	d.dispatchTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "wiki_webhook_dispatch_total",
+		Help: "Total webhook deliveries by event, consumer, and terminal outcome (success|dropped|circuit_open). Each delivery increments exactly one outcome; intermediate retry attempts are counted in wiki_webhook_retry_total.",
+	}, []string{"event", "consumer", "outcome"})
+
+	d.dispatchDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "wiki_webhook_dispatch_duration_seconds",
+		Help:    "Wall-clock duration of a single dispatch attempt in seconds.",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	}, []string{"event", "consumer"})
+
+	d.retryTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "wiki_webhook_retry_total",
+		Help: "Total webhook retry attempts by consumer.",
+	}, []string{"consumer"})
+
+	d.queueDepth = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "wiki_webhook_queue_depth",
+		Help: "Current depth of the per-consumer delivery queue.",
+	}, []string{"consumer"})
+
+	for _, c := range []prometheus.Collector{d.dispatchTotal, d.dispatchDuration, d.retryTotal, d.queueDepth} {
+		if err := registerer.Register(c); err != nil {
+			return nil, fmt.Errorf("register metric: %w", err)
+		}
+	}
+
+	for _, consumer := range cfg.Consumers {
+		// Warn at startup when the HMAC secret env var is empty. The worker
+		// still attempts to sign at send time (in case an operator rotates
+		// the secret out-of-band by editing env + restart), but deliveries
+		// will fail until the env is populated.
+		if v := os.Getenv(consumer.SecretEnv); v == "" {
+			logger.Warn("dispatch.secret.empty",
+				slog.String("consumer", consumer.Name),
+				slog.String("secret_env", consumer.SecretEnv),
+			)
+		}
+		if consumer.BearerTokenEnv != "" {
+			if v := os.Getenv(consumer.BearerTokenEnv); v == "" {
+				logger.Warn("dispatch.bearer.empty",
+					slog.String("consumer", consumer.Name),
+					slog.String("bearer_token_env", consumer.BearerTokenEnv),
+				)
+			}
+		}
+
+		w := &consumerWorker{
+			consumer: consumer,
+			dispatch: d,
+			ch:       make(chan workItem, defaultQueueDepth),
+			done:     make(chan struct{}),
+		}
+		d.workers[consumer.Name] = w
+		go w.run()
+	}
+
+	return d, nil
+}
+
+// Dispatch enqueues env for delivery. It returns errDispatcherClosed when
+// the dispatcher is shutting down; the router logs and moves on. Any other
+// non-enqueue path (unknown consumer, queue full, open breaker) is
+// represented as a metric outcome, not an error, so a single slow consumer
+// cannot halt the router.
+//
+// The send path uses a select with a default branch rather than an
+// unconditional send, so callers never block. Critically, nothing in this
+// dispatcher closes the worker channels — Close signals via closeCh
+// instead — which eliminates the send-on-closed-channel panic that would
+// otherwise race with Close.
+func (d *HTTPDispatcher) Dispatch(ctx context.Context, consumer Consumer, envelope Envelope) error {
+	if d.closed.Load() {
+		return errDispatcherClosed
+	}
+
+	w, ok := d.workers[consumer.Name]
+	if !ok {
+		return fmt.Errorf("dispatch: unknown consumer %q", consumer.Name)
+	}
+
+	// From here on, use w.consumer (the canonical configured value) for
+	// labels and log fields so the caller can't accidentally shadow the
+	// configured URL with a stale Consumer struct.
+	eventLabel := string(envelope.Event)
+	consumerName := w.consumer.Name
+	sanitizedURL := SanitizeURL(w.consumer.URL)
+
+	// Short-circuit under an open breaker so we don't fill the queue with
+	// events that will immediately be rejected.
+	if w.breakerOpen() {
+		d.dispatchTotal.WithLabelValues(eventLabel, consumerName, outcomeCircuitOpen).Inc()
+		d.logger.Warn("dispatch.circuit_open",
+			slog.String("consumer", consumerName),
+			slog.String("consumer_url", sanitizedURL),
+			slog.String("event", eventLabel),
+			slog.String("delivery_id", envelope.DeliveryID),
+		)
+		return nil
+	}
+
+	select {
+	case w.ch <- workItem{ctx: ctx, env: envelope}:
+		d.queueDepth.WithLabelValues(consumerName).Set(float64(len(w.ch)))
+		return nil
+	case <-d.closeCh:
+		// Race: Close fired between the atomic check above and this send.
+		return errDispatcherClosed
+	default:
+		d.dispatchTotal.WithLabelValues(eventLabel, consumerName, outcomeDropped).Inc()
+		d.logger.Warn("dispatch.queue_full",
+			slog.String("consumer", consumerName),
+			slog.String("consumer_url", sanitizedURL),
+			slog.String("event", eventLabel),
+			slog.String("delivery_id", envelope.DeliveryID),
+		)
+		return nil
+	}
+}
+
+// Close signals every consumer worker to exit and waits for them to finish
+// their current delivery, bounded by ctx. Subsequent Dispatch calls return
+// errDispatcherClosed without touching any channel, so there is no
+// send-on-closed-channel window.
+//
+// The worker input channel is deliberately NEVER closed — workers exit via
+// d.closeCh. The channel is GC'd once no goroutine references it.
+// Undelivered envelopes still in the queue are dropped (not counted in
+// dispatch_total since they were neither success, dropped retries, nor
+// circuit-open; operators who care can compare received events to
+// success-count).
+func (d *HTTPDispatcher) Close(ctx context.Context) error {
+	var err error
+	d.closeOnce.Do(func() {
+		// Flip the closed flag first so new Dispatch calls bail immediately.
+		d.closed.Store(true)
+		// Signal workers to exit after their current item.
+		close(d.closeCh)
+
+		pending := make([]string, 0, len(d.workers))
+		for name, w := range d.workers {
+			select {
+			case <-w.done:
+			case <-ctx.Done():
+				pending = append(pending, fmt.Sprintf("%s(%d queued)", name, len(w.ch)))
+			}
+		}
+		if len(pending) > 0 {
+			err = fmt.Errorf("dispatch: close deadline reached, pending: %v", pending)
+		}
+	})
+	return err
+}
+
+// run is the per-consumer worker loop. It pulls items until the dispatcher
+// closes, finishing any in-flight delivery before exiting.
+func (w *consumerWorker) run() {
+	defer close(w.done)
+	for {
+		select {
+		case item := <-w.ch:
+			w.dispatch.queueDepth.WithLabelValues(w.consumer.Name).Set(float64(len(w.ch)))
+			w.deliver(item.ctx, item.env)
+		case <-w.dispatch.closeCh:
+			// Zero the gauge on shutdown so Prometheus doesn't retain stale
+			// depth. Items still sitting in the buffered channel are dropped
+			// intentionally; Close documents that behavior.
+			w.dispatch.queueDepth.WithLabelValues(w.consumer.Name).Set(0)
+			return
+		}
+	}
+}
+
+// deliver runs the retry loop for a single envelope. Intermediate attempt
+// failures are counted via wiki_webhook_retry_total and logged at INFO; the
+// terminal outcome (success or dropped) is recorded exactly once in
+// wiki_webhook_dispatch_total.
+func (w *consumerWorker) deliver(parentCtx context.Context, env Envelope) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+
+	// Re-check the breaker at delivery time (an earlier item in this
+	// worker's queue may have tripped it while this one was in flight).
+	if w.breakerOpen() {
+		w.dispatch.dispatchTotal.WithLabelValues(string(env.Event), w.consumer.Name, outcomeCircuitOpen).Inc()
+		return
+	}
+
+	retries := w.consumer.EffectiveRetries(w.dispatch.cfg.Defaults)
+	timeout := w.consumer.EffectiveTimeout(w.dispatch.cfg.Defaults)
+	maxAttempts := retries.MaxAttempts
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			w.dispatch.retryTotal.WithLabelValues(w.consumer.Name).Inc()
+			backoff := w.dispatch.computeBackoff(attempt-1, retries.InitialBackoff.D, retries.MaxBackoff.D)
+			if backoff > 0 {
+				select {
+				case <-parentCtx.Done():
+					w.recordDropped(env, parentCtx.Err())
+					return
+				case <-w.dispatch.closeCh:
+					w.recordDropped(env, errDispatcherClosed)
+					return
+				case <-time.After(backoff):
+				}
+			}
+		}
+
+		err := w.attempt(parentCtx, env, timeout)
+		if err == nil {
+			w.recordSuccess(env)
+			return
+		}
+		lastErr = err
+		// Per-attempt failure — log for visibility but don't increment
+		// dispatch_total yet. The terminal recordDropped below does that.
+		w.dispatch.logger.Info("dispatch.attempt.failed",
+			slog.String("consumer", w.consumer.Name),
+			slog.String("consumer_url", SanitizeURL(w.consumer.URL)),
+			slog.String("event", string(env.Event)),
+			slog.String("delivery_id", env.DeliveryID),
+			slog.Int("attempt", attempt+1),
+			slog.Int("max_attempts", maxAttempts),
+			slog.Any("error", err),
+		)
+		if !isRetriable(err) {
+			break
+		}
+	}
+
+	w.recordDropped(env, lastErr)
+}
+
+// attempt performs one HTTP POST with HMAC signing. The timeout governs the
+// single request; retries are orchestrated by deliver.
+func (w *consumerWorker) attempt(parentCtx context.Context, env Envelope, timeout time.Duration) error {
+	body, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("marshal envelope: %w", err)
+	}
+
+	secret := w.resolveSecret()
+	if secret == "" {
+		// Treat as a non-retriable failure: without a secret, the consumer
+		// cannot validate the signature, so retrying won't help.
+		return &nonRetriableError{msg: "hmac secret is empty; refusing to send unsigned envelope"}
+	}
+
+	ts := strconv.FormatInt(w.dispatch.now().Unix(), 10)
+	sig := signBody(secret, ts, body)
+
+	ctx := parentCtx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parentCtx, timeout)
+		defer cancel()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.consumer.URL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Wiki-Event", string(env.Event))
+	req.Header.Set("X-Wiki-Delivery-Id", env.DeliveryID)
+	req.Header.Set("X-Wiki-Timestamp", ts)
+	req.Header.Set("X-Wiki-Signature", "sha256="+sig)
+	if w.consumer.BearerTokenEnv != "" {
+		if token := os.Getenv(w.consumer.BearerTokenEnv); token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+	}
+
+	start := w.dispatch.now()
+	resp, err := w.dispatch.client.Do(req)
+	w.dispatch.dispatchDuration.WithLabelValues(string(env.Event), w.consumer.Name).
+		Observe(w.dispatch.now().Sub(start).Seconds())
+
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return &httpStatusError{code: resp.StatusCode}
+}
+
+// resolveSecret returns the consumer's HMAC secret, caching the env lookup
+// across sends so a hot dispatch loop does not syscall per-attempt. A
+// rotation (restart with new env) is picked up on the next call when the
+// cached value is empty or differs — specifically, an empty cache always
+// re-reads so operators can rotate a previously-empty secret without
+// restarting.
+func (w *consumerWorker) resolveSecret() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.cachedSecret != "" {
+		// Re-check env in case operator rotated. Cheap Getenv keeps rotation
+		// latency low without paying per-request overhead when unchanged.
+		if v := os.Getenv(w.consumer.SecretEnv); v != "" && v != w.cachedSecret {
+			w.cachedSecret = v
+		}
+		return w.cachedSecret
+	}
+	w.cachedSecret = os.Getenv(w.consumer.SecretEnv)
+	return w.cachedSecret
+}
+
+// recordSuccess increments the terminal success counter and resets breaker
+// state.
+func (w *consumerWorker) recordSuccess(env Envelope) {
+	w.dispatch.dispatchTotal.WithLabelValues(string(env.Event), w.consumer.Name, outcomeSuccess).Inc()
+	w.mu.Lock()
+	w.consecFails = 0
+	w.breakerOpenAt = time.Time{}
+	w.mu.Unlock()
+	w.dispatch.logger.Debug("dispatch.success",
+		slog.String("consumer", w.consumer.Name),
+		slog.String("consumer_url", SanitizeURL(w.consumer.URL)),
+		slog.String("event", string(env.Event)),
+		slog.String("delivery_id", env.DeliveryID),
+	)
+}
+
+// recordDropped records a terminal failure: retries exhausted, parent
+// context cancelled, or dispatcher closed mid-retry. The delivery is
+// counted exactly once with outcome=dropped and the consecutive-failure
+// counter is bumped, potentially tripping the circuit breaker.
+func (w *consumerWorker) recordDropped(env Envelope, err error) {
+	w.dispatch.dispatchTotal.WithLabelValues(string(env.Event), w.consumer.Name, outcomeDropped).Inc()
+	w.dispatch.logger.Warn("dispatch.dropped",
+		slog.String("consumer", w.consumer.Name),
+		slog.String("consumer_url", SanitizeURL(w.consumer.URL)),
+		slog.String("event", string(env.Event)),
+		slog.String("delivery_id", env.DeliveryID),
+		slog.Any("error", err),
+	)
+
+	cb := w.consumer.EffectiveCircuitBreaker(w.dispatch.cfg.Defaults)
+	w.mu.Lock()
+	w.consecFails++
+	if cb.Threshold > 0 && w.consecFails >= cb.Threshold && w.breakerOpenAt.IsZero() {
+		w.breakerOpenAt = w.dispatch.now()
+		w.dispatch.logger.Warn("dispatch.circuit.opened",
+			slog.String("consumer", w.consumer.Name),
+			slog.Int("consecutive_failures", w.consecFails),
+			slog.Duration("cooldown", cb.Cooldown.D),
+		)
+	}
+	w.mu.Unlock()
+}
+
+// breakerOpen reports whether the consumer's circuit is currently open. When
+// the cooldown window has elapsed it returns false without clearing
+// consecFails — the next attempt runs in half-open mode, and either clears
+// state on success (recordSuccess) or re-opens the breaker on failure
+// (recordDropped). Callers guard against concurrent mutations via the same
+// mu used by recordSuccess/recordDropped.
+func (w *consumerWorker) breakerOpen() bool {
+	cb := w.consumer.EffectiveCircuitBreaker(w.dispatch.cfg.Defaults)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.breakerOpenAt.IsZero() {
+		return false
+	}
+	if cb.Cooldown.D <= 0 {
+		// No cooldown configured: a tripped breaker stays open forever until
+		// a manual intervention. Defensive: validation requires threshold>0
+		// and rejects negative cooldowns, but defaults may be zeroed in
+		// tests.
+		return true
+	}
+	if w.dispatch.now().Sub(w.breakerOpenAt) >= cb.Cooldown.D {
+		// Enter half-open: clear the open timestamp so the next attempt is
+		// allowed through. Leave consecFails intact so the next failure
+		// re-opens the breaker immediately.
+		w.breakerOpenAt = time.Time{}
+		return false
+	}
+	return true
+}
+
+// computeBackoff returns initial * 2^attempt, capped at max, with full
+// jitter applied. attempt=0 corresponds to the first retry delay. The
+// dispatcher's PRNG is protected by rngMu — math/rand/v2's *rand.Rand
+// is not safe for concurrent use.
+func (d *HTTPDispatcher) computeBackoff(attempt int, initial, max time.Duration) time.Duration {
+	if initial <= 0 {
+		return 0
+	}
+	// Guard against overflow for large attempt counts.
+	cap := initial
+	for i := 0; i < attempt && cap < max; i++ {
+		cap *= 2
+		if cap <= 0 { // overflow
+			cap = max
+			break
+		}
+	}
+	if max > 0 && cap > max {
+		cap = max
+	}
+	if cap <= 0 {
+		return 0
+	}
+	// Full jitter: uniformly random in [0, cap).
+	d.rngMu.Lock()
+	v := d.rng.Int64N(int64(cap))
+	d.rngMu.Unlock()
+	return time.Duration(v)
+}
+
+// signBody returns the hex-encoded HMAC-SHA256 of "<timestamp>.<body>" with
+// the given secret key.
+func signBody(secret, timestamp string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(timestamp))
+	_, _ = mac.Write([]byte("."))
+	_, _ = mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// isRetriable reports whether err should cause another attempt. Timeouts,
+// network errors, and 5xx/408/429 responses are retriable; explicit
+// non-retriable errors and context cancellation are not.
+func isRetriable(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Caller-marked permanent errors (e.g. "empty secret").
+	var nre *nonRetriableError
+	if errors.As(err, &nre) {
+		return false
+	}
+	// Context done is terminal; deliver() re-checks the parent context on
+	// each iteration so there is no point retrying.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var hse *httpStatusError
+	if errors.As(err, &hse) {
+		if hse.code >= 500 || hse.code == http.StatusRequestTimeout || hse.code == http.StatusTooManyRequests {
+			return true
+		}
+		return false
+	}
+	// Network/timeout errors expose net.Error.
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return true
+	}
+	// Fall back to retry — unknown errors from http.Client.Do are usually
+	// transient (connection reset, EOF, etc.).
+	return true
+}
+
+// httpStatusError carries a non-2xx response code so the retry policy can
+// differentiate between retriable and permanent failures.
+type httpStatusError struct {
+	code int
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("http status %d", e.code)
+}
+
+// nonRetriableError marks permanent failures that should bypass the retry
+// loop.
+type nonRetriableError struct {
+	msg string
+}
+
+func (e *nonRetriableError) Error() string {
+	return e.msg
+}

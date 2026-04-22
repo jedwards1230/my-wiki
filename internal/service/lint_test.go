@@ -13,7 +13,7 @@ func setupLintVault(t *testing.T) *vault.Vault {
 	t.Helper()
 	dir := t.TempDir()
 
-	for _, d := range []string{"raw", "private", ".obsidian", "meta", "project"} {
+	for _, d := range []string{"private", ".obsidian", "meta", "project"} {
 		_ = os.MkdirAll(filepath.Join(dir, d), 0o755)
 	}
 
@@ -24,8 +24,6 @@ func setupLintVault(t *testing.T) *vault.Vault {
 		"orphan.md":         "---\ntitle: Orphan\ntags:\n  - test\ndate: 2026-03-01\n---\n\nNo links here.\n",
 		"no-frontmatter.md": "Just text.\n",
 		"missing-tags.md":   "---\ntitle: No Tags\ndate: 2026-01-01\n---\n\nMissing tags.\n",
-		"raw/good.md":       "---\ntitle: Good\nsource: https://example.com\ndate-added: 2026-01-01\n---\n\nContent.\n",
-		"raw/bad.md":        "---\ntitle: Bad Raw\n---\n\nMissing source and date-added.\n",
 	}
 
 	for name, content := range files {
@@ -58,30 +56,6 @@ func TestLintService_Frontmatter(t *testing.T) {
 	}
 	if !found["missing-tags.md"] {
 		t.Error("expected issue for missing-tags.md")
-	}
-}
-
-func TestLintService_Raw(t *testing.T) {
-	v := setupLintVault(t)
-	svc := NewLintService(v, nil)
-
-	report, err := svc.Run("raw")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if report.Total == 0 {
-		t.Fatal("expected raw issues")
-	}
-
-	found := false
-	for _, issue := range report.Issues {
-		if issue.File == "raw/bad.md" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("expected issue for raw/bad.md")
 	}
 }
 
@@ -166,20 +140,6 @@ func TestLintPage_CleanPage(t *testing.T) {
 	issues := svc.LintPage("index.md")
 	if len(issues) != 0 {
 		t.Errorf("expected no issues for clean page, got: %v", issues)
-	}
-}
-
-func TestLintPage_RawFile(t *testing.T) {
-	v := setupLintVault(t)
-	svc := NewLintService(v, nil)
-
-	// raw/bad.md is missing source and date-added.
-	issues := svc.LintPage("raw/bad.md")
-	if len(issues) == 0 {
-		t.Fatal("expected issues for raw/bad.md")
-	}
-	if issues[0].Check != "raw" {
-		t.Errorf("expected 'raw' check, got %q", issues[0].Check)
 	}
 }
 
@@ -279,23 +239,6 @@ func TestLintPage_InvalidYAML(t *testing.T) {
 	}
 	if !strings.Contains(issues[0].Message, "invalid YAML") {
 		t.Errorf("expected 'invalid YAML' in message, got: %s", issues[0].Message)
-	}
-}
-
-func TestLintPage_InvalidYAML_Raw(t *testing.T) {
-	v := setupLintVault(t)
-	svc := NewLintService(v, nil)
-
-	content := "---\ntitle: Broken Raw\nsource: {not closed\n---\n\nBody.\n"
-	_ = os.MkdirAll(filepath.Join(v.Dir, "raw"), 0o755)
-	_ = os.WriteFile(filepath.Join(v.Dir, "raw", "bad-yaml.md"), []byte(content), 0o644)
-
-	issues := svc.LintPage("raw/bad-yaml.md")
-	if len(issues) == 0 {
-		t.Fatal("expected YAML syntax error for raw file, got no issues")
-	}
-	if issues[0].Check != "raw" {
-		t.Errorf("expected 'raw' check, got %q", issues[0].Check)
 	}
 }
 

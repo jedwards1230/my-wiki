@@ -13,7 +13,7 @@ import (
 )
 
 // ValidActivityTypes lists the allowed activity types.
-var ValidActivityTypes = []string{"ingest", "edit", "create", "delete", "lint", "note", "migrate"}
+var ValidActivityTypes = []string{"edit", "create", "delete", "lint", "note", "migrate", "move"}
 
 // ActivityService provides activity logging operations.
 type ActivityService struct {

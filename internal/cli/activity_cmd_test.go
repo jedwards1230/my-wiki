@@ -76,7 +76,7 @@ func TestActivityWithSummary(t *testing.T) {
 	dir := setupActivityVault(t)
 
 	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"--vault", dir, "activity", "ingest", "Article", "--time", "09:00", "--summary", "Ingested and summarized"})
+	cmd.SetArgs([]string{"--vault", dir, "activity", "note", "Article", "--time", "09:00", "--summary", "Reviewed and summarized"})
 	err := cmd.Execute()
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestActivityWithSummary(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, "meta", "activity", entries[0].Name()))
 	content := string(data)
 
-	if !strings.Contains(content, "Ingested and summarized") {
+	if !strings.Contains(content, "Reviewed and summarized") {
 		t.Errorf("expected summary in output, got:\n%s", content)
 	}
 }

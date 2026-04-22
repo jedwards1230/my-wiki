@@ -165,6 +165,80 @@ metrics:
   enabled: false
   interval: 30s
 
+# Webhook dispatcher: consumer-agnostic surface for delivering signed
+# envelopes when inbox/ content changes. Disabled by default.
+#
+# Secrets: this chart does not create Secrets. Operators must create a
+# user-managed Secret containing one key per `secretEnvKey` / `bearerEnvKey`
+# referenced below, and set `webhooks.secrets.existingSecretName` to its
+# name. Each consumer's HMAC secret and (optional) bearer token are then
+# projected into the pod as environment variables.
+webhooks:
+  enabled: false
+  # Scan inbox/ on startup and emit a synthetic reconcile event for any
+  # pending files so consumers can catch up across restarts.
+  reconcileOnStart: true
+
+  defaults:
+    timeout: 10s
+    retries:
+      maxAttempts: 5
+      initialBackoff: 2s
+      maxBackoff: 2m
+    circuitBreaker:
+      threshold: 5
+      cooldown: 60s
+    debounce:
+      inbox.changed: 90s
+
+  # Wiki locators embedded in every envelope so consumers can call back into
+  # this instance without being pre-configured. Required when webhooks.enabled.
+  wiki:
+    baseURL: ""   # e.g. https://wiki.lilbro.cloud
+    mcpURL: ""    # e.g. https://wiki.lilbro.cloud/mcp
+
+  # Event → prompt mapping. Consumers fetch
+  # `<wiki.baseURL>/meta/prompts/<prompt>.md` to load instructions.
+  events:
+    inbox.changed:
+      prompt: inbox-manager
+
+  # List of webhook consumers. Each entry:
+  #   name:           unique identifier (used in metrics labels)
+  #   url:            full webhook URL (https recommended)
+  #   events:         event types this consumer subscribes to
+  #   pathFilters:
+  #     include:      [optional] prefix list — only paths matching at least one entry
+  #     exclude:      [optional] prefix list — paths matching any are dropped
+  #   secretEnvKey:   env var name holding the HMAC-SHA256 secret (required)
+  #   bearerEnvKey:   [optional] env var name holding a bearer token
+  #   timeout:        [optional] per-consumer override
+  #   retries:        [optional] per-consumer override
+  #   circuitBreaker: [optional] per-consumer override
+  consumers: []
+  # Example:
+  #   - name: automation
+  #     url: https://automation.example.com/webhook/inbox
+  #     events: [inbox.changed]
+  #     pathFilters:
+  #       include: ["inbox/"]
+  #     secretEnvKey: WIKI_WEBHOOK_AUTOMATION_SECRET
+  #     bearerEnvKey: WIKI_WEBHOOK_AUTOMATION_BEARER
+
+  # Name of an existing Kubernetes Secret that provides the env vars named
+  # in consumer secretEnvKey/bearerEnvKey. The Secret is NOT created by this
+  # chart; create it via kubectl, Sealed Secrets, 1Password Operator, etc.
+  secrets:
+    existingSecretName: ""
+
+  # PrometheusRule for alerting on dispatch failures. Requires the Prometheus
+  # Operator CRDs to be installed in the cluster.
+  alerts:
+    enabled: true
+    failureRateThreshold: 0.1
+    droppedDeliveriesFor: 5m
+    queueDepthThreshold: 100
+
 nodeSelector: {}
 tolerations: []
 
