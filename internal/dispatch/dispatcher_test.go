@@ -81,3 +81,65 @@ func TestLoggingDispatcher_LogKey(t *testing.T) {
 		t.Errorf("expected dispatch.stub log msg, got: %s", buf.String())
 	}
 }
+
+// TestLoggingDispatcher_RedactsSensitiveURLParts confirms userinfo, query,
+// and fragment components are stripped from consumer URLs before logging
+// so secrets embedded in URLs don't leak into log sinks.
+func TestLoggingDispatcher_RedactsSensitiveURLParts(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	d := NewLoggingDispatcher(logger)
+
+	raw := "https://user:s3cret@n8n.example.com/webhook/home-wiki?token=abc123#x"
+	consumer := Consumer{Name: "n8n-primary", URL: raw}
+	env := Envelope{Event: EventInboxChanged, DeliveryID: "d"}
+
+	if err := d.Dispatch(context.Background(), consumer, env); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+
+	logged := buf.String()
+	// Positive: the safe form must appear.
+	if !strings.Contains(logged, "https://n8n.example.com/webhook/home-wiki") {
+		t.Errorf("expected safe URL in log, got: %s", logged)
+	}
+	// Negative: secrets must not.
+	for _, forbidden := range []string{"s3cret", "user:s3cret", "token=abc123", "#x"} {
+		if strings.Contains(logged, forbidden) {
+			t.Errorf("log contains sensitive substring %q: %s", forbidden, logged)
+		}
+	}
+}
+
+func TestSanitizeURL(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", "https://n8n.example.com/hook", "https://n8n.example.com/hook"},
+		{"userinfo stripped", "https://u:p@h.example.com/x", "https://h.example.com/x"},
+		{"query stripped", "https://h.example.com/x?token=abc", "https://h.example.com/x"},
+		{"fragment stripped", "https://h.example.com/x#y", "https://h.example.com/x"},
+		{"all three stripped", "https://u:p@h.example.com/x?k=v#f", "https://h.example.com/x"},
+		{"no path", "https://h.example.com", "https://h.example.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SanitizeURL(tc.in); got != tc.want {
+				t.Errorf("SanitizeURL(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Unparseable URLs should round-trip verbatim — better to see the literal
+// than to swallow it silently.
+func TestSanitizeURL_UnparseableFallsBack(t *testing.T) {
+	// url.Parse is famously lenient, but control characters fail it.
+	bad := "http://\x00/bad"
+	got := SanitizeURL(bad)
+	if got != bad {
+		t.Errorf("SanitizeURL unparseable: got %q, want %q", got, bad)
+	}
+}
