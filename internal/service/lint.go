@@ -22,14 +22,13 @@ func NewLintService(v *vault.Vault, logSvc *LogService) *LintService {
 }
 
 // Run executes the specified lint check and returns a report.
-// Valid checks: "all", "frontmatter", "raw", "links", "orphans", "log".
+// Valid checks: "all", "frontmatter", "tags", "links", "orphans", "size", "log".
 func (s *LintService) Run(check string) (*LintReport, error) {
 	report := &LintReport{}
 
 	switch check {
 	case "all":
 		s.checkFrontmatter(report)
-		s.checkRawFrontmatter(report)
 		s.checkTags(report, false)
 		s.checkLinks(report)
 		s.checkOrphans(report)
@@ -37,8 +36,6 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 		s.checkLog(report)
 	case "frontmatter":
 		s.checkFrontmatter(report)
-	case "raw":
-		s.checkRawFrontmatter(report)
 	case "tags":
 		s.checkTags(report, true)
 	case "links":
@@ -50,7 +47,7 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 	case "log":
 		s.checkLog(report)
 	default:
-		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, raw, tags, links, orphans, size, or log", check)
+		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, tags, links, orphans, size, or log", check)
 	}
 
 	report.Total = len(report.Issues)
@@ -127,54 +124,6 @@ func (s *LintService) checkFrontmatter(report *LintReport) {
 		if len(missing) > 0 {
 			report.Issues = append(report.Issues, LintIssue{
 				File: rel, Check: "frontmatter", Level: "WARN",
-				Message: "missing: " + strings.Join(missing, " "),
-			})
-		}
-	}
-}
-
-func (s *LintService) checkRawFrontmatter(report *LintReport) {
-	files, err := s.vault.FindRawFiles()
-	if err != nil {
-		report.Issues = append(report.Issues, LintIssue{
-			Check: "raw", Level: "ERROR", Message: err.Error(),
-		})
-		return
-	}
-
-	for _, file := range files {
-		rel, _ := filepath.Rel(s.vault.Dir, file)
-
-		if err := vault.ValidateYAMLSyntax(file); err != nil {
-			report.Issues = append(report.Issues, LintIssue{
-				File: rel, Check: "raw", Level: "FAIL", Message: err.Error(),
-			})
-			continue
-		}
-
-		fm, err := vault.ParseFrontmatter(file)
-		if err != nil {
-			report.Issues = append(report.Issues, LintIssue{
-				File: rel, Check: "raw", Level: "FAIL", Message: err.Error(),
-			})
-			continue
-		}
-		if fm == nil {
-			report.Issues = append(report.Issues, LintIssue{
-				File: rel, Check: "raw", Level: "FAIL", Message: "missing frontmatter",
-			})
-			continue
-		}
-
-		var missing []string
-		for _, key := range []string{"title", "source", "date-added"} {
-			if _, ok := fm[key]; !ok {
-				missing = append(missing, key)
-			}
-		}
-		if len(missing) > 0 {
-			report.Issues = append(report.Issues, LintIssue{
-				File: rel, Check: "raw", Level: "WARN",
 				Message: "missing: " + strings.Join(missing, " "),
 			})
 		}
@@ -392,12 +341,7 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 // lintPageFrontmatter checks frontmatter for a single page file.
 func (s *LintService) lintPageFrontmatter(relPath string) []LintIssue {
 	absPath := filepath.Join(s.vault.Dir, relPath)
-	isRaw := strings.HasPrefix(relPath, "raw/") || strings.HasPrefix(relPath, "raw\\")
-
-	check := "frontmatter"
-	if isRaw {
-		check = "raw"
-	}
+	const check = "frontmatter"
 
 	// Validate YAML syntax before field checks — catches malformed YAML
 	// that the lenient key-value parser would silently skip.
@@ -413,12 +357,7 @@ func (s *LintService) lintPageFrontmatter(relPath string) []LintIssue {
 		return []LintIssue{{File: relPath, Check: check, Level: "FAIL", Message: "missing frontmatter"}}
 	}
 
-	var required []string
-	if isRaw {
-		required = []string{"title", "source", "date-added"}
-	} else {
-		required = []string{"title", "tags", "date"}
-	}
+	required := []string{"title", "tags", "date"}
 
 	var missing []string
 	for _, key := range required {
@@ -437,10 +376,6 @@ func (s *LintService) lintPageFrontmatter(relPath string) []LintIssue {
 
 // lintPageLinks checks outbound wikilinks for a single page.
 func (s *LintService) lintPageLinks(relPath string) []LintIssue {
-	if strings.HasPrefix(relPath, "raw/") || strings.HasPrefix(relPath, "raw\\") {
-		return nil
-	}
-
 	absPath := filepath.Join(s.vault.Dir, relPath)
 	slugs, err := s.vault.BuildSlugIndex()
 	if err != nil {

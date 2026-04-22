@@ -46,7 +46,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
 		server.WithLogging(),
-		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete/move mutations are auto-logged as compact audit entries — do NOT call activity for individual page changes. Use activity only for narrative summaries of multi-page work sessions or non-page activities (ingest, lint, note, migrate)."),
+		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete/move mutations are auto-logged as compact audit entries — do NOT call activity for individual page changes. Use activity only for narrative summaries of multi-page work sessions or non-page activities (lint, note, migrate)."),
 	)
 
 	logSvc := service.NewLogService(v.Storage)
@@ -74,7 +74,7 @@ func registerResources(s *server.MCPServer, pages *service.PageService) {
 		mcp.NewResource(
 			"wiki://schema",
 			"Wiki Schema",
-			mcp.WithResourceDescription("Operating manual for AI agents — page conventions, frontmatter rules, ingestion workflows, and activity logging format."),
+			mcp.WithResourceDescription("Operating manual for AI agents — page conventions, frontmatter rules, and activity logging format."),
 			mcp.WithMIMEType("text/markdown"),
 		),
 		func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
@@ -333,15 +333,15 @@ func registerTools(
 	s.AddTool(
 		mcp.NewTool("activity",
 			mcp.WithTitleAnnotation("Log Activity"),
-			mcp.WithDescription("Append a narrative entry to today's activity log. Individual page mutations (create/edit/delete/move) are auto-logged — do NOT duplicate them here. Use this for summaries of multi-page work sessions or non-page activities like ingest, lint, or migrate."),
+			mcp.WithDescription("Append a narrative entry to today's activity log. Individual page mutations (create/edit/delete/move) are auto-logged — do NOT duplicate them here. Use this for summaries of multi-page work sessions or non-page activities like lint, note, or migrate."),
 			mcp.WithReadOnlyHintAnnotation(false),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(false),
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("type",
 				mcp.Required(),
-				mcp.Enum("ingest", "edit", "create", "delete", "lint", "note", "migrate", "move"),
-				mcp.Description("Activity type: ingest (raw source processed), edit (page modified), create (new page), delete (page removed), lint (health check run), note (general observation), migrate (structural change), move (page relocated)."),
+				mcp.Enum("edit", "create", "delete", "lint", "note", "migrate", "move"),
+				mcp.Description("Activity type: edit (page modified), create (new page), delete (page removed), lint (health check run), note (general observation), migrate (structural change), move (page relocated)."),
 			),
 			mcp.WithString("title",
 				mcp.Required(),
