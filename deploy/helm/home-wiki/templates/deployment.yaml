@@ -274,6 +274,26 @@ spec:
               value: "true"
             {{- end }}
             {{- end }}
+            {{- if .Values.webhooks.enabled }}
+            - name: WIKI_WEBHOOKS_CONFIG
+              value: /etc/home-wiki/webhooks.yaml
+            {{- range .Values.webhooks.consumers }}
+            {{- if .secretEnvKey }}
+            - name: {{ .secretEnvKey }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.webhooks.secrets.existingSecretName }}
+                  key: {{ .secretEnvKey }}
+            {{- end }}
+            {{- if .bearerEnvKey }}
+            - name: {{ .bearerEnvKey }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.webhooks.secrets.existingSecretName }}
+                  key: {{ .bearerEnvKey }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080
@@ -297,6 +317,11 @@ spec:
               mountPath: /quartz/quartz/.quartz-cache
             - name: tmp
               mountPath: /tmp
+            {{- end }}
+            {{- if .Values.webhooks.enabled }}
+            - name: webhooks-config
+              mountPath: /etc/home-wiki
+              readOnly: true
             {{- end }}
           livenessProbe:
             httpGet:
@@ -379,6 +404,11 @@ spec:
         # readOnlyRootFilesystem=true; harmless on the other containers.
         - name: tmp
           emptyDir: {}
+        {{- if .Values.webhooks.enabled }}
+        - name: webhooks-config
+          configMap:
+            name: {{ .Release.Name }}-webhooks
+        {{- end }}
         {{- if .Values.auth.discovery.enabled }}
         - name: oauth-metadata-conf
           configMap:

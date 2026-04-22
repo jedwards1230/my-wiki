@@ -145,51 +145,6 @@ func TestFindWikiPages(t *testing.T) {
 	}
 }
 
-func TestFindRawFiles(t *testing.T) {
-	dir := setupTestVault(t)
-	v := New(dir)
-
-	files, err := v.FindRawFiles()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var rels []string
-	for _, f := range files {
-		rel, _ := filepath.Rel(dir, f)
-		rels = append(rels, rel)
-	}
-	sort.Strings(rels)
-
-	expected := []string{
-		"raw/missing-fields.md",
-		"raw/source1.md",
-		"raw/source2.md",
-	}
-
-	if len(rels) != len(expected) {
-		t.Fatalf("expected %d raw files, got %d: %v", len(expected), len(rels), rels)
-	}
-	for i, exp := range expected {
-		if rels[i] != exp {
-			t.Errorf("file %d: expected %s, got %s", i, exp, rels[i])
-		}
-	}
-}
-
-func TestFindRawFiles_NoRawDir(t *testing.T) {
-	dir := t.TempDir()
-	v := New(dir)
-
-	files, err := v.FindRawFiles()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != 0 {
-		t.Errorf("expected no files, got %d", len(files))
-	}
-}
-
 func TestParseFrontmatter(t *testing.T) {
 	dir := setupTestVault(t)
 
@@ -682,20 +637,6 @@ func TestWithStorage_MemStorage(t *testing.T) {
 		}
 	})
 
-	t.Run("FindRawFiles", func(t *testing.T) {
-		files, err := v.FindRawFiles()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(files) != 1 {
-			t.Fatalf("expected 1 raw file, got %d: %v", len(files), files)
-		}
-		rel, _ := filepath.Rel("/fake/vault", files[0])
-		if rel != "raw/source.md" {
-			t.Errorf("expected raw/source.md, got %s", rel)
-		}
-	})
-
 	t.Run("BuildSlugIndex", func(t *testing.T) {
 		slugs, err := v.BuildSlugIndex()
 		if err != nil {
@@ -713,17 +654,4 @@ func TestWithStorage_MemStorage(t *testing.T) {
 		}
 	})
 
-	t.Run("FindRawFiles_NoRawDir", func(t *testing.T) {
-		emptyMem := NewMemStorage()
-		emptyMem.AddFile("index.md", "---\ntitle: Home\n---\n")
-		emptyV := New("/fake", WithStorage(emptyMem))
-
-		files, err := emptyV.FindRawFiles()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(files) != 0 {
-			t.Errorf("expected no raw files, got %d", len(files))
-		}
-	})
 }

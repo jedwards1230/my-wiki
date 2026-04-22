@@ -87,30 +87,6 @@ func (v *Vault) FindWikiPages() ([]string, error) {
 	return pages, nil
 }
 
-// FindRawFiles returns all .md files in raw/.
-func (v *Vault) FindRawFiles() ([]string, error) {
-	if _, err := v.Storage.Stat("raw"); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var files []string
-	err := v.Storage.WalkDir("raw", func(rel string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && filepath.Ext(rel) == ".md" {
-			files = append(files, filepath.Join(v.Dir, rel))
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return files, nil
-}
-
 // ParseFrontmatter parses YAML frontmatter between --- markers into key-value pairs.
 // List values (e.g. tags with "- item" entries) are joined as comma-separated strings.
 func ParseFrontmatter(path string) (map[string]string, error) {

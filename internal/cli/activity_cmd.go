@@ -15,7 +15,7 @@ func newActivityCmd() *cobra.Command {
 		Short: "Append a structured entry to today's activity log",
 		Long: `Append a structured entry to today's activity log.
 
-Types: ingest, edit, create, lint, note, migrate`,
+Types: edit, create, delete, lint, note, migrate, move`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: runActivity,
 	}
