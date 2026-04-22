@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,11 +11,11 @@ import (
 )
 
 // VaultWatcher watches a vault directory for filesystem changes and feeds
-// them into a RebuildNotifier. It recursively watches all subdirectories
-// and only forwards .md file changes (Create, Write, Remove, Rename).
+// them into a Sink. It recursively watches all subdirectories and only
+// forwards .md file changes (Create, Write, Remove, Rename).
 type VaultWatcher struct {
 	watcher     *fsnotify.Watcher
-	notifier    *RebuildNotifier
+	sink        Sink
 	vaultDir    string
 	excludeDirs []string // top-level dirs to skip, e.g. [".obsidian", "raw", "private"]
 	logger      *slog.Logger
@@ -34,17 +35,21 @@ func WithWatcherLogger(logger *slog.Logger) WatcherOption {
 }
 
 // NewVaultWatcher creates a watcher that recursively monitors vaultDir and
-// calls notifier.MarkDirty for every .md file change. The caller must invoke
+// calls sink.MarkDirty for every .md file change. The caller must invoke
 // Run() in a goroutine and Close() when done.
-func NewVaultWatcher(vaultDir string, notifier *RebuildNotifier, opts ...WatcherOption) (*VaultWatcher, error) {
+func NewVaultWatcher(vaultDir string, sink Sink, opts ...WatcherOption) (*VaultWatcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
+	if sink == nil {
+		_ = fsw.Close()
+		return nil, fmt.Errorf("notify: sink is required")
+	}
 
 	vw := &VaultWatcher{
 		watcher:  fsw,
-		notifier: notifier,
+		sink:     sink,
 		vaultDir: vaultDir,
 		logger:   slog.Default(),
 	}
@@ -85,14 +90,14 @@ func (vw *VaultWatcher) Run() {
 				}
 			}
 
-			// Only forward .md file changes to the notifier.
+			// Only forward .md file changes to the sink.
 			if filepath.Ext(event.Name) != ".md" {
 				continue
 			}
 
 			if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 				vw.logger.Debug("vault file changed", "path", rel, "op", event.Op.String())
-				vw.notifier.MarkDirty(event.Name)
+				vw.sink.MarkDirty(event.Name)
 			}
 
 		case err, ok := <-vw.watcher.Errors:
