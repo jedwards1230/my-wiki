@@ -10,9 +10,9 @@ import (
 
 func newLintCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "lint [all|frontmatter|raw|tags|links|orphans|size|log]",
+		Use:   "lint [all|frontmatter|tags|links|orphans|size|log]",
 		Short: "Run mechanical health checks on the wiki vault",
-		Long:  "Check frontmatter, tags, broken wikilinks, orphan pages, page size, raw source compliance, and activity log integrity.",
+		Long:  "Check frontmatter, tags, broken wikilinks, orphan pages, page size, and activity log integrity.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE:  runLint,
 	}
@@ -37,7 +37,6 @@ func runLint(cmd *cobra.Command, args []string) error {
 	// Format output for terminal
 	if check == "all" {
 		printLintSection("Frontmatter Check", report, "frontmatter")
-		printLintSection("Raw Source Frontmatter Check", report, "raw")
 		printLintSection("Tag Structure", report, "tags")
 		printLintSection("Broken Wikilinks", report, "links")
 		printLintSection("Orphan Pages (no inbound links)", report, "orphans")

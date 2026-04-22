@@ -11,29 +11,39 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 // defaultQueueDepth is the bounded per-consumer channel size. A full queue
-// drops the event with a dropped{reason=queue_full} metric rather than
-// backpressuring upstream producers.
+// drops the event with outcome=dropped rather than backpressuring upstream
+// producers.
 const defaultQueueDepth = 100
 
-// Outcome label values for wiki_webhook_dispatch_total.
+// Outcome label values for wiki_webhook_dispatch_total. Each delivery
+// increments exactly one outcome so the metric sum equals total deliveries:
+//   - success: delivered OK (2xx on final attempt)
+//   - dropped: terminal — retry exhaustion, queue full, or post-close send
+//   - circuit_open: didn't attempt because the breaker was open
+//
+// Intermediate per-attempt failures are tracked in wiki_webhook_retry_total,
+// not here — mixing them in this counter would double-count deliveries.
 const (
 	outcomeSuccess     = "success"
-	outcomeFailure     = "failure"
 	outcomeDropped     = "dropped"
 	outcomeCircuitOpen = "circuit_open"
 )
+
+// errDispatcherClosed is returned by Dispatch after Close has been called.
+var errDispatcherClosed = errors.New("dispatch: dispatcher closed")
 
 // HTTPDispatcher delivers envelopes over HTTP with HMAC signing, exponential
 // backoff retries, and a per-consumer circuit breaker. Each consumer gets a
@@ -50,6 +60,14 @@ type HTTPDispatcher struct {
 	// now is injected to make retry/circuit-breaker tests deterministic.
 	now func() time.Time
 
+	// rng is a per-dispatcher PRNG for backoff jitter. math/rand/v2's
+	// *rand.Rand is not safe for concurrent use, so the worker goroutines
+	// serialize access via rngMu. Seeding per-dispatcher (rather than using
+	// the global) avoids correlated sequences across replicas that start
+	// near-simultaneously.
+	rng   *rand.Rand
+	rngMu sync.Mutex
+
 	// workers keyed by consumer name. Populated in NewHTTPDispatcher; never
 	// mutated after.
 	workers map[string]*consumerWorker
@@ -60,11 +78,19 @@ type HTTPDispatcher struct {
 	retryTotal       *prometheus.CounterVec
 	queueDepth       *prometheus.GaugeVec
 
+	// closed flips to true on Close so Dispatch returns cleanly without
+	// touching the (possibly-racing) worker channels. closeCh is closed
+	// once by Close; workers select on it to exit.
+	closed    atomic.Bool
+	closeCh   chan struct{}
 	closeOnce sync.Once
 }
 
 // consumerWorker owns the per-consumer queue, HMAC secret cache, and circuit
-// breaker state. One goroutine pulls from ch and attempts delivery.
+// breaker state. One goroutine pulls from ch and attempts delivery. The
+// channel is never closed — workers exit via the dispatcher's closeCh
+// signal. This avoids the send-on-closed-channel panic that would otherwise
+// race with concurrent Dispatch callers during shutdown.
 type consumerWorker struct {
 	consumer Consumer
 	dispatch *HTTPDispatcher
@@ -100,6 +126,12 @@ func NewHTTPDispatcher(cfg *Config, logger *slog.Logger, registerer prometheus.R
 		registerer = prometheus.DefaultRegisterer
 	}
 
+	// Seed the PCG (default math/rand/v2 source) per-dispatcher so replicas
+	// don't share a deterministic jitter sequence. Mixing PID in defends
+	// against the (vanishingly rare) case of two replicas drawing the same
+	// wall-clock nanosecond.
+	seed1 := uint64(time.Now().UnixNano())
+	seed2 := uint64(os.Getpid())
 	d := &HTTPDispatcher{
 		cfg:    cfg,
 		logger: logger,
@@ -109,12 +141,14 @@ func NewHTTPDispatcher(cfg *Config, logger *slog.Logger, registerer prometheus.R
 			Transport: http.DefaultTransport,
 		},
 		now:     time.Now,
+		rng:     rand.New(rand.NewPCG(seed1, seed2)),
 		workers: make(map[string]*consumerWorker, len(cfg.Consumers)),
+		closeCh: make(chan struct{}),
 	}
 
 	d.dispatchTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "wiki_webhook_dispatch_total",
-		Help: "Total webhook dispatch attempts by event, consumer, and outcome.",
+		Help: "Total webhook deliveries by event, consumer, and terminal outcome (success|dropped|circuit_open). Each delivery increments exactly one outcome; intermediate retry attempts are counted in wiki_webhook_retry_total.",
 	}, []string{"event", "consumer", "outcome"})
 
 	d.dispatchDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -172,25 +206,42 @@ func NewHTTPDispatcher(cfg *Config, logger *slog.Logger, registerer prometheus.R
 	return d, nil
 }
 
-// Dispatch enqueues env for delivery to consumer. It returns nil on enqueue
-// success or when the circuit breaker short-circuits the call; a blocked
-// queue is reported as a dropped outcome (not an error) because the router
-// should not halt on a single slow consumer. The only returned error is
-// "unknown consumer", which indicates a config mismatch.
+// Dispatch enqueues env for delivery. It returns errDispatcherClosed when
+// the dispatcher is shutting down; the router logs and moves on. Any other
+// non-enqueue path (unknown consumer, queue full, open breaker) is
+// represented as a metric outcome, not an error, so a single slow consumer
+// cannot halt the router.
+//
+// The send path uses a select with a default branch rather than an
+// unconditional send, so callers never block. Critically, nothing in this
+// dispatcher closes the worker channels — Close signals via closeCh
+// instead — which eliminates the send-on-closed-channel panic that would
+// otherwise race with Close.
 func (d *HTTPDispatcher) Dispatch(ctx context.Context, consumer Consumer, envelope Envelope) error {
+	if d.closed.Load() {
+		return errDispatcherClosed
+	}
+
 	w, ok := d.workers[consumer.Name]
 	if !ok {
 		return fmt.Errorf("dispatch: unknown consumer %q", consumer.Name)
 	}
 
+	// From here on, use w.consumer (the canonical configured value) for
+	// labels and log fields so the caller can't accidentally shadow the
+	// configured URL with a stale Consumer struct.
+	eventLabel := string(envelope.Event)
+	consumerName := w.consumer.Name
+	sanitizedURL := SanitizeURL(w.consumer.URL)
+
 	// Short-circuit under an open breaker so we don't fill the queue with
 	// events that will immediately be rejected.
 	if w.breakerOpen() {
-		d.dispatchTotal.WithLabelValues(string(envelope.Event), consumer.Name, outcomeCircuitOpen).Inc()
+		d.dispatchTotal.WithLabelValues(eventLabel, consumerName, outcomeCircuitOpen).Inc()
 		d.logger.Warn("dispatch.circuit_open",
-			slog.String("consumer", consumer.Name),
-			slog.String("consumer_url", SanitizeURL(consumer.URL)),
-			slog.String("event", string(envelope.Event)),
+			slog.String("consumer", consumerName),
+			slog.String("consumer_url", sanitizedURL),
+			slog.String("event", eventLabel),
 			slog.String("delivery_id", envelope.DeliveryID),
 		)
 		return nil
@@ -198,33 +249,42 @@ func (d *HTTPDispatcher) Dispatch(ctx context.Context, consumer Consumer, envelo
 
 	select {
 	case w.ch <- workItem{ctx: ctx, env: envelope}:
-		d.queueDepth.WithLabelValues(consumer.Name).Set(float64(len(w.ch)))
+		d.queueDepth.WithLabelValues(consumerName).Set(float64(len(w.ch)))
 		return nil
+	case <-d.closeCh:
+		// Race: Close fired between the atomic check above and this send.
+		return errDispatcherClosed
 	default:
-		d.dispatchTotal.WithLabelValues(string(envelope.Event), consumer.Name, outcomeDropped).Inc()
+		d.dispatchTotal.WithLabelValues(eventLabel, consumerName, outcomeDropped).Inc()
 		d.logger.Warn("dispatch.queue_full",
-			slog.String("consumer", consumer.Name),
-			slog.String("event", string(envelope.Event)),
+			slog.String("consumer", consumerName),
+			slog.String("consumer_url", sanitizedURL),
+			slog.String("event", eventLabel),
 			slog.String("delivery_id", envelope.DeliveryID),
 		)
 		return nil
 	}
 }
 
-// Close stops every consumer worker and waits for in-flight deliveries to
-// drain under the supplied context's deadline. Returns a non-nil error
-// describing any undrained work when the deadline elapses. Subsequent calls
-// are no-ops.
+// Close signals every consumer worker to exit and waits for them to finish
+// their current delivery, bounded by ctx. Subsequent Dispatch calls return
+// errDispatcherClosed without touching any channel, so there is no
+// send-on-closed-channel window.
+//
+// The worker input channel is deliberately NEVER closed — workers exit via
+// d.closeCh. The channel is GC'd once no goroutine references it.
+// Undelivered envelopes still in the queue are dropped (not counted in
+// dispatch_total since they were neither success, dropped retries, nor
+// circuit-open; operators who care can compare received events to
+// success-count).
 func (d *HTTPDispatcher) Close(ctx context.Context) error {
 	var err error
 	d.closeOnce.Do(func() {
-		// Close every input channel; workers will return once their queues
-		// drain.
-		for _, w := range d.workers {
-			close(w.ch)
-		}
+		// Flip the closed flag first so new Dispatch calls bail immediately.
+		d.closed.Store(true)
+		// Signal workers to exit after their current item.
+		close(d.closeCh)
 
-		// Wait for each worker to signal done, bounded by ctx.
 		pending := make([]string, 0, len(d.workers))
 		for name, w := range d.workers {
 			select {
@@ -240,21 +300,29 @@ func (d *HTTPDispatcher) Close(ctx context.Context) error {
 	return err
 }
 
-// run is the per-consumer worker loop. It drains ch sequentially so the
-// circuit-breaker and retry logic see a linear attempt order for one
-// consumer. Parallelism across consumers is achieved by independent workers.
+// run is the per-consumer worker loop. It pulls items until the dispatcher
+// closes, finishing any in-flight delivery before exiting.
 func (w *consumerWorker) run() {
 	defer close(w.done)
-	for item := range w.ch {
-		w.dispatch.queueDepth.WithLabelValues(w.consumer.Name).Set(float64(len(w.ch)))
-		w.deliver(item.ctx, item.env)
+	for {
+		select {
+		case item := <-w.ch:
+			w.dispatch.queueDepth.WithLabelValues(w.consumer.Name).Set(float64(len(w.ch)))
+			w.deliver(item.ctx, item.env)
+		case <-w.dispatch.closeCh:
+			// Zero the gauge on shutdown so Prometheus doesn't retain stale
+			// depth. Items still sitting in the buffered channel are dropped
+			// intentionally; Close documents that behavior.
+			w.dispatch.queueDepth.WithLabelValues(w.consumer.Name).Set(0)
+			return
+		}
 	}
-	// Zero the gauge on shutdown so Prometheus doesn't retain stale depth.
-	w.dispatch.queueDepth.WithLabelValues(w.consumer.Name).Set(0)
 }
 
-// deliver runs the retry loop for a single envelope. It updates metrics and
-// the circuit breaker based on the outcome of each attempt.
+// deliver runs the retry loop for a single envelope. Intermediate attempt
+// failures are counted via wiki_webhook_retry_total and logged at INFO; the
+// terminal outcome (success or dropped) is recorded exactly once in
+// wiki_webhook_dispatch_total.
 func (w *consumerWorker) deliver(parentCtx context.Context, env Envelope) {
 	if parentCtx == nil {
 		parentCtx = context.Background()
@@ -278,11 +346,14 @@ func (w *consumerWorker) deliver(parentCtx context.Context, env Envelope) {
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			w.dispatch.retryTotal.WithLabelValues(w.consumer.Name).Inc()
-			backoff := computeBackoff(attempt-1, retries.InitialBackoff.D, retries.MaxBackoff.D)
+			backoff := w.dispatch.computeBackoff(attempt-1, retries.InitialBackoff.D, retries.MaxBackoff.D)
 			if backoff > 0 {
 				select {
 				case <-parentCtx.Done():
-					w.recordFailure(env, parentCtx.Err())
+					w.recordDropped(env, parentCtx.Err())
+					return
+				case <-w.dispatch.closeCh:
+					w.recordDropped(env, errDispatcherClosed)
 					return
 				case <-time.After(backoff):
 				}
@@ -295,12 +366,23 @@ func (w *consumerWorker) deliver(parentCtx context.Context, env Envelope) {
 			return
 		}
 		lastErr = err
+		// Per-attempt failure — log for visibility but don't increment
+		// dispatch_total yet. The terminal recordDropped below does that.
+		w.dispatch.logger.Info("dispatch.attempt.failed",
+			slog.String("consumer", w.consumer.Name),
+			slog.String("consumer_url", SanitizeURL(w.consumer.URL)),
+			slog.String("event", string(env.Event)),
+			slog.String("delivery_id", env.DeliveryID),
+			slog.Int("attempt", attempt+1),
+			slog.Int("max_attempts", maxAttempts),
+			slog.Any("error", err),
+		)
 		if !isRetriable(err) {
 			break
 		}
 	}
 
-	w.recordFailure(env, lastErr)
+	w.recordDropped(env, lastErr)
 }
 
 // attempt performs one HTTP POST with HMAC signing. The timeout governs the
@@ -383,7 +465,8 @@ func (w *consumerWorker) resolveSecret() string {
 	return w.cachedSecret
 }
 
-// recordSuccess increments success metrics and resets breaker state.
+// recordSuccess increments the terminal success counter and resets breaker
+// state.
 func (w *consumerWorker) recordSuccess(env Envelope) {
 	w.dispatch.dispatchTotal.WithLabelValues(string(env.Event), w.consumer.Name, outcomeSuccess).Inc()
 	w.mu.Lock()
@@ -398,12 +481,13 @@ func (w *consumerWorker) recordSuccess(env Envelope) {
 	)
 }
 
-// recordFailure increments failure + dropped metrics (retries exhausted),
-// bumps the consecutive failure counter, and may open the breaker.
-func (w *consumerWorker) recordFailure(env Envelope, err error) {
-	w.dispatch.dispatchTotal.WithLabelValues(string(env.Event), w.consumer.Name, outcomeFailure).Inc()
+// recordDropped records a terminal failure: retries exhausted, parent
+// context cancelled, or dispatcher closed mid-retry. The delivery is
+// counted exactly once with outcome=dropped and the consecutive-failure
+// counter is bumped, potentially tripping the circuit breaker.
+func (w *consumerWorker) recordDropped(env Envelope, err error) {
 	w.dispatch.dispatchTotal.WithLabelValues(string(env.Event), w.consumer.Name, outcomeDropped).Inc()
-	w.dispatch.logger.Warn("dispatch.failure",
+	w.dispatch.logger.Warn("dispatch.dropped",
 		slog.String("consumer", w.consumer.Name),
 		slog.String("consumer_url", SanitizeURL(w.consumer.URL)),
 		slog.String("event", string(env.Event)),
@@ -429,8 +513,8 @@ func (w *consumerWorker) recordFailure(env Envelope, err error) {
 // the cooldown window has elapsed it returns false without clearing
 // consecFails — the next attempt runs in half-open mode, and either clears
 // state on success (recordSuccess) or re-opens the breaker on failure
-// (recordFailure). Callers guard against concurrent mutations via the same
-// mu used by recordSuccess/recordFailure.
+// (recordDropped). Callers guard against concurrent mutations via the same
+// mu used by recordSuccess/recordDropped.
 func (w *consumerWorker) breakerOpen() bool {
 	cb := w.consumer.EffectiveCircuitBreaker(w.dispatch.cfg.Defaults)
 	w.mu.Lock()
@@ -456,28 +540,33 @@ func (w *consumerWorker) breakerOpen() bool {
 }
 
 // computeBackoff returns initial * 2^attempt, capped at max, with full
-// jitter applied. attempt=0 corresponds to the first retry delay.
-func computeBackoff(attempt int, initial, max time.Duration) time.Duration {
+// jitter applied. attempt=0 corresponds to the first retry delay. The
+// dispatcher's PRNG is protected by rngMu — math/rand/v2's *rand.Rand
+// is not safe for concurrent use.
+func (d *HTTPDispatcher) computeBackoff(attempt int, initial, max time.Duration) time.Duration {
 	if initial <= 0 {
 		return 0
 	}
 	// Guard against overflow for large attempt counts.
-	d := initial
-	for i := 0; i < attempt && d < max; i++ {
-		d *= 2
-		if d <= 0 { // overflow
-			d = max
+	cap := initial
+	for i := 0; i < attempt && cap < max; i++ {
+		cap *= 2
+		if cap <= 0 { // overflow
+			cap = max
 			break
 		}
 	}
-	if max > 0 && d > max {
-		d = max
+	if max > 0 && cap > max {
+		cap = max
 	}
-	// Full jitter: uniformly random in [0, d).
-	if d <= 0 {
+	if cap <= 0 {
 		return 0
 	}
-	return time.Duration(rand.Int63n(int64(d)))
+	// Full jitter: uniformly random in [0, cap).
+	d.rngMu.Lock()
+	v := d.rng.Int64N(int64(cap))
+	d.rngMu.Unlock()
+	return time.Duration(v)
 }
 
 // signBody returns the hex-encoded HMAC-SHA256 of "<timestamp>.<body>" with

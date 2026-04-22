@@ -208,7 +208,7 @@ webhooks:
   #   url:            full webhook URL (https recommended)
   #   events:         event types this consumer subscribes to
   #   pathFilters:
-  #     include:      [optional] prefix list — only paths matching at least one enter
+  #     include:      [optional] prefix list — only paths matching at least one entry
   #     exclude:      [optional] prefix list — paths matching any are dropped
   #   secretEnvKey:   env var name holding the HMAC-SHA256 secret (required)
   #   bearerEnvKey:   [optional] env var name holding a bearer token
