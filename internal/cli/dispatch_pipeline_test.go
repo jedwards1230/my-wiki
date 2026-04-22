@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -34,9 +35,11 @@ wiki:
 `
 
 // discardLogger returns a slog.Logger that swallows log output — tests
-// should not clutter CI with dispatcher chatter.
+// should not clutter CI with dispatcher chatter. Earlier revision used
+// os.NewFile(0, os.DevNull), which wraps stdin (fd 0); any write would
+// have gone there. io.Discard is the correct black hole.
 func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.NewFile(0, os.DevNull), &slog.HandlerOptions{Level: slog.LevelError}))
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 // captureDispatcher implements dispatch.Dispatcher by recording every

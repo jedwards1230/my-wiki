@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -284,17 +285,29 @@ func TestHTTPDispatcher_AllRetriesFail(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 
+	// After retry exhaustion the terminal outcome is dropped (and exactly
+	// one). Intermediate failures are tracked in retry_total, not
+	// dispatch_total — asserting success=0 confirms nothing slipped
+	// through.
 	waitUntil(t, 3*time.Second, func() bool {
-		return labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeFailure) == 1
+		return labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeDropped) == 1
 	})
 	if got := atomic.LoadInt32(&hits); got != 3 {
 		t.Errorf("server hits: got %d want 3", got)
 	}
-	if got := labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeDropped); got != 1 {
-		t.Errorf("dropped counter: got %v want 1", got)
+	if got := labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeSuccess); got != 0 {
+		t.Errorf("success counter: got %v want 0", got)
 	}
-	if !strings.Contains(buf.String(), "dispatch.failure") {
-		t.Errorf("expected dispatch.failure in logs: %s", buf.String())
+	// 3 attempts → 2 retries.
+	if got := counterValue(t, d.retryTotal); got != 2 {
+		t.Errorf("retry_total: got %v want 2", got)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "dispatch.dropped") {
+		t.Errorf("expected dispatch.dropped in logs: %s", logged)
+	}
+	if !strings.Contains(logged, "dispatch.attempt.failed") {
+		t.Errorf("expected dispatch.attempt.failed in logs: %s", logged)
 	}
 }
 
@@ -383,8 +396,10 @@ func TestHTTPDispatcher_CircuitBreaker(t *testing.T) {
 			t.Fatalf("Dispatch %d: %v", i, err)
 		}
 	}
+	// Each deliver exhausts its single attempt → terminal outcome=dropped.
+	// Two deliveries plus a breaker threshold of 2 trips the circuit.
 	waitUntil(t, 3*time.Second, func() bool {
-		return labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeFailure) == 2
+		return labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeDropped) == 2
 	})
 	hitsAfterFail := atomic.LoadInt32(&hits)
 	if hitsAfterFail != 2 {
@@ -511,7 +526,7 @@ func TestHTTPDispatcher_SanitizedURLInLogs(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 	waitUntil(t, 2*time.Second, func() bool {
-		return labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeFailure) == 1
+		return labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeDropped) == 1
 	})
 
 	logged := buf.String()
@@ -560,16 +575,73 @@ func TestHTTPDispatcher_CloseDrainsInFlight(t *testing.T) {
 		t.Errorf("Close (second call): %v", err)
 	}
 
+	// Post-close Dispatch returns errDispatcherClosed cleanly (no panic).
+	err = d.Dispatch(context.Background(), cfg.Consumers[0], newTestEnvelope())
+	if !errors.Is(err, errDispatcherClosed) {
+		t.Errorf("post-close Dispatch: got err=%v, want errDispatcherClosed", err)
+	}
+
 	// No dispatches should land after close.
 	pre := atomic.LoadInt32(&hits)
-	// The Dispatch call below would panic on a closed channel; Dispatch
-	// still returns error since the worker is gone, but we don't want to
-	// panic. Guard by checking that workers are gone.
-	// Rather than calling Dispatch, just confirm hits stabilized.
 	time.Sleep(50 * time.Millisecond)
 	if got := atomic.LoadInt32(&hits); got != pre {
 		t.Errorf("hits after close: got %d want %d", got, pre)
 	}
+}
+
+// TestHTTPDispatcher_NoPanicOnConcurrentCloseAndDispatch is the regression
+// guard for the send-on-closed-channel panic that the original shutdown
+// path allowed. The previous implementation closed each worker's input
+// channel in Close while concurrent Dispatch calls could still be
+// mid-send — a classic Go race. The current implementation never closes
+// the input channel (workers exit via closeCh) and Dispatch bails out via
+// an atomic flag + select-on-closeCh.
+//
+// Run with -race to catch data races; run with -count=10 to shake out
+// timing-dependent panics.
+func TestHTTPDispatcher_NoPanicOnConcurrentCloseAndDispatch(t *testing.T) {
+	t.Setenv("WIKI_TEST_HMAC", "s")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := newTestConfig(server.URL, "racer", "WIKI_TEST_HMAC")
+	cfg.Defaults.Retries.MaxAttempts = 1
+
+	d, err := NewHTTPDispatcher(cfg, silentLogger(&syncBuffer{}), prometheus.NewRegistry())
+	if err != nil {
+		t.Fatalf("NewHTTPDispatcher: %v", err)
+	}
+
+	const n = 50
+	started := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-started
+			// Errors are fine — errDispatcherClosed is expected for calls
+			// that land after Close. The assertion is simply that nothing
+			// panics.
+			_ = d.Dispatch(context.Background(), cfg.Consumers[0], newTestEnvelope())
+		}()
+	}
+
+	// Release all goroutines at once, then race Close against them.
+	close(started)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = d.Close(ctx)
+	}()
+
+	wg.Wait()
+	// Idempotent close after goroutines finish; must not panic either.
+	_ = d.Close(context.Background())
 }
 
 func TestHTTPDispatcher_UnknownConsumer(t *testing.T) {
@@ -589,12 +661,22 @@ func TestHTTPDispatcher_UnknownConsumer(t *testing.T) {
 }
 
 func TestComputeBackoff_FullJitterBounded(t *testing.T) {
+	t.Setenv("WIKI_TEST_HMAC", "s")
+	// Need a dispatcher to host the per-instance PRNG; the config contents
+	// don't matter beyond passing validation.
+	cfg := newTestConfig("http://unused.example.com/x", "backoff", "WIKI_TEST_HMAC")
+	d, err := NewHTTPDispatcher(cfg, silentLogger(&syncBuffer{}), prometheus.NewRegistry())
+	if err != nil {
+		t.Fatalf("NewHTTPDispatcher: %v", err)
+	}
+	defer func() { _ = d.Close(context.Background()) }()
+
 	initial := 100 * time.Millisecond
 	max := 1 * time.Second
 	// attempt 0 → base = initial; attempt 3 → base = 800ms; attempt 10 → capped to max.
 	for attempt := 0; attempt < 12; attempt++ {
 		for i := 0; i < 20; i++ {
-			got := computeBackoff(attempt, initial, max)
+			got := d.computeBackoff(attempt, initial, max)
 			if got < 0 || got > max {
 				t.Errorf("attempt=%d: backoff %v out of [0,%v]", attempt, got, max)
 			}
