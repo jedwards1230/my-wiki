@@ -11,7 +11,7 @@ func setupLintVault(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	dirs := []string{"raw", "private", ".obsidian", "meta", "project"}
+	dirs := []string{"private", ".obsidian", "meta", "project"}
 	for _, d := range dirs {
 		_ = os.MkdirAll(filepath.Join(dir, d), 0o755)
 	}
@@ -23,8 +23,6 @@ func setupLintVault(t *testing.T) string {
 		"orphan.md":         "---\ntitle: Orphan\ntags:\n  - test\ndate: 2026-03-01\n---\n\nNo links here.\n",
 		"no-frontmatter.md": "Just text.\n",
 		"missing-tags.md":   "---\ntitle: No Tags\ndate: 2026-01-01\n---\n\nMissing tags.\n",
-		"raw/good.md":       "---\ntitle: Good\nsource: https://example.com\ndate-added: 2026-01-01\n---\n\nContent.\n",
-		"raw/bad.md":        "---\ntitle: Bad Raw\n---\n\nMissing source and date-added.\n",
 	}
 
 	for name, content := range files {
@@ -48,19 +46,6 @@ func TestLintFrontmatter(t *testing.T) {
 	// Should fail because of missing frontmatter and missing tags
 	if err == nil {
 		t.Fatal("expected error for missing frontmatter, got nil")
-	}
-}
-
-func TestLintRaw(t *testing.T) {
-	dir := setupLintVault(t)
-
-	cmd := NewRootCmd()
-	cmd.SetArgs([]string{"--vault", dir, "lint", "raw"})
-
-	err := cmd.Execute()
-	// Should fail because raw/bad.md is missing source and date-added
-	if err == nil {
-		t.Fatal("expected error for raw frontmatter issues, got nil")
 	}
 }
 
