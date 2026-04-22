@@ -256,10 +256,32 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	})
 	defer notifier.Close()
 
+	// Build webhook dispatch pipeline (opt-in via WIKI_WEBHOOKS_CONFIG).
+	// When disabled, pipeline is nil and subsequent checks skip dispatcher wiring.
+	pipeline, err := buildDispatchPipeline(vaultDir, logger, nil)
+	if err != nil {
+		return fmt.Errorf("webhook dispatcher setup: %w", err)
+	}
+	defer func() {
+		if pipeline != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if cerr := pipeline.closer(shutdownCtx); cerr != nil {
+				logger.Warn("webhook dispatcher close", "error", cerr)
+			}
+		}
+	}()
+
 	// Start filesystem watcher to detect external changes (Obsidian Sync,
 	// git pull, manual edits) and feed them into the rebuild notifier.
+	// When the dispatch pipeline is enabled, the watcher sink fans out to
+	// both the rebuild notifier and the dispatch pipeline sink.
 	if watchEnabled {
-		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, notifier,
+		var watcherSink notify.Sink = notifier
+		if pipeline != nil {
+			watcherSink = notify.NewFanoutSink(notifier, pipeline.sink)
+		}
+		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, watcherSink,
 			notify.WithExcludeDirs([]string{".obsidian", "raw", "private"}),
 			notify.WithWatcherLogger(logger),
 		)
@@ -272,12 +294,29 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Shared PageService with auto-activity logging on mutations.
+	// Shared PageService with auto-activity logging on mutations. When the
+	// dispatch pipeline is enabled, mutations also feed the router so
+	// inbox.changed events fire on API/MCP edits.
 	activitySvc := service.NewActivityService(v.Storage)
+	onMutation := makeActivityCallback(activitySvc, notifier, vaultDir, logger)
+	if pipeline != nil {
+		onMutation = mutationAdapter(pipeline.router, onMutation)
+	}
 	pageSvc := service.NewPageService(v.Storage,
 		service.WithExcludedDirs(v.ExcludedDirs),
-		service.WithOnMutation(makeActivityCallback(activitySvc, notifier, vaultDir, logger)),
+		service.WithOnMutation(onMutation),
 	)
+
+	// Startup reconciliation: when enabled and the dispatcher is wired,
+	// synthesize an inbox.changed event for any existing inbox/*.md files
+	// so consumers pick up the backlog on boot.
+	if pipeline != nil && pipeline.cfg.ReconcileOnStart {
+		paths := scanInboxForReconcile(vaultDir, logger)
+		if len(paths) > 0 {
+			logger.Info("reconcile on start found pending inbox items", "count", len(paths))
+			pipeline.router.RecordReconcile(paths)
+		}
+	}
 
 	var apiOpts []api.HandlerOption
 	if authMWs != nil {
@@ -431,9 +470,28 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 	})
 	defer mcpNotifier.Close()
 
+	// Build webhook dispatch pipeline (opt-in via WIKI_WEBHOOKS_CONFIG).
+	pipeline, err := buildDispatchPipeline(vaultDir, logger, nil)
+	if err != nil {
+		return fmt.Errorf("webhook dispatcher setup: %w", err)
+	}
+	defer func() {
+		if pipeline != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if cerr := pipeline.closer(shutdownCtx); cerr != nil {
+				logger.Warn("webhook dispatcher close", "error", cerr)
+			}
+		}
+	}()
+
 	// Start filesystem watcher for standalone MCP mode (no Quartz builder).
 	if watchEnabled {
-		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, mcpNotifier,
+		var watcherSink notify.Sink = mcpNotifier
+		if pipeline != nil {
+			watcherSink = notify.NewFanoutSink(mcpNotifier, pipeline.sink)
+		}
+		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, watcherSink,
 			notify.WithExcludeDirs([]string{".obsidian", "raw", "private"}),
 			notify.WithWatcherLogger(logger),
 		)
@@ -446,12 +504,26 @@ func runServeMCP(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Shared PageService with auto-activity logging on mutations.
+	// Shared PageService with auto-activity logging on mutations. When the
+	// dispatch pipeline is enabled, mutations also feed the router.
 	mcpActivitySvc := service.NewActivityService(v.Storage)
+	mcpOnMutation := makeActivityCallback(mcpActivitySvc, mcpNotifier, vaultDir, logger)
+	if pipeline != nil {
+		mcpOnMutation = mutationAdapter(pipeline.router, mcpOnMutation)
+	}
 	mcpPageSvc := service.NewPageService(v.Storage,
 		service.WithExcludedDirs(v.ExcludedDirs),
-		service.WithOnMutation(makeActivityCallback(mcpActivitySvc, mcpNotifier, vaultDir, logger)),
+		service.WithOnMutation(mcpOnMutation),
 	)
+
+	// Startup reconciliation.
+	if pipeline != nil && pipeline.cfg.ReconcileOnStart {
+		paths := scanInboxForReconcile(vaultDir, logger)
+		if len(paths) > 0 {
+			logger.Info("reconcile on start found pending inbox items", "count", len(paths))
+			pipeline.router.RecordReconcile(paths)
+		}
+	}
 
 	mcpSrv := mcpserver.New(v, nil, mcpserver.WithRebuildNotifier(mcpNotifier), mcpserver.WithPageService(mcpPageSvc))
 	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
