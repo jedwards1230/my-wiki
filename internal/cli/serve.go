@@ -214,7 +214,13 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		Port:      port,
 	}
 
-	publicFS := os.DirFS(publicDir)
+	publicFS, closePublicFS, err := buildPublicFS(publicDir, logger)
+	if err != nil {
+		return fmt.Errorf("public fs setup: %w", err)
+	}
+	if closePublicFS != nil {
+		defer func() { _ = closePublicFS() }()
+	}
 	vaultFS := os.DirFS(vaultDir)
 
 	// Build API handler with search engines
