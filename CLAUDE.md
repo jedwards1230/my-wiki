@@ -87,6 +87,7 @@ Located at `deploy/helm/home-wiki/`. Published to `oci://ghcr.io/jedwards1230/ch
 | `WIKI_PORT` | `8080` | HTTP server port |
 | `WIKI_PUBLIC_DIR` | `/data/public` | Quartz static output directory |
 | `WIKI_MCP_PORT` | (disabled) | MCP server port (enables when non-zero) |
+| `WIKI_IN_MEMORY_HTML` | `false` | When truthy, load `WIKI_PUBLIC_DIR` into an atomically-swappable in-memory `fs.FS` and serve from there; fsnotify drives debounced reloads on Quartz rebuilds. Eliminates the mid-rebuild 404 window. Adds the public tree's size to RSS. |
 | `WIKI_AUTH_ISSUER` | (disabled) | OIDC issuer URL for JWT auth (e.g. Authentik); enables auth when set. Protects mutating REST API routes and MCP endpoint. |
 | `WIKI_AUTH_AUDIENCE` | — | Expected JWT `aud` claim; required when `WIKI_AUTH_ISSUER` is set |
 | `WIKI_AUTH_ALLOWED_GROUPS` | — | Comma-separated group names; token's `groups` claim must contain at least one. Required unless `WIKI_AUTH_ALLOW_ANY_USER=true`. |
