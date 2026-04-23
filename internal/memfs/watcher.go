@@ -48,12 +48,13 @@ type Watcher struct {
 
 	w *fsnotify.Watcher
 
-	mu     sync.Mutex
-	timer  *time.Timer
-	gen    uint64
-	closed bool
-	stopCh chan struct{}
-	doneCh chan struct{}
+	startOnce sync.Once
+	mu        sync.Mutex
+	timer     *time.Timer
+	gen       uint64
+	closed    bool
+	stopCh    chan struct{}
+	doneCh    chan struct{}
 }
 
 // NewWatcher constructs a Watcher, performs one initial synchronous
@@ -107,9 +108,13 @@ func NewWatcher(sourceDir string, f *FS, opts WatcherOptions) (*Watcher, error) 
 }
 
 // Start begins processing filesystem events. Non-blocking; returns
-// immediately after launching the goroutine.
+// immediately after launching the goroutine. Idempotent — subsequent
+// calls are no-ops. A second goroutine would race on the fsnotify event
+// channel and swallow events, so we guard with sync.Once.
 func (w *Watcher) Start() {
-	go w.run()
+	w.startOnce.Do(func() {
+		go w.run()
+	})
 }
 
 // Close stops the watcher, releases fsnotify resources, and waits for
@@ -207,10 +212,12 @@ func (w *Watcher) reloadIfCurrent(gen uint64) {
 	}
 }
 
-// addRecursive adds every non-hidden directory under root to the
-// fsnotify watcher. fsnotify's per-directory watches do not recurse, so
-// we do it manually once; new directories created later are added on
-// the fly in the event loop.
+// addRecursive adds every directory under root to the fsnotify watcher,
+// including hidden ones (dotdirs) — SSG output occasionally stages
+// assets into .cache-style directories that we still want to track.
+// fsnotify's per-directory watches do not recurse, so we do it manually
+// once; new directories created later are added on the fly in the event
+// loop.
 func addRecursive(w *fsnotify.Watcher, root string) error {
 	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

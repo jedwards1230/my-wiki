@@ -29,6 +29,27 @@ func TestSnapshot_AddFile_MaterializesParents(t *testing.T) {
 	}
 }
 
+// TestSnapshot_AddFile_OverwriteCorrectsBytes guards against double-
+// counting. Re-adding the same key (e.g., during a partial rebuild) must
+// subtract the previous file's byte count before adding the new one so
+// Bytes() reflects the current snapshot, not cumulative writes.
+func TestSnapshot_AddFile_OverwriteCorrectsBytes(t *testing.T) {
+	s := NewSnapshot()
+	mt := time.Unix(1000, 0)
+	if err := s.AddFile("index.html", []byte("first-version"), mt); err != nil {
+		t.Fatalf("AddFile 1: %v", err)
+	}
+	if err := s.AddFile("index.html", []byte("rewritten"), mt); err != nil {
+		t.Fatalf("AddFile 2: %v", err)
+	}
+	if s.Files() != 1 {
+		t.Errorf("Files: got %d want 1", s.Files())
+	}
+	if got, want := s.Bytes(), int64(len("rewritten")); got != want {
+		t.Errorf("Bytes after overwrite: got %d want %d", got, want)
+	}
+}
+
 func TestSnapshot_AddFile_RejectsDisallowedPaths(t *testing.T) {
 	s := NewSnapshot()
 	cases := []string{"", ".", "..", "a/..", "a/./b", "", "/leading", "a//b"}

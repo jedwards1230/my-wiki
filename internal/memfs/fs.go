@@ -17,6 +17,7 @@ package memfs
 import (
 	"bytes"
 	"errors"
+	"io"
 	"io/fs"
 	"path"
 	"sort"
@@ -78,6 +79,14 @@ func (s *Snapshot) AddFile(name string, data []byte, modTime time.Time) error {
 			return errors.New("memfs: name contains disallowed segment")
 		}
 	}
+	// If this key already holds a file, subtract its byte count before we
+	// overwrite; otherwise Bytes() overcounts across re-adds. Directory
+	// entries have zero-length Data so the subtract is a no-op when the
+	// previous entry was a materialized directory being replaced by a
+	// file (unusual but possible if callers misuse AddFile).
+	if prev, ok := s.entries[name]; ok && !prev.isDir {
+		s.totalBytes -= int64(len(prev.Data))
+	}
 	s.entries[name] = Entry{Data: data, ModTime: modTime, isDir: false}
 	s.totalBytes += int64(len(data))
 	// Materialize parent directories so ReadDir on a parent sees this
@@ -112,7 +121,9 @@ type FS struct {
 
 // New returns an FS that initially serves the empty snapshot. Callers
 // are expected to Store a real snapshot before letting requests through;
-// until they do, Open returns fs.ErrNotExist for every path.
+// until they do, no files exist yet — Open(".") still returns the
+// (empty) root directory, but Open for any non-root path returns
+// fs.ErrNotExist.
 func New() *FS {
 	f := &FS{}
 	f.current.Store(NewSnapshot())
@@ -279,7 +290,10 @@ func (d *memDir) ReadDir(n int) ([]fs.DirEntry, error) {
 		if n <= 0 {
 			return nil, nil
 		}
-		return nil, errors.New("EOF")
+		// fs.ReadDirFile contract: once exhausted, further calls with
+		// n > 0 must return io.EOF. Returning a bare errors.New("EOF")
+		// breaks callers that type-check against io.EOF.
+		return nil, io.EOF
 	}
 	start := d.idx
 	if n <= 0 {

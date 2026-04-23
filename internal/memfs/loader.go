@@ -32,10 +32,11 @@ type LoaderOptions struct {
 // Snapshot itself (see Snapshot.AddFile). Paths in the snapshot are
 // forward-slash-relative to sourceDir.
 //
-// Load does not follow symlinks outside sourceDir: any attempt to read
-// through a symlink that resolves outside the tree is skipped with a
-// warning. This guards against malformed Quartz output or operator
-// error creating an unbounded walk.
+// Load does not follow symlinks. Any symlink encountered while walking
+// sourceDir is skipped with a warning. This guards against malformed
+// SSG output or operator error creating unbounded walks via cycles or
+// links that resolve outside the tree. If symlink support is ever
+// required, add a LoaderOption and validate target paths explicitly.
 func Load(sourceDir string, opts LoaderOptions) (*Snapshot, error) {
 	if sourceDir == "" {
 		return nil, errors.New("memfs: sourceDir is required")
@@ -94,19 +95,30 @@ func Load(sourceDir string, opts LoaderOptions) (*Snapshot, error) {
 			logger.Warn("memfs: stat failed", "path", rel, "error", err)
 			return nil
 		}
-		size := fi.Size()
-		if opts.MaxFileBytes > 0 && size > opts.MaxFileBytes {
+		// Early cap check on stat-reported size to avoid reading files
+		// we're going to throw away.
+		if opts.MaxFileBytes > 0 && fi.Size() > opts.MaxFileBytes {
 			logger.Warn("memfs: file exceeds MaxFileBytes; skipping",
-				"path", rel, "size", size, "limit", opts.MaxFileBytes)
+				"path", rel, "size", fi.Size(), "limit", opts.MaxFileBytes)
 			return nil
-		}
-		if opts.MaxTotalBytes > 0 && snap.totalBytes+size > opts.MaxTotalBytes {
-			return fmt.Errorf("memfs: total size would exceed MaxTotalBytes (%d); aborting at %q", opts.MaxTotalBytes, rel)
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
 			logger.Warn("memfs: read file failed", "path", rel, "error", err)
 			return nil
+		}
+		// Re-check against len(data) — a file that grew between stat
+		// and read (common during SSG rebuild bursts) could now exceed
+		// the limit. We use the actual byte count that will live in
+		// the snapshot, which is the only source of truth for Bytes().
+		dataSize := int64(len(data))
+		if opts.MaxFileBytes > 0 && dataSize > opts.MaxFileBytes {
+			logger.Warn("memfs: file exceeds MaxFileBytes after read; skipping",
+				"path", rel, "size", dataSize, "limit", opts.MaxFileBytes)
+			return nil
+		}
+		if opts.MaxTotalBytes > 0 && snap.totalBytes+dataSize > opts.MaxTotalBytes {
+			return fmt.Errorf("memfs: total size would exceed MaxTotalBytes (%d); aborting at %q", opts.MaxTotalBytes, rel)
 		}
 		if err := snap.AddFile(rel, data, fi.ModTime()); err != nil {
 			logger.Warn("memfs: add file failed", "path", rel, "error", err)

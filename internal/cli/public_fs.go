@@ -17,11 +17,11 @@ import (
 // with the in-memory flag on. Lazy so tests (and disabled-by-default
 // deployments) don't register unused series on the default registerer.
 var (
-	memfsMetricsOnce  sync.Once
-	memfsFilesGauge   prometheus.Gauge
-	memfsBytesGauge   prometheus.Gauge
-	memfsReloadTotal  *prometheus.CounterVec
-	memfsReloadMillis prometheus.Histogram
+	memfsMetricsOnce   sync.Once
+	memfsFilesGauge    prometheus.Gauge
+	memfsBytesGauge    prometheus.Gauge
+	memfsReloadTotal   *prometheus.CounterVec
+	memfsReloadSeconds prometheus.Histogram
 )
 
 func initMemfsMetrics() {
@@ -38,7 +38,7 @@ func initMemfsMetrics() {
 			Name: "wiki_memfs_reload_total",
 			Help: "Count of in-memory public fs reload attempts by outcome.",
 		}, []string{"outcome"}) // success | error
-		memfsReloadMillis = promauto.NewHistogram(prometheus.HistogramOpts{
+		memfsReloadSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
 			Name:    "wiki_memfs_reload_duration_seconds",
 			Help:    "Wall-clock duration of a single in-memory public fs reload.",
 			Buckets: prometheus.ExponentialBuckets(0.005, 2, 10), // 5ms .. ~5s
@@ -83,7 +83,7 @@ func buildPublicFS(publicDir string, logger *slog.Logger) (fs.FS, func() error, 
 			// duration histogram — it measures the operational steady
 			// state, not the one-off startup cost.
 			if d > 0 {
-				memfsReloadMillis.Observe(d.Seconds())
+				memfsReloadSeconds.Observe(d.Seconds())
 			}
 		},
 	})
