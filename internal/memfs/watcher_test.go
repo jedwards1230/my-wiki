@@ -142,16 +142,16 @@ func TestWatcher_RecoversFromDestructiveRebuild(t *testing.T) {
 
 // TestWatcher_ResyncFiresWithoutEvents pins the periodic-safety-net
 // behavior: even in the absence of new fsnotify activity between
-// ticks, the watcher reloads and refreshes the snapshot. We prove
-// this by comparing reload counts before and after a ticker interval
-// passes with no producer activity — OnReload must have been called
-// at least once beyond the initial synchronous load.
+// ticks, the watcher reloads and refreshes the snapshot. We prove this
+// by polling the reload count until it exceeds 1 (the initial
+// synchronous load) or a generous timeout elapses — sleeping a fixed
+// duration would be flaky under CI scheduler delays.
 func TestWatcher_ResyncFiresWithoutEvents(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "index.html"), "v1")
 
 	// Count reload callbacks so we can assert "more than just the
-	// initial load fired" after one resync interval passes.
+	// initial load fired" after at least one resync tick.
 	var reloads int32
 	cb := func(_ int, _ int64, _ time.Duration, err error) {
 		if err == nil {
@@ -171,14 +171,17 @@ func TestWatcher_ResyncFiresWithoutEvents(t *testing.T) {
 	defer func() { _ = w.Close() }()
 	w.Start()
 
-	// Wait several ticker intervals with no file activity at all. The
-	// initial synchronous load fires the callback once (reloads == 1).
-	// Each subsequent tick fires it again.
-	time.Sleep(250 * time.Millisecond)
-
-	if got := atomic.LoadInt32(&reloads); got < 2 {
-		t.Fatalf("resync did not fire without events: reloads=%d want >=2", got)
+	// Poll for the ticker-driven reload. Budget ~50× the resync
+	// interval — plenty of room for CI scheduler hiccups without
+	// becoming a timing-dependent flake.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&reloads) >= 2 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
+	t.Fatalf("resync did not fire without events within 2s: reloads=%d want >=2", atomic.LoadInt32(&reloads))
 }
 
 func TestWatcher_CallbackReceivesMetrics(t *testing.T) {
