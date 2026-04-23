@@ -106,6 +106,20 @@ resources:
       cpu: 100m
       memory: 64Mi
 
+# wiki-server runtime options. Decoupled from mcp/quartz/etc. so it can
+# hold orthogonal feature flags without overloading those blocks.
+server:
+  # Load Quartz's rendered HTML into an atomically-swappable in-memory
+  # fs.FS instead of serving directly off publicDir. The Go server
+  # reloads the snapshot on filesystem changes (debounced ~250ms) via
+  # fsnotify. Eliminates the brief 404/partial-read window that occurs
+  # when Quartz is mid-rebuild and overwriting files in place.
+  #
+  # Trade-off: adds the public tree's byte size to the pod's RSS (a few
+  # MB for this vault; monitor wiki_memfs_bytes). Leave off if disk
+  # space is tight and the race window isn't causing visible problems.
+  inMemoryHTML: false
+
 mcp:
   enabled: false
   port: 8081

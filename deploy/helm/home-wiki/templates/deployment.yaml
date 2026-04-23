@@ -240,6 +240,10 @@ spec:
               value: "/data/vault"
             - name: WIKI_PORT
               value: "8080"
+            {{- if .Values.server.inMemoryHTML }}
+            - name: WIKI_IN_MEMORY_HTML
+              value: "true"
+            {{- end }}
             {{- if .Values.quartz.serverManaged }}
             - name: WIKI_QUARTZ_DIR
               value: "/quartz"
