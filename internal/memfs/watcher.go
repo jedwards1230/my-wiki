@@ -27,6 +27,19 @@ type WatcherOptions struct {
 	// a single sub-second burst.
 	Debounce time.Duration
 
+	// ResyncInterval causes the watcher to trigger a periodic reload
+	// regardless of fsnotify activity. This is a safety net: when a
+	// producer like Quartz does a destructive rebuild of sourceDir
+	// (remove the tree, recreate it), fsnotify's watches are bound to
+	// the old inodes and silently stop delivering events. The periodic
+	// resync rebuilds the snapshot and re-establishes watches on the
+	// new inodes, capping staleness at this interval.
+	//
+	// Zero value picks a sensible default (30s). Pass a negative
+	// duration to explicitly disable the safety net — useful only for
+	// tests or producers with known atomic rebuild semantics.
+	ResyncInterval time.Duration
+
 	// Loader overrides control how the source directory is loaded.
 	Loader LoaderOptions
 
@@ -75,6 +88,15 @@ func NewWatcher(sourceDir string, f *FS, opts WatcherOptions) (*Watcher, error) 
 	}
 	if opts.Debounce <= 0 {
 		opts.Debounce = 250 * time.Millisecond
+	}
+	switch {
+	case opts.ResyncInterval == 0:
+		// Zero value → sensible default so the happy path doesn't
+		// have to spell it out.
+		opts.ResyncInterval = 30 * time.Second
+	case opts.ResyncInterval < 0:
+		// Negative → explicit disable (tests mostly).
+		opts.ResyncInterval = 0
 	}
 
 	initial, err := Load(sourceDir, opts.Loader)
@@ -140,10 +162,27 @@ func (w *Watcher) Close() error {
 
 func (w *Watcher) run() {
 	defer close(w.doneCh)
+
+	// Optional periodic resync. A nil channel in the select below is
+	// never selected, so when ResyncInterval is disabled (0) the ticker
+	// branch is dormant without special-casing.
+	var resyncC <-chan time.Time
+	if w.opts.ResyncInterval > 0 {
+		ticker := time.NewTicker(w.opts.ResyncInterval)
+		defer ticker.Stop()
+		resyncC = ticker.C
+	}
+
 	for {
 		select {
 		case <-w.stopCh:
 			return
+		case <-resyncC:
+			// Safety-net reload. Runs through the same debounced path so
+			// a concurrent burst of fsnotify events still coalesces into
+			// a single Load — the ticker only matters when no events
+			// have arrived for the whole interval.
+			w.scheduleReload()
 		case ev, ok := <-w.w.Events:
 			if !ok {
 				return
@@ -207,6 +246,19 @@ func (w *Watcher) reloadIfCurrent(gen uint64) {
 	}
 	w.fs.Store(snap)
 	w.logger.Debug("memfs: reloaded", "files", snap.Files(), "bytes", snap.Bytes(), "duration", dur)
+
+	// Re-establish fsnotify watches after every successful reload.
+	// Idempotent for already-watched paths and crucial for recovery
+	// after a destructive rebuild: when Quartz (or any producer) does
+	// `rm -rf sourceDir && mkdir sourceDir && ...`, the original
+	// inotify watches die with the old inodes. Without this, the
+	// watcher would silently stop receiving events even though the
+	// periodic resync still updates the snapshot.
+	if werr := addRecursive(w.w, w.sourceDir); werr != nil {
+		w.logger.Warn("memfs: re-add watches failed",
+			"sourceDir", w.sourceDir, "error", werr)
+	}
+
 	if w.opts.OnReload != nil {
 		w.opts.OnReload(snap.Files(), snap.Bytes(), dur, nil)
 	}

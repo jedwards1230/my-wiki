@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -83,6 +84,100 @@ func TestWatcher_PicksUpNewDirectories(t *testing.T) {
 
 	if got := waitForContent(t, f, "later/page.html", "new page", 2*time.Second); got != "new page" {
 		t.Fatalf("after create-dir+write: got %q want %q", got, "new page")
+	}
+}
+
+// TestWatcher_RecoversFromDestructiveRebuild simulates a producer
+// (like Quartz) that wipes sourceDir and rewrites it from scratch. The
+// original inotify watches die with the old inodes; without the resync
+// + re-add-watches fix, the watcher would silently stop observing the
+// tree even though sourceDir once again exists.
+func TestWatcher_RecoversFromDestructiveRebuild(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "index.html"), "v1")
+
+	f := New()
+	w, err := NewWatcher(root, f, WatcherOptions{
+		Debounce:       20 * time.Millisecond,
+		ResyncInterval: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+	w.Start()
+
+	if got := waitForContent(t, f, "index.html", "v1", time.Second); got != "v1" {
+		t.Fatalf("initial load: got %q want v1", got)
+	}
+
+	// Destructive rebuild: remove the whole tree, then recreate with
+	// different content. fsnotify watches on the old inodes are now
+	// stale — only the resync ticker + re-add on reload can recover.
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	writeFile(t, filepath.Join(root, "index.html"), "v2")
+	writeFile(t, filepath.Join(root, "fresh.html"), "new file")
+
+	// Wait up to a handful of resync intervals for the recovery path
+	// to swap in the new snapshot. Generous so CI noise doesn't flake.
+	if got := waitForContent(t, f, "index.html", "v2", 2*time.Second); got != "v2" {
+		t.Fatalf("after destructive rebuild: got %q want v2 — watcher did not recover", got)
+	}
+	if got := waitForContent(t, f, "fresh.html", "new file", 2*time.Second); got != "new file" {
+		t.Fatalf("new file not visible after recovery: got %q", got)
+	}
+
+	// A subsequent in-place write should flow through normally now that
+	// watches have been re-established on the new inodes.
+	writeFile(t, filepath.Join(root, "index.html"), "v3")
+	if got := waitForContent(t, f, "index.html", "v3", 2*time.Second); got != "v3" {
+		t.Fatalf("post-recovery fsnotify event: got %q want v3", got)
+	}
+}
+
+// TestWatcher_ResyncFiresWithoutEvents pins the periodic-safety-net
+// behavior: even in the absence of new fsnotify activity between
+// ticks, the watcher reloads and refreshes the snapshot. We prove
+// this by comparing reload counts before and after a ticker interval
+// passes with no producer activity — OnReload must have been called
+// at least once beyond the initial synchronous load.
+func TestWatcher_ResyncFiresWithoutEvents(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "index.html"), "v1")
+
+	// Count reload callbacks so we can assert "more than just the
+	// initial load fired" after one resync interval passes.
+	var reloads int32
+	cb := func(_ int, _ int64, _ time.Duration, err error) {
+		if err == nil {
+			atomic.AddInt32(&reloads, 1)
+		}
+	}
+
+	f := New()
+	w, err := NewWatcher(root, f, WatcherOptions{
+		Debounce:       10 * time.Millisecond,
+		ResyncInterval: 40 * time.Millisecond,
+		OnReload:       cb,
+	})
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+	w.Start()
+
+	// Wait several ticker intervals with no file activity at all. The
+	// initial synchronous load fires the callback once (reloads == 1).
+	// Each subsequent tick fires it again.
+	time.Sleep(250 * time.Millisecond)
+
+	if got := atomic.LoadInt32(&reloads); got < 2 {
+		t.Fatalf("resync did not fire without events: reloads=%d want >=2", got)
 	}
 }
 
