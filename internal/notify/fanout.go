@@ -39,15 +39,16 @@ func (f *FanoutSink) Add(sink Sink) {
 	f.mu.Unlock()
 }
 
-// MarkDirty forwards path to every registered sink, in registration order.
-// It takes a snapshot of the sink slice under a read lock so downstream
-// sinks can block or hop goroutines without stalling concurrent callers.
-func (f *FanoutSink) MarkDirty(path string) {
+// MarkDirty forwards (path, action) to every registered sink, in
+// registration order. It takes a snapshot of the sink slice under a read
+// lock so downstream sinks can block or hop goroutines without stalling
+// concurrent callers.
+func (f *FanoutSink) MarkDirty(path string, action ChangeKind) {
 	f.mu.RLock()
 	snapshot := f.sinks
 	f.mu.RUnlock()
 
 	for _, s := range snapshot {
-		s.MarkDirty(path)
+		s.MarkDirty(path, action)
 	}
 }

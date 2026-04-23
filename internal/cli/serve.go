@@ -170,8 +170,8 @@ func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify
 			logger.Warn("auto-activity failed", "error", err, "path", evt.Path)
 		}
 		today := time.Now().Format("2006-01-02")
-		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "activity", today+".md"))
-		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "log.md"))
+		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "activity", today+".md"), notify.ChangeModified)
+		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "log.md"), notify.ChangeModified)
 	}
 }
 

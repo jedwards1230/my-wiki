@@ -18,7 +18,7 @@ func TestSingleMutationFlushesAfterDebounce(t *testing.T) {
 	})
 	defer n.Close()
 
-	n.MarkDirty("/vault/test.md")
+	n.MarkDirty("/vault/test.md", ChangeModified)
 
 	// Should not have flushed yet
 	mu.Lock()
@@ -50,11 +50,11 @@ func TestRapidMutationsBatchIntoOneFlush(t *testing.T) {
 	defer n.Close()
 
 	// Rapid mutations within debounce window
-	n.MarkDirty("/vault/a.md")
+	n.MarkDirty("/vault/a.md", ChangeModified)
 	time.Sleep(20 * time.Millisecond)
-	n.MarkDirty("/vault/b.md")
+	n.MarkDirty("/vault/b.md", ChangeModified)
 	time.Sleep(20 * time.Millisecond)
-	n.MarkDirty("/vault/c.md")
+	n.MarkDirty("/vault/c.md", ChangeModified)
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -88,9 +88,9 @@ func TestDuplicatePathDeduplication(t *testing.T) {
 	})
 	defer n.Close()
 
-	n.MarkDirty("/vault/same.md")
-	n.MarkDirty("/vault/same.md")
-	n.MarkDirty("/vault/same.md")
+	n.MarkDirty("/vault/same.md", ChangeModified)
+	n.MarkDirty("/vault/same.md", ChangeModified)
+	n.MarkDirty("/vault/same.md", ChangeModified)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -108,7 +108,7 @@ func TestCloseFlushesRemaining(t *testing.T) {
 		flushed = append(flushed, paths...)
 	})
 
-	n.MarkDirty("/vault/pending.md")
+	n.MarkDirty("/vault/pending.md", ChangeModified)
 
 	// Close should flush immediately without waiting for timer
 	n.Close()

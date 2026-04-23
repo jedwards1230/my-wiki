@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jedwards1230/home-wiki/internal/dispatch"
+	"github.com/jedwards1230/home-wiki/internal/notify"
 	"github.com/jedwards1230/home-wiki/internal/service"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -159,10 +160,10 @@ func TestPipelineSink_ForwardsOnlyInbox(t *testing.T) {
 	vaultDir := t.TempDir()
 	sink := newPipelineSink(vaultDir, router)
 	// Non-inbox paths are dropped by the sink before the router sees them.
-	sink.MarkDirty(filepath.Join(vaultDir, "meta", "log.md"))
-	sink.MarkDirty(filepath.Join(vaultDir, "project", "alpha.md"))
+	sink.MarkDirty(filepath.Join(vaultDir, "meta", "log.md"), notify.ChangeModified)
+	sink.MarkDirty(filepath.Join(vaultDir, "project", "alpha.md"), notify.ChangeModified)
 	// Inbox paths should route.
-	sink.MarkDirty(filepath.Join(vaultDir, "inbox", "new.md"))
+	sink.MarkDirty(filepath.Join(vaultDir, "inbox", "new.md"), notify.ChangeModified)
 
 	// The debounce window is 30ms; wait up to 500ms for a single envelope.
 	deadline := time.Now().Add(500 * time.Millisecond)
