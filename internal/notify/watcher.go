@@ -95,9 +95,9 @@ func (vw *VaultWatcher) Run() {
 				continue
 			}
 
-			if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-				vw.logger.Debug("vault file changed", "path", rel, "op", event.Op.String())
-				vw.sink.MarkDirty(event.Name)
+			if action, ok := actionFromOp(event.Op); ok {
+				vw.logger.Debug("vault file changed", "path", rel, "op", event.Op.String(), "action", string(action))
+				vw.sink.MarkDirty(event.Name, action)
 			}
 
 		case err, ok := <-vw.watcher.Errors:
@@ -112,6 +112,27 @@ func (vw *VaultWatcher) Run() {
 // Close stops the filesystem watcher and releases resources.
 func (vw *VaultWatcher) Close() error {
 	return vw.watcher.Close()
+}
+
+// actionFromOp maps an fsnotify op bitfield to the downstream ChangeKind.
+// Returns ok=false when the op is outside the set we care about (Chmod
+// events, for example, should not wake the dispatcher).
+//
+// fsnotify events can have multiple bits set on some platforms. The checks
+// below are ordered so deletion/rename beat modification — a file that is
+// "written then removed" in the same op reports as Deleted, matching the
+// file's terminal state.
+func actionFromOp(op fsnotify.Op) (ChangeKind, bool) {
+	switch {
+	case op.Has(fsnotify.Remove), op.Has(fsnotify.Rename):
+		return ChangeDeleted, true
+	case op.Has(fsnotify.Create):
+		return ChangeCreated, true
+	case op.Has(fsnotify.Write):
+		return ChangeModified, true
+	default:
+		return "", false
+	}
 }
 
 // isExcluded returns true if the relative path starts with an excluded directory.

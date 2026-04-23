@@ -31,8 +31,10 @@ func New(debounce time.Duration, onFlush func(paths []string)) *RebuildNotifier 
 	}
 }
 
-// MarkDirty records a mutated path and resets the debounce timer.
-func (n *RebuildNotifier) MarkDirty(path string) {
+// MarkDirty records a mutated path and resets the debounce timer. The
+// action parameter is accepted to satisfy the Sink interface but ignored
+// — rebuild cares about "something changed", not what kind of change.
+func (n *RebuildNotifier) MarkDirty(path string, _ ChangeKind) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 

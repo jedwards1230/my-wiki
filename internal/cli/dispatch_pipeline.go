@@ -97,9 +97,9 @@ func newPipelineSink(vaultDir string, router *dispatch.EventRouter) notify.Sink 
 }
 
 // MarkDirty converts an absolute filesystem path to a vault-relative path
-// and forwards it to the router. Paths outside vaultDir or above the inbox/
-// prefix are dropped.
-func (s *pipelineSink) MarkDirty(absPath string) {
+// and forwards it to the router with its action. Paths outside vaultDir or
+// above the inbox/ prefix are dropped.
+func (s *pipelineSink) MarkDirty(absPath string, action notify.ChangeKind) {
 	if s.router == nil {
 		return
 	}
@@ -113,7 +113,7 @@ func (s *pipelineSink) MarkDirty(absPath string) {
 	if !strings.HasPrefix(rel, "inbox/") && rel != "inbox" {
 		return
 	}
-	s.router.RecordInboxFSChange(rel)
+	s.router.RecordInboxFSChange(rel, action)
 }
 
 // toVaultRelative returns the vault-relative path or "" if absPath is not

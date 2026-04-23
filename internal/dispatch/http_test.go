@@ -217,6 +217,11 @@ func TestHTTPDispatcher_HappyPath(t *testing.T) {
 	if parsed.DeliveryID != env.DeliveryID {
 		t.Errorf("DeliveryID: got %q", parsed.DeliveryID)
 	}
+	// The test envelope omits SchemaVersion; the dispatcher must default it
+	// before marshal so the wire contract is never violated.
+	if parsed.SchemaVersion != SchemaVersion {
+		t.Errorf("schema_version: got %q want %q", parsed.SchemaVersion, SchemaVersion)
+	}
 
 	if got := labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeSuccess); got != 1 {
 		t.Errorf("success counter: got %v want 1", got)

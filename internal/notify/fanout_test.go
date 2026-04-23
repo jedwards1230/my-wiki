@@ -12,7 +12,7 @@ type recordingSink struct {
 	paths []string
 }
 
-func (r *recordingSink) MarkDirty(path string) {
+func (r *recordingSink) MarkDirty(path string, _ ChangeKind) {
 	r.mu.Lock()
 	r.paths = append(r.paths, path)
 	r.mu.Unlock()
@@ -35,18 +35,18 @@ func (r *recordingSink) len() int {
 func TestFanoutSinkZeroSinks(t *testing.T) {
 	// Both constructor forms should be no-op safe.
 	f := NewFanoutSink()
-	f.MarkDirty("some/path")
+	f.MarkDirty("some/path", ChangeModified)
 
 	// Zero-value FanoutSink must also be safe — no panic, no behavior.
 	var zero FanoutSink
-	zero.MarkDirty("other/path")
+	zero.MarkDirty("other/path", ChangeModified)
 }
 
 func TestFanoutSinkSingleSink(t *testing.T) {
 	r := &recordingSink{}
 	f := NewFanoutSink(r)
 
-	f.MarkDirty("a.md")
+	f.MarkDirty("a.md", ChangeModified)
 
 	got := r.snapshot()
 	if len(got) != 1 || got[0] != "a.md" {
@@ -69,7 +69,7 @@ func TestFanoutSinkMultipleSinksPreservesOrder(t *testing.T) {
 	}
 
 	f := NewFanoutSink(makeSink("first"), makeSink("second"), makeSink("third"))
-	f.MarkDirty("x.md")
+	f.MarkDirty("x.md", ChangeModified)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -105,7 +105,7 @@ func TestFanoutSinkConcurrent(t *testing.T) {
 		go func(g int) {
 			defer wg.Done()
 			for i := 0; i < callsPerG; i++ {
-				f.MarkDirty(fmt.Sprintf("g%d/%d.md", g, i))
+				f.MarkDirty(fmt.Sprintf("g%d/%d.md", g, i), ChangeModified)
 			}
 		}(g)
 	}
@@ -123,12 +123,12 @@ func TestFanoutSinkAddRegistersForFuturesOnly(t *testing.T) {
 	first := &recordingSink{}
 	f := NewFanoutSink(first)
 
-	f.MarkDirty("before.md")
+	f.MarkDirty("before.md", ChangeModified)
 
 	second := &recordingSink{}
 	f.Add(second)
 
-	f.MarkDirty("after.md")
+	f.MarkDirty("after.md", ChangeModified)
 
 	firstGot := first.snapshot()
 	if len(firstGot) != 2 || firstGot[0] != "before.md" || firstGot[1] != "after.md" {
@@ -151,7 +151,7 @@ func TestFanoutSinkSkipsNilSinks(t *testing.T) {
 	// Add(nil) is a no-op; must not panic and must not grow the sink slice.
 	f.Add(nil)
 
-	f.MarkDirty("x.md")
+	f.MarkDirty("x.md", ChangeModified)
 
 	if got := s1.snapshot(); len(got) != 1 || got[0] != "x.md" {
 		t.Fatalf("s1: want [x.md], got %v", got)
@@ -161,7 +161,9 @@ func TestFanoutSinkSkipsNilSinks(t *testing.T) {
 	}
 }
 
-// sinkFunc adapts a plain function into a Sink for tests.
+// sinkFunc adapts a plain function into a Sink for tests. It accepts the
+// action to match the interface but ignores it — tests here only assert on
+// path fanout.
 type sinkFunc func(path string)
 
-func (f sinkFunc) MarkDirty(path string) { f(path) }
+func (f sinkFunc) MarkDirty(path string, _ ChangeKind) { f(path) }
