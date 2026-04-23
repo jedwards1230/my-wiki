@@ -112,6 +112,14 @@ type PathFilters struct {
 
 // Consumer is one webhook receiver. The HTTP dispatcher consumes
 // SecretEnv/BearerTokenEnv at send time.
+//
+// SkipAllDeletes, when true, suppresses dispatches to this consumer when
+// every filtered change in a debounced batch has action=deleted. Useful
+// for consumers whose agent cleanup (deleting classified inbox files)
+// would otherwise self-trigger an empty-inbox follow-up run on the next
+// debounce window. Batches with any created/modified paths still
+// dispatch unchanged. Reconcile dispatches are unaffected since
+// reconcile never emits deletions.
 type Consumer struct {
 	Name           string         `yaml:"name"`
 	URL            string         `yaml:"url"`
@@ -122,6 +130,7 @@ type Consumer struct {
 	Timeout        duration       `yaml:"timeout"`
 	Retries        Retries        `yaml:"retries"`
 	CircuitBreaker CircuitBreaker `yaml:"circuit_breaker"`
+	SkipAllDeletes bool           `yaml:"skip_all_deletes"`
 }
 
 // EffectiveTimeout returns the per-consumer timeout if set, else the

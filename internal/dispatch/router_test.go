@@ -275,6 +275,89 @@ func TestEventRouter_ExcludeFilter(t *testing.T) {
 	}
 }
 
+// TestEventRouter_SkipAllDeletes_SuppressesPureDeletionBatch verifies the
+// self-trigger cascade fix: when SkipAllDeletes is on and every filtered
+// change in the batch has action=deleted (typically the follow-up event
+// from an agent's own cleanup), the dispatcher suppresses the flush.
+func TestEventRouter_SkipAllDeletes_SuppressesPureDeletionBatch(t *testing.T) {
+	cap := &captureDispatcher{}
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
+		{
+			Name:           "n8n",
+			URL:            "https://n8n.example.com/hook",
+			Events:         []EventType{EventInboxChanged},
+			SecretEnv:      "S",
+			PathFilters:    PathFilters{Include: []string{"inbox/"}},
+			SkipAllDeletes: true,
+		},
+	})
+	r := NewEventRouter(cfg, cap, quietLogger())
+	defer func() { _ = r.Close() }()
+
+	r.RecordInboxFSChange("inbox/a.md", notify.ChangeDeleted)
+	r.RecordInboxFSChange("inbox/b.md", notify.ChangeDeleted)
+
+	// Give the debouncer time to fire; assert NO dispatch happened.
+	waitStable(t, window*3, window*6, func() bool { return cap.count() == 0 })
+}
+
+// TestEventRouter_SkipAllDeletes_MixedBatchStillDispatches guards against
+// over-suppression: if any path in the batch is non-deleted, the batch
+// still ships. Common shape is "agent creates a promoted page and deletes
+// the original inbox file in the same window".
+func TestEventRouter_SkipAllDeletes_MixedBatchStillDispatches(t *testing.T) {
+	cap := &captureDispatcher{}
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
+		{
+			Name:           "n8n",
+			URL:            "https://n8n.example.com/hook",
+			Events:         []EventType{EventInboxChanged},
+			SecretEnv:      "S",
+			PathFilters:    PathFilters{Include: []string{"inbox/"}},
+			SkipAllDeletes: true,
+		},
+	})
+	r := NewEventRouter(cfg, cap, quietLogger())
+	defer func() { _ = r.Close() }()
+
+	r.RecordInboxFSChange("inbox/new.md", notify.ChangeCreated)
+	r.RecordInboxFSChange("inbox/old.md", notify.ChangeDeleted)
+
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
+	env := cap.snapshot()[0].Envelope
+	if len(env.Changes) != 2 {
+		t.Fatalf("expected 2 changes dispatched, got %d", len(env.Changes))
+	}
+}
+
+// TestEventRouter_SkipAllDeletes_OffStillDispatches asserts the default
+// behavior (flag unset) is unchanged: all-delete batches still dispatch.
+func TestEventRouter_SkipAllDeletes_OffStillDispatches(t *testing.T) {
+	cap := &captureDispatcher{}
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
+		{
+			Name:        "n8n",
+			URL:         "https://n8n.example.com/hook",
+			Events:      []EventType{EventInboxChanged},
+			SecretEnv:   "S",
+			PathFilters: PathFilters{Include: []string{"inbox/"}},
+			// SkipAllDeletes intentionally left zero (false).
+		},
+	})
+	r := NewEventRouter(cfg, cap, quietLogger())
+	defer func() { _ = r.Close() }()
+
+	r.RecordInboxFSChange("inbox/gone.md", notify.ChangeDeleted)
+
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
+	if cap.count() != 1 {
+		t.Fatalf("expected 1 dispatch, got %d", cap.count())
+	}
+}
+
 func TestEventRouter_EnvelopeContainsConfiguredFields(t *testing.T) {
 	cap := &captureDispatcher{}
 	window := 30 * time.Millisecond

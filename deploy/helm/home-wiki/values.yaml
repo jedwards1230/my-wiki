@@ -215,6 +215,11 @@ webhooks:
   #   timeout:        [optional] per-consumer override
   #   retries:        [optional] per-consumer override
   #   circuitBreaker: [optional] per-consumer override
+  #   skipAllDeletes: [optional] true to suppress dispatches where every
+  #                   change in the batch has action=deleted. Useful for
+  #                   agent-driven consumers that would otherwise re-trigger
+  #                   themselves when cleaning up processed files. Mixed
+  #                   batches (any created/modified path) still dispatch.
   consumers: []
   # Example:
   #   - name: automation
