@@ -92,5 +92,8 @@ data:
           cooldown: {{ .circuitBreaker.cooldown }}
           {{- end }}
         {{- end }}
+        {{- if .skipAllDeletes }}
+        skip_all_deletes: true
+        {{- end }}
       {{- end }}
 {{- end }}

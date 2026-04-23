@@ -250,6 +250,20 @@ func (r *EventRouter) onDebounceFlush(key DebounceKey, batch DebounceBatch) {
 		return
 	}
 
+	// Suppress self-triggered cleanup cascades: if the consumer opted in
+	// and every filtered change is a deletion, skip. The common cause is
+	// an agent that just classified+deleted files; the follow-up delete
+	// event produces no new work for it. Mixed batches (any created or
+	// modified path) still dispatch unchanged.
+	if consumer.SkipAllDeletes && allDeleted(filtered) {
+		r.logger.Debug("dispatch.flush.skipped_all_deletes",
+			slog.String("consumer", consumer.Name),
+			slog.String("event", string(key.Event)),
+			slog.Int("paths", len(filtered)),
+		)
+		return
+	}
+
 	coalesced := &CoalesceInfo{
 		Count:         batch.Count,
 		WindowSeconds: batch.Window.Seconds(),
@@ -417,4 +431,20 @@ func filterChanges(changes []notify.PathChange, filters PathFilters) []notify.Pa
 		}
 	}
 	return out
+}
+
+// allDeleted reports whether every change in the slice has action=deleted.
+// An empty slice returns false — callers already short-circuit on zero
+// length before reaching this check, and treating "no changes" as "all
+// deleted" would give the wrong suppression semantics.
+func allDeleted(changes []notify.PathChange) bool {
+	if len(changes) == 0 {
+		return false
+	}
+	for _, c := range changes {
+		if c.Action != notify.ChangeDeleted {
+			return false
+		}
+	}
+	return true
 }
