@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -113,9 +114,17 @@ type dirNode struct {
 	children []*dirNode       // subdirectories
 }
 
-// Generate writes index.md files across the vault: one per directory containing
-// wiki pages. Root gets a folder tree + vault-wide tag overview. Leaf dirs get
-// flat page tables. Mid-level dirs get subtree structure + scoped tags.
+// Generate writes index.md files across the vault: one per directory
+// under the vault root that isn't excluded. Root gets a folder tree +
+// vault-wide tag overview; mid-level dirs get subtree structure + scoped
+// tags; leaf dirs get flat page tables.
+//
+// A directory is covered by Generate regardless of whether it currently
+// holds content pages. Directories that contain only sub-directories —
+// or that became empty when their last content page was deleted — are
+// still in the tree so their index.md is rewritten to reflect the new
+// state. Without this, a stale index pointing at a now-deleted page
+// would persist forever.
 func (s *DirectoryService) Generate() (string, int, error) {
 	entries, err := s.List("")
 	if err != nil {
@@ -138,8 +147,15 @@ func (s *DirectoryService) Generate() (string, int, error) {
 		pages = append(pages, e)
 	}
 
+	// Enumerate non-excluded directories separately so the tree covers
+	// every directory on disk, not just those that currently hold pages.
+	dirs, err := s.listDirs()
+	if err != nil {
+		return "", 0, err
+	}
+
 	// Build directory tree
-	root := buildDirTree(pages)
+	root := buildDirTree(pages, dirs)
 
 	// Write index files
 	filesWritten := 0
@@ -191,10 +207,49 @@ func (s *DirectoryService) Generate() (string, int, error) {
 	return filepath.Join(s.vault.Dir, "index.md"), len(pages), nil
 }
 
-// buildDirTree organizes pages into a tree of directories.
-func buildDirTree(pages []DirectoryEntry) *dirNode {
+// listDirs returns every non-excluded directory under the vault root,
+// relative to the root, forward-slash separated. The root ("") is not
+// included — callers always have it. Excluded subtrees are pruned via
+// filepath.SkipDir so walks don't descend into them.
+func (s *DirectoryService) listDirs() ([]string, error) {
+	var dirs []string
+	err := s.vault.Storage.WalkDir("", func(rel string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "" || rel == "." {
+			return nil
+		}
+		if s.isExcludedDir(rel) {
+			return filepath.SkipDir
+		}
+		dirs = append(dirs, rel)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return dirs, nil
+}
+
+// buildDirTree organizes pages and directories into a tree. dirs lists
+// every non-excluded directory in the vault; it guarantees empty dirs
+// and dirs-of-subdirs still get a node (so their index.md gets
+// regenerated, rather than staying frozen at whatever state they had
+// when a content page last lived under them).
+func buildDirTree(pages []DirectoryEntry, dirs []string) *dirNode {
 	nodes := map[string]*dirNode{
 		"": {rel: ""},
+	}
+
+	// Seed nodes for every known directory first so empty/subdir-only
+	// dirs show up in the tree even when no page points into them.
+	for _, d := range dirs {
+		ensureNode(nodes, filepath.ToSlash(d))
 	}
 
 	// Ensure all directories exist in the tree
