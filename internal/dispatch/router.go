@@ -71,6 +71,13 @@ func NewEventRouter(cfg *Config, dispatcher Dispatcher, logger *slog.Logger) *Ev
 // The method also remembers the path in the API dedupe cache so a
 // follow-up fsnotify event on the same path is suppressed.
 //
+// A move mutation is split into two observations: ChangeDeleted for
+// evt.From (the source is gone) and ChangeCreated for evt.Path (a new
+// file appeared at the destination). Both paths are added to the dedupe
+// cache so the fsnotify events fsnotify produces for a rename — Rename on
+// the source and Create on the destination — are absorbed and do not
+// duplicate the dispatch.
+//
 // Extending to more event types later: add another observe call (or a
 // routing table that maps mutation Kind → event types) here.
 func (r *EventRouter) RecordMutation(evt MutationEvent) {
@@ -86,10 +93,16 @@ func (r *EventRouter) RecordMutation(evt MutationEvent) {
 	}
 
 	r.rememberAPI(path)
-	// A move also implies the source path is gone; stash it too so a
-	// corresponding fsnotify event for the old location is absorbed.
-	if from := strings.TrimSpace(evt.From); from != "" {
+
+	from := strings.TrimSpace(evt.From)
+	if from != "" {
+		// Move semantics — dedupe the source path (so a Rename fsnotify
+		// event on the old location is absorbed) and emit an explicit
+		// delete for it.
 		r.rememberAPI(from)
+		r.observe(EventInboxChanged, notify.PathChange{Path: from, Action: notify.ChangeDeleted})
+		r.observe(EventInboxChanged, notify.PathChange{Path: path, Action: notify.ChangeCreated})
+		return
 	}
 
 	r.observe(EventInboxChanged, notify.PathChange{Path: path, Action: mutationKindToAction(evt.Kind)})
@@ -117,9 +130,10 @@ func (r *EventRouter) RecordInboxFSChange(path string, action notify.ChangeKind)
 }
 
 // mutationKindToAction maps a service-layer mutation kind string to a
-// notify.ChangeKind. Unknown kinds fall back to ChangeModified rather than
-// returning an error — the router prefers "something happened" over
-// dropping an event on a new mutation kind.
+// notify.ChangeKind for non-move mutations. Moves are handled separately
+// in RecordMutation because they produce two observations. Unknown kinds
+// fall back to ChangeModified — the router prefers "something happened"
+// over dropping an event on a new mutation kind.
 func mutationKindToAction(kind string) notify.ChangeKind {
 	switch strings.ToLower(kind) {
 	case "create":

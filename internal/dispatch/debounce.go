@@ -104,10 +104,14 @@ func (d *Debouncer) Observe(key DebounceKey, window time.Duration, change notify
 		entry = &debounceEntry{
 			paths:    make(map[string]notify.ChangeKind),
 			earliest: d.now(),
-			window:   window,
 		}
 		d.entries[key] = entry
 	}
+	// Track the window of the most recent Observe so batch.Window reports
+	// the same value the timer was armed with. If config reloads and a
+	// subsequent Observe on the same bucket uses a different window, the
+	// timer is re-armed with the new window below and this field follows.
+	entry.window = window
 	entry.paths[change.Path] = change.Action
 	entry.count++
 
