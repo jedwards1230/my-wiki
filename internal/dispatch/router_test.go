@@ -351,6 +351,51 @@ func TestEventRouter_EnvelopeContainsConfiguredFields(t *testing.T) {
 	}
 }
 
+// TestEventRouter_MoveMutationEmitsDeleteAndCreate verifies that a move
+// mutation (evt.From set) is split into two observations — delete on the
+// source and create on the destination — and that the follow-up fsnotify
+// events for both paths are absorbed by the dedupe cache.
+func TestEventRouter_MoveMutationEmitsDeleteAndCreate(t *testing.T) {
+	cap := &captureDispatcher{}
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
+		{
+			Name:        "n8n",
+			URL:         "https://n8n.example.com/hook",
+			Events:      []EventType{EventInboxChanged},
+			SecretEnv:   "S",
+			PathFilters: PathFilters{Include: []string{"inbox/"}},
+		},
+	})
+	r := NewEventRouter(cfg, cap, quietLogger())
+	defer func() { _ = r.Close() }()
+
+	// Move inbox/old.md -> inbox/new.md via the API; the fsnotify watcher
+	// would later report Rename on old and Create on new, both of which
+	// must be dedupe-absorbed so we end with exactly two changes.
+	r.RecordMutation(MutationEvent{Kind: "move", Path: "inbox/new.md", From: "inbox/old.md"})
+	r.RecordInboxFSChange("inbox/old.md", notify.ChangeDeleted) // absorbed by dedupe
+	r.RecordInboxFSChange("inbox/new.md", notify.ChangeCreated) // absorbed by dedupe
+
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
+	env := cap.snapshot()[0].Envelope
+
+	if len(env.Changes) != 2 {
+		t.Fatalf("expected 2 changes (source delete + dest create), got %d: %+v", len(env.Changes), env.Changes)
+	}
+	// Changes sort ascending by path: new.md before old.md.
+	byPath := map[string]notify.ChangeKind{}
+	for _, c := range env.Changes {
+		byPath[c.Path] = c.Action
+	}
+	if byPath["inbox/old.md"] != notify.ChangeDeleted {
+		t.Errorf("source action: got %v want ChangeDeleted", byPath["inbox/old.md"])
+	}
+	if byPath["inbox/new.md"] != notify.ChangeCreated {
+		t.Errorf("destination action: got %v want ChangeCreated", byPath["inbox/new.md"])
+	}
+}
+
 func TestEventRouter_EnvelopePathsMirrorChangesForBackCompat(t *testing.T) {
 	cap := &captureDispatcher{}
 	window := 30 * time.Millisecond

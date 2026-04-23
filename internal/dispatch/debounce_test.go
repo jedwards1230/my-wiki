@@ -263,6 +263,33 @@ func TestDebouncer_EarliestAtTracksFirstObserve(t *testing.T) {
 	}
 }
 
+// TestDebouncer_WindowFollowsLatestObserve asserts the bucket's Window
+// field reflects the window of the most recent Observe call (same value
+// the timer is re-armed with) rather than the first call's window. This
+// matters on config reload scenarios where a bucket outlives a window
+// change.
+func TestDebouncer_WindowFollowsLatestObserve(t *testing.T) {
+	var cap flushCapture
+	d := NewDebouncer(cap.record)
+	defer d.Close()
+
+	key := DebounceKey{Event: EventInboxChanged, Consumer: "c1"}
+	initial := 200 * time.Millisecond
+	shorter := 40 * time.Millisecond
+
+	d.Observe(key, initial, change("inbox/a.md", notify.ChangeCreated))
+	// Second Observe arrives quickly with a tighter window; the timer
+	// must re-arm at `shorter` and the reported batch window must match.
+	time.Sleep(5 * time.Millisecond)
+	d.Observe(key, shorter, change("inbox/b.md", notify.ChangeModified))
+
+	waitUntil(t, shorter*4, func() bool { return cap.count() >= 1 })
+	got := cap.snapshot()[0]
+	if got.batch.Window != shorter {
+		t.Fatalf("want window=%v (latest Observe), got %v", shorter, got.batch.Window)
+	}
+}
+
 func TestDebouncer_CloseDropsPending(t *testing.T) {
 	var cap flushCapture
 	d := NewDebouncer(cap.record)
