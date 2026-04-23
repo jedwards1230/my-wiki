@@ -179,3 +179,73 @@ func TestDirectoryService_Generate_WritesOnContentChange(t *testing.T) {
 		t.Error("home/index.md does not reference the newly added page")
 	}
 }
+
+// TestDirectoryService_Generate_RewritesIndexWhenDirGoesEmpty is the
+// regression for the observed staleness bug: when the last content
+// page under a directory is deleted, buildDirTree previously dropped
+// the directory from the tree (it only visited dirs mentioned by the
+// page list), so its index.md was never overwritten and the stale
+// listing — still referencing the now-deleted page — persisted.
+//
+// The fix enumerates every non-excluded directory separately and seeds
+// a tree node for each, guaranteeing every directory's index is
+// rewritten on every Generate call.
+func TestDirectoryService_Generate_RewritesIndexWhenDirGoesEmpty(t *testing.T) {
+	v := setupDirectoryVault(t)
+	svc := NewDirectoryService(v)
+
+	// Add a short-lived page under a subtree that only holds sub-dirs
+	// once the page is gone. We use a fresh subtree — "ephemeral/" —
+	// with one page and one empty sub-directory. When we delete the
+	// page, "ephemeral/" should still be regenerated so its index no
+	// longer references the deleted page.
+	ephemeralDir := filepath.Join(v.Dir, "ephemeral")
+	if err := os.MkdirAll(filepath.Join(ephemeralDir, "keepers"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	page := filepath.Join(ephemeralDir, "transient.md")
+	if err := os.WriteFile(page, []byte("---\ntitle: Transient\n---\n\nBody.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// First Generate: ephemeral/index.md should exist and mention the page.
+	if _, _, err := svc.Generate(); err != nil {
+		t.Fatal(err)
+	}
+	ephemeralIndex := filepath.Join(ephemeralDir, "index.md")
+	before, err := os.ReadFile(ephemeralIndex)
+	if err != nil {
+		t.Fatalf("ephemeral/index.md missing after first Generate: %v", err)
+	}
+	if !strings.Contains(string(before), "transient") && !strings.Contains(string(before), "Transient") {
+		t.Fatalf("ephemeral/index.md didn't list the page on first Generate; got:\n%s", before)
+	}
+
+	// Delete the page so ephemeral/ is left with only the keepers/
+	// subdir. This is the exact scenario that triggered the production
+	// bug — a directory whose only remaining content is a subdirectory
+	// (itself containing only a generated index).
+	if err := os.Remove(page); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second Generate: without the fix, buildDirTree doesn't create a
+	// node for ephemeral/ at all, so its stale index is left untouched
+	// and the test's after-content assertion below fails.
+	if _, _, err := svc.Generate(); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := os.ReadFile(ephemeralIndex)
+	if err != nil {
+		t.Fatalf("ephemeral/index.md missing after second Generate: %v", err)
+	}
+	if strings.Contains(string(after), "Transient") || strings.Contains(string(after), "transient") {
+		t.Fatalf("ephemeral/index.md still references the deleted page after Generate; got:\n%s", after)
+	}
+	// The subdir listing should still appear so users can navigate
+	// into what's left of the tree.
+	if !strings.Contains(string(after), "keepers") {
+		t.Errorf("ephemeral/index.md lost its remaining subdir 'keepers' after regeneration; got:\n%s", after)
+	}
+}
