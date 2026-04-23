@@ -122,16 +122,17 @@ func (h *Handler) wrapRead(handler http.Handler) http.Handler {
 }
 
 // markDirty notifies the rebuild notifier about a mutated vault path.
-// path is a relative path within the vault; the .md extension is added if missing.
-// No-op when the notifier is not configured.
-func (h *Handler) markDirty(relPath string) {
+// path is a relative path within the vault; the .md extension is added if
+// missing. action tells downstream sinks what kind of mutation occurred
+// (see notify.ChangeKind). No-op when the notifier is not configured.
+func (h *Handler) markDirty(relPath string, action notify.ChangeKind) {
 	if h.notifier == nil {
 		return
 	}
 	if !strings.HasSuffix(relPath, ".md") {
 		relPath += ".md"
 	}
-	h.notifier.MarkDirty(filepath.Clean(filepath.Join(h.vaultDir, relPath)))
+	h.notifier.MarkDirty(filepath.Clean(filepath.Join(h.vaultDir, relPath)), action)
 }
 
 // response is the JSON envelope for API responses.

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jedwards1230/home-wiki/internal/notify"
 )
 
 // MutationEvent is the router's local shape for a vault mutation. We do not
@@ -69,6 +71,13 @@ func NewEventRouter(cfg *Config, dispatcher Dispatcher, logger *slog.Logger) *Ev
 // The method also remembers the path in the API dedupe cache so a
 // follow-up fsnotify event on the same path is suppressed.
 //
+// A move mutation is split into two observations: ChangeDeleted for
+// evt.From (the source is gone) and ChangeCreated for evt.Path (a new
+// file appeared at the destination). Both paths are added to the dedupe
+// cache so the fsnotify events fsnotify produces for a rename — Rename on
+// the source and Create on the destination — are absorbed and do not
+// duplicate the dispatch.
+//
 // Extending to more event types later: add another observe call (or a
 // routing table that maps mutation Kind → event types) here.
 func (r *EventRouter) RecordMutation(evt MutationEvent) {
@@ -84,19 +93,25 @@ func (r *EventRouter) RecordMutation(evt MutationEvent) {
 	}
 
 	r.rememberAPI(path)
-	// A move also implies the source path is gone; stash it too so a
-	// corresponding fsnotify event for the old location is absorbed.
-	if from := strings.TrimSpace(evt.From); from != "" {
+
+	from := strings.TrimSpace(evt.From)
+	if from != "" {
+		// Move semantics — dedupe the source path (so a Rename fsnotify
+		// event on the old location is absorbed) and emit an explicit
+		// delete for it.
 		r.rememberAPI(from)
+		r.observe(EventInboxChanged, notify.PathChange{Path: from, Action: notify.ChangeDeleted})
+		r.observe(EventInboxChanged, notify.PathChange{Path: path, Action: notify.ChangeCreated})
+		return
 	}
 
-	r.observe(EventInboxChanged, path)
+	r.observe(EventInboxChanged, notify.PathChange{Path: path, Action: mutationKindToAction(evt.Kind)})
 }
 
-// RecordInboxFSChange ingests a path reported by the fsnotify watcher. It
-// is dropped when the same path was seen via the API within the dedupe
-// window.
-func (r *EventRouter) RecordInboxFSChange(path string) {
+// RecordInboxFSChange ingests a path reported by the fsnotify watcher with
+// the action the watcher derived from the event op. It is dropped when the
+// same path was seen via the API within the dedupe window.
+func (r *EventRouter) RecordInboxFSChange(path string, action notify.ChangeKind) {
 	if r.cfg == nil || r.debouncer == nil {
 		return
 	}
@@ -111,7 +126,23 @@ func (r *EventRouter) RecordInboxFSChange(path string) {
 		r.logger.Debug("dispatch.fsnotify.dedupe", slog.String("path", path))
 		return
 	}
-	r.observe(EventInboxChanged, path)
+	r.observe(EventInboxChanged, notify.PathChange{Path: path, Action: action})
+}
+
+// mutationKindToAction maps a service-layer mutation kind string to a
+// notify.ChangeKind for non-move mutations. Moves are handled separately
+// in RecordMutation because they produce two observations. Unknown kinds
+// fall back to ChangeModified — the router prefers "something happened"
+// over dropping an event on a new mutation kind.
+func mutationKindToAction(kind string) notify.ChangeKind {
+	switch strings.ToLower(kind) {
+	case "create":
+		return notify.ChangeCreated
+	case "delete":
+		return notify.ChangeDeleted
+	default:
+		return notify.ChangeModified
+	}
 }
 
 // RecordReconcile dispatches a synthetic event covering the supplied paths
@@ -139,7 +170,13 @@ func (r *EventRouter) RecordReconcile(paths []string) {
 		if len(filtered) == 0 {
 			continue
 		}
-		env := r.buildEnvelope(EventInboxChanged, SourceReconcile, filtered, ts)
+		// Reconcile paths already exist at server boot — they were not
+		// "just created", so ChangeModified is the closest honest action.
+		changes := make([]notify.PathChange, len(filtered))
+		for i, p := range filtered {
+			changes[i] = notify.PathChange{Path: p, Action: notify.ChangeModified}
+		}
+		env := r.buildEnvelope(EventInboxChanged, SourceReconcile, changes, nil, ts)
 		if err := r.dispatcher.Dispatch(ctx, consumer, env); err != nil {
 			r.logger.Error("dispatch.reconcile.error",
 				slog.String("consumer", consumer.Name),
@@ -177,9 +214,9 @@ func (r *EventRouter) isClosed() bool {
 	return r.closed
 }
 
-// observe fans a single-path observation for event out to every consumer
-// whose subscription and path filter accept it.
-func (r *EventRouter) observe(event EventType, path string) {
+// observe fans a single-path change for event out to every consumer whose
+// subscription and path filter accept it.
+func (r *EventRouter) observe(event EventType, change notify.PathChange) {
 	if _, ok := r.cfg.Events[event]; !ok {
 		return
 	}
@@ -190,16 +227,16 @@ func (r *EventRouter) observe(event EventType, path string) {
 		return
 	}
 	for _, consumer := range r.consumersFor(event) {
-		if !acceptPath(path, consumer.PathFilters) {
+		if !acceptPath(change.Path, consumer.PathFilters) {
 			continue
 		}
-		r.debouncer.Observe(DebounceKey{Event: event, Consumer: consumer.Name}, window, path)
+		r.debouncer.Observe(DebounceKey{Event: event, Consumer: consumer.Name}, window, change)
 	}
 }
 
 // onDebounceFlush is the Debouncer callback. It rebuilds the consumer view
 // from config and dispatches one envelope.
-func (r *EventRouter) onDebounceFlush(key DebounceKey, paths []string) {
+func (r *EventRouter) onDebounceFlush(key DebounceKey, batch DebounceBatch) {
 	consumer, ok := r.consumerByName(key.Consumer)
 	if !ok {
 		// Config changed during the window; nothing sensible to do.
@@ -208,12 +245,17 @@ func (r *EventRouter) onDebounceFlush(key DebounceKey, paths []string) {
 	}
 	// Re-apply path filters at flush time in case the config tightened while
 	// the bucket was open. Cheap and defensive.
-	filtered := filterPaths(paths, consumer.PathFilters)
+	filtered := filterChanges(batch.Changes, consumer.PathFilters)
 	if len(filtered) == 0 {
 		return
 	}
 
-	env := r.buildEnvelope(key.Event, SourceFsnotify, filtered, time.Now().UTC())
+	coalesced := &CoalesceInfo{
+		Count:         batch.Count,
+		WindowSeconds: batch.Window.Seconds(),
+		EarliestAt:    batch.EarliestAt.UTC(),
+	}
+	env := r.buildEnvelope(key.Event, SourceFsnotify, filtered, coalesced, time.Now().UTC())
 	// SourceFsnotify is a reasonable default for debounced flushes; API and
 	// fsnotify events coalesce into the same bucket, so no single source
 	// label is strictly correct. Phase 3 may track the source set per entry.
@@ -229,7 +271,9 @@ func (r *EventRouter) onDebounceFlush(key DebounceKey, paths []string) {
 }
 
 // buildEnvelope constructs the outbound payload for a single consumer.
-func (r *EventRouter) buildEnvelope(event EventType, source Source, paths []string, ts time.Time) Envelope {
+// Paths is populated as a back-compat view over changes so v1 consumers
+// that only read envelope.paths continue to work unchanged.
+func (r *EventRouter) buildEnvelope(event EventType, source Source, changes []notify.PathChange, coalesced *CoalesceInfo, ts time.Time) Envelope {
 	promptName := ""
 	if ec, ok := r.cfg.Events[event]; ok {
 		promptName = ec.Prompt
@@ -245,12 +289,19 @@ func (r *EventRouter) buildEnvelope(event EventType, source Source, paths []stri
 			)
 		}
 	}
+	paths := make([]string, len(changes))
+	for i, c := range changes {
+		paths[i] = c.Path
+	}
 	return Envelope{
-		DeliveryID: NewDeliveryID(),
-		Event:      event,
-		Timestamp:  ts,
-		Source:     source,
-		Paths:      paths,
+		SchemaVersion: SchemaVersion,
+		DeliveryID:    NewDeliveryID(),
+		Event:         event,
+		Timestamp:     ts,
+		Source:        source,
+		Paths:         paths,
+		Changes:       changes,
+		Coalesced:     coalesced,
 		Prompt: PromptRef{
 			Name: promptName,
 			URL:  promptURL,
@@ -350,6 +401,19 @@ func filterPaths(paths []string, filters PathFilters) []string {
 	for _, p := range paths {
 		if acceptPath(p, filters) {
 			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// filterChanges returns the subset of changes whose paths pass filters,
+// preserving order. Used at flush time to re-apply filters after a config
+// tightening.
+func filterChanges(changes []notify.PathChange, filters PathFilters) []notify.PathChange {
+	out := make([]notify.PathChange, 0, len(changes))
+	for _, c := range changes {
+		if acceptPath(c.Path, filters) {
+			out = append(out, c)
 		}
 	}
 	return out

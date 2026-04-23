@@ -20,14 +20,16 @@ import (
 
 // markDirty notifies the rebuild notifier about a mutated vault path.
 // relPath is relative to vaultDir; .md extension is added if missing.
-func markDirty(notifier *notify.RebuildNotifier, vaultDir, relPath string) {
+// action tells downstream sinks what kind of mutation occurred (see
+// notify.ChangeKind).
+func markDirty(notifier *notify.RebuildNotifier, vaultDir, relPath string, action notify.ChangeKind) {
 	if notifier == nil {
 		return
 	}
 	if !strings.HasSuffix(relPath, ".md") {
 		relPath += ".md"
 	}
-	notifier.MarkDirty(filepath.Clean(filepath.Join(vaultDir, relPath)))
+	notifier.MarkDirty(filepath.Clean(filepath.Join(vaultDir, relPath)), action)
 }
 
 // mcpLog sends a structured log message to the current MCP client session and tees
@@ -303,7 +305,7 @@ func writeHandler(s *server.MCPServer, svc *service.PageService, lint *service.L
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		markDirty(notifier, vaultDir, path)
+		markDirty(notifier, vaultDir, path, notify.ChangeModified)
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
 			"action": "write", "path": path,
 		})
@@ -332,7 +334,7 @@ func editHandler(s *server.MCPServer, svc *service.PageService, lint *service.Li
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		markDirty(notifier, vaultDir, path)
+		markDirty(notifier, vaultDir, path, notify.ChangeModified)
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
 			"action": "edit", "path": path, "operations": len(ops),
 		})
@@ -404,7 +406,7 @@ func deleteHandler(s *server.MCPServer, svc *service.PageService, lint *service.
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		markDirty(notifier, vaultDir, path)
+		markDirty(notifier, vaultDir, path, notify.ChangeDeleted)
 		mcpLog(ctx, s, mcp.LoggingLevelWarning, "vault", map[string]any{
 			"action": "delete", "path": path,
 		})
@@ -428,8 +430,8 @@ func moveHandler(s *server.MCPServer, svc *service.PageService, lint *service.Li
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		markDirty(notifier, vaultDir, source)
-		markDirty(notifier, vaultDir, destination)
+		markDirty(notifier, vaultDir, source, notify.ChangeDeleted)
+		markDirty(notifier, vaultDir, destination, notify.ChangeCreated)
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
 			"action": "move", "source": source, "destination": destination,
 		})
@@ -454,8 +456,8 @@ func activityHandler(s *server.MCPServer, svc *service.ActivityService, vaultDir
 		}
 
 		today := time.Now().Format("2006-01-02")
-		markDirty(notifier, vaultDir, fmt.Sprintf("meta/activity/%s", today))
-		markDirty(notifier, vaultDir, "meta/log")
+		markDirty(notifier, vaultDir, fmt.Sprintf("meta/activity/%s", today), notify.ChangeModified)
+		markDirty(notifier, vaultDir, "meta/log", notify.ChangeModified)
 		mcpLog(ctx, s, mcp.LoggingLevelInfo, "activity", map[string]any{
 			"action": "log", "type": entry.Type, "title": entry.Title,
 		})

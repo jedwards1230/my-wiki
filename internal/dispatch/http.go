@@ -388,6 +388,14 @@ func (w *consumerWorker) deliver(parentCtx context.Context, env Envelope) {
 // attempt performs one HTTP POST with HMAC signing. The timeout governs the
 // single request; retries are orchestrated by deliver.
 func (w *consumerWorker) attempt(parentCtx context.Context, env Envelope, timeout time.Duration) error {
+	// Guarantee SchemaVersion is on the wire. buildEnvelope always sets it,
+	// but this is the last responsible moment — any future code path that
+	// constructs an Envelope directly (tests, manual Dispatch calls) still
+	// gets a valid version without silently shipping an empty string.
+	if env.SchemaVersion == "" {
+		env.SchemaVersion = SchemaVersion
+	}
+
 	body, err := json.Marshal(env)
 	if err != nil {
 		return fmt.Errorf("marshal envelope: %w", err)

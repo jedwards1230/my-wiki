@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jedwards1230/home-wiki/internal/notify"
 )
 
 // captureDispatcher records every Dispatch call for assertion. Safe for
@@ -81,7 +83,7 @@ func TestEventRouter_NilConfigNoOp(t *testing.T) {
 
 	// Must not panic or do anything observable.
 	r.RecordMutation(MutationEvent{Kind: "edit", Path: "inbox/x.md"})
-	r.RecordInboxFSChange("inbox/y.md")
+	r.RecordInboxFSChange("inbox/y.md", notify.ChangeModified)
 	r.RecordReconcile([]string{"inbox/z.md"})
 }
 
@@ -103,7 +105,7 @@ func TestEventRouter_APIMutationSuppressesFSNotify(t *testing.T) {
 	// API records first.
 	r.RecordMutation(MutationEvent{Kind: "edit", Path: "inbox/foo.md"})
 	// FS sees the same path immediately afterwards — should be absorbed.
-	r.RecordInboxFSChange("inbox/foo.md")
+	r.RecordInboxFSChange("inbox/foo.md", notify.ChangeModified)
 
 	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
 
@@ -132,7 +134,7 @@ func TestEventRouter_DifferentPathNotSuppressed(t *testing.T) {
 	defer func() { _ = r.Close() }()
 
 	r.RecordMutation(MutationEvent{Kind: "edit", Path: "inbox/foo.md"})
-	r.RecordInboxFSChange("inbox/bar.md") // different path, should be recorded
+	r.RecordInboxFSChange("inbox/bar.md", notify.ChangeModified) // different path, should be recorded
 
 	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
 
@@ -188,7 +190,7 @@ func TestEventRouter_ConsumerEventFilterSkipsNonMatching(t *testing.T) {
 	r := NewEventRouter(cfg, cap, quietLogger())
 	defer func() { _ = r.Close() }()
 
-	r.RecordInboxFSChange("inbox/x.md")
+	r.RecordInboxFSChange("inbox/x.md", notify.ChangeModified)
 
 	// Wait long enough that any (incorrect) dispatch to other-listener
 	// would have surfaced, then assert only inbox-listener received.
@@ -227,7 +229,7 @@ func TestEventRouter_IncludeFilterDropsConsumer(t *testing.T) {
 	r := NewEventRouter(cfg, cap, quietLogger())
 	defer func() { _ = r.Close() }()
 
-	r.RecordInboxFSChange("inbox/not-important.md")
+	r.RecordInboxFSChange("inbox/not-important.md", notify.ChangeModified)
 
 	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
 	// Ensure no second dispatch sneaks in.
@@ -260,11 +262,11 @@ func TestEventRouter_ExcludeFilter(t *testing.T) {
 	r := NewEventRouter(cfg, cap, quietLogger())
 	defer func() { _ = r.Close() }()
 
-	r.RecordInboxFSChange("inbox/drafts/wip.md")
+	r.RecordInboxFSChange("inbox/drafts/wip.md", notify.ChangeModified)
 	// Give it a bounded chance to (incorrectly) dispatch.
 	waitStable(t, window*3, window*5, func() bool { return cap.count() == 0 })
 
-	r.RecordInboxFSChange("inbox/ok.md")
+	r.RecordInboxFSChange("inbox/ok.md", notify.ChangeModified)
 	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
 
 	got := cap.snapshot()
@@ -318,6 +320,120 @@ func TestEventRouter_EnvelopeContainsConfiguredFields(t *testing.T) {
 	if env.Timestamp.IsZero() {
 		t.Error("timestamp must be set")
 	}
+	// Envelope v2: schema version, per-path action, coalesce info.
+	if env.SchemaVersion != SchemaVersion {
+		t.Errorf("schema_version: got %q want %q", env.SchemaVersion, SchemaVersion)
+	}
+	if len(env.Changes) != 1 {
+		t.Fatalf("expected 1 change, got %d: %+v", len(env.Changes), env.Changes)
+	}
+	if env.Changes[0].Path != "inbox/new.md" {
+		t.Errorf("change path: got %q", env.Changes[0].Path)
+	}
+	if env.Changes[0].Action != notify.ChangeCreated {
+		t.Errorf("change action: got %v want ChangeCreated (mutation kind %q)", env.Changes[0].Action, "create")
+	}
+	// Paths is the v1 back-compat view; must mirror Changes[].Path.
+	if len(env.Paths) != 1 || env.Paths[0] != "inbox/new.md" {
+		t.Errorf("paths back-compat: got %v", env.Paths)
+	}
+	if env.Coalesced == nil {
+		t.Fatal("coalesced must be populated for a debounced dispatch")
+	}
+	if env.Coalesced.Count < 1 {
+		t.Errorf("coalesced.count: got %d, want >=1", env.Coalesced.Count)
+	}
+	if env.Coalesced.WindowSeconds <= 0 {
+		t.Errorf("coalesced.window_seconds: got %f", env.Coalesced.WindowSeconds)
+	}
+	if env.Coalesced.EarliestAt.IsZero() {
+		t.Error("coalesced.earliest_at must be set")
+	}
+}
+
+// TestEventRouter_MoveMutationEmitsDeleteAndCreate verifies that a move
+// mutation (evt.From set) is split into two observations — delete on the
+// source and create on the destination — and that the follow-up fsnotify
+// events for both paths are absorbed by the dedupe cache.
+func TestEventRouter_MoveMutationEmitsDeleteAndCreate(t *testing.T) {
+	cap := &captureDispatcher{}
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
+		{
+			Name:        "n8n",
+			URL:         "https://n8n.example.com/hook",
+			Events:      []EventType{EventInboxChanged},
+			SecretEnv:   "S",
+			PathFilters: PathFilters{Include: []string{"inbox/"}},
+		},
+	})
+	r := NewEventRouter(cfg, cap, quietLogger())
+	defer func() { _ = r.Close() }()
+
+	// Move inbox/old.md -> inbox/new.md via the API; the fsnotify watcher
+	// would later report Rename on old and Create on new, both of which
+	// must be dedupe-absorbed so we end with exactly two changes.
+	r.RecordMutation(MutationEvent{Kind: "move", Path: "inbox/new.md", From: "inbox/old.md"})
+	r.RecordInboxFSChange("inbox/old.md", notify.ChangeDeleted) // absorbed by dedupe
+	r.RecordInboxFSChange("inbox/new.md", notify.ChangeCreated) // absorbed by dedupe
+
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
+	env := cap.snapshot()[0].Envelope
+
+	if len(env.Changes) != 2 {
+		t.Fatalf("expected 2 changes (source delete + dest create), got %d: %+v", len(env.Changes), env.Changes)
+	}
+	// Changes sort ascending by path: new.md before old.md.
+	byPath := map[string]notify.ChangeKind{}
+	for _, c := range env.Changes {
+		byPath[c.Path] = c.Action
+	}
+	if byPath["inbox/old.md"] != notify.ChangeDeleted {
+		t.Errorf("source action: got %v want ChangeDeleted", byPath["inbox/old.md"])
+	}
+	if byPath["inbox/new.md"] != notify.ChangeCreated {
+		t.Errorf("destination action: got %v want ChangeCreated", byPath["inbox/new.md"])
+	}
+}
+
+func TestEventRouter_EnvelopePathsMirrorChangesForBackCompat(t *testing.T) {
+	cap := &captureDispatcher{}
+	window := 30 * time.Millisecond
+	cfg := fastConfig(window, []Consumer{
+		{
+			Name:        "n8n",
+			URL:         "https://n8n.example.com/hook",
+			Events:      []EventType{EventInboxChanged},
+			SecretEnv:   "S",
+			PathFilters: PathFilters{Include: []string{"inbox/"}},
+		},
+	})
+	r := NewEventRouter(cfg, cap, quietLogger())
+	defer func() { _ = r.Close() }()
+
+	r.RecordInboxFSChange("inbox/b.md", notify.ChangeModified)
+	r.RecordInboxFSChange("inbox/a.md", notify.ChangeCreated)
+	r.RecordInboxFSChange("inbox/c.md", notify.ChangeDeleted)
+	waitUntil(t, window*5, func() bool { return cap.count() >= 1 })
+
+	env := cap.snapshot()[0].Envelope
+	// Changes are sorted ascending by path; Paths must be the exact
+	// per-element projection.
+	if len(env.Changes) != len(env.Paths) {
+		t.Fatalf("len mismatch: Changes=%d Paths=%d", len(env.Changes), len(env.Paths))
+	}
+	for i := range env.Changes {
+		if env.Changes[i].Path != env.Paths[i] {
+			t.Errorf("index %d: Changes[].Path=%q Paths[]=%q", i, env.Changes[i].Path, env.Paths[i])
+		}
+	}
+	// Sorted by path: a, b, c; actions preserved as observed.
+	wantActions := []notify.ChangeKind{notify.ChangeCreated, notify.ChangeModified, notify.ChangeDeleted}
+	for i, want := range wantActions {
+		if env.Changes[i].Action != want {
+			t.Errorf("index %d: action=%v want %v", i, env.Changes[i].Action, want)
+		}
+	}
 }
 
 func TestEventRouter_Reconcile_DispatchesImmediately(t *testing.T) {
@@ -364,7 +480,7 @@ func TestEventRouter_Close_DropsPending(t *testing.T) {
 	})
 	r := NewEventRouter(cfg, cap, quietLogger())
 
-	r.RecordInboxFSChange("inbox/x.md")
+	r.RecordInboxFSChange("inbox/x.md", notify.ChangeModified)
 	if err := r.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -392,7 +508,7 @@ func TestEventRouter_Close_BlocksSubsequentRecordCalls(t *testing.T) {
 
 	// Every Record* entry point must be a no-op after Close.
 	r.RecordMutation(MutationEvent{Kind: "edit", Path: "inbox/a.md"})
-	r.RecordInboxFSChange("inbox/b.md")
+	r.RecordInboxFSChange("inbox/b.md", notify.ChangeModified)
 	r.RecordReconcile([]string{"inbox/c.md"})
 
 	waitStable(t, window*3, window*5, func() bool { return cap.count() == 0 })
@@ -424,7 +540,7 @@ func TestEventRouter_MultipleConsumersSameEvent(t *testing.T) {
 	r := NewEventRouter(cfg, cap, quietLogger())
 	defer func() { _ = r.Close() }()
 
-	r.RecordInboxFSChange("inbox/x.md")
+	r.RecordInboxFSChange("inbox/x.md", notify.ChangeModified)
 	waitUntil(t, window*5, func() bool { return cap.count() >= 2 })
 
 	runs := cap.snapshot()
