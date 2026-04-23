@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jedwards1230/home-wiki/internal/notify"
 	"github.com/jedwards1230/home-wiki/internal/service"
 )
 
@@ -59,7 +60,7 @@ func (h *Handler) handlePageWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.markDirty(path)
+	h.markDirty(path, notify.ChangeModified)
 	warnings := h.lint.LintPage(path)
 	writeJSONWithWarnings(w, http.StatusOK, map[string]string{
 		"status": "ok",
@@ -79,7 +80,7 @@ func (h *Handler) handlePageDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.markDirty(path)
+	h.markDirty(path, notify.ChangeDeleted)
 	warnings := h.lint.LintDelete(path)
 	writeJSONWithWarnings(w, http.StatusOK, map[string]string{"status": "deleted"}, warnings)
 }
@@ -123,7 +124,7 @@ func (h *Handler) handlePagePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.markDirty(path)
+	h.markDirty(path, notify.ChangeModified)
 	warnings := h.lint.LintPage(path)
 	writeJSONWithWarnings(w, http.StatusOK, map[string]string{
 		"path":    path,
