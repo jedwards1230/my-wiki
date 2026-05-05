@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -211,12 +212,14 @@ readLoop:
 	}
 }
 
-// responseIDs returns the sorted set of response ids for diagnostic output.
+// responseIDs returns the response ids in sorted order for stable
+// diagnostic output (map iteration order would otherwise be random).
 func responseIDs(responses map[float64]map[string]any) []float64 {
 	ids := make([]float64, 0, len(responses))
 	for id := range responses {
 		ids = append(ids, id)
 	}
+	sort.Float64s(ids)
 	return ids
 }
 

@@ -14,7 +14,8 @@ import (
 // optional rebuild notification, and optional webhook dispatch routing.
 //
 // notifier may be nil (e.g. stdio mode) — the activity callback skips dirty
-// marking when so. dispatchRouter may be nil when webhooks are not configured.
+// marking when notifier is nil. dispatchRouter may be nil when webhooks are
+// not configured.
 func buildMCPPageSvc(
 	v *vault.Vault,
 	notifier *notify.RebuildNotifier,
