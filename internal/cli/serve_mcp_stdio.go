@@ -17,14 +17,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// defaultInstanceName is used when neither --instance-name nor
-// WIKI_INSTANCE_NAME is set.
-const defaultInstanceName = "work-wiki"
-
 func newServeMCPStdioCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "mcp-stdio",
-		Short: "Start a per-session MCP server over stdio (no HTTP, no Quartz)",
+	return &cobra.Command{
+		Use:   "stdio",
+		Short: "Start an MCP server over stdio transport (per-session)",
 		Long: `Start a Model Context Protocol server over stdin/stdout for direct
 embedding in MCP clients (Claude Code, .mcp.json entries, etc).
 
@@ -32,14 +28,11 @@ This mode skips everything stdio doesn't need: no HTTP listener, no Quartz
 build pipeline, no obsidian-headless sync, no OIDC auth, no webhook dispatch.
 Substring search is the only search backend (no TF-IDF index).
 
-All logs are written to stderr — stdout is reserved for the JSON-RPC protocol.`,
+All logs are written to stderr — stdout is reserved for the JSON-RPC protocol.
+
+The --instance-name flag is inherited from the parent 'serve mcp' command.`,
 		RunE: runServeMCPStdio,
 	}
-
-	// --vault is a persistent flag on the root command (env: WIKI_VAULT_DIR).
-	cmd.Flags().String("instance-name", envOr("WIKI_INSTANCE_NAME", defaultInstanceName), "human-readable identifier for this wiki instance, surfaced via the whoami MCP tool (env: WIKI_INSTANCE_NAME)")
-
-	return cmd
 }
 
 func runServeMCPStdio(cmd *cobra.Command, _ []string) error {
@@ -48,8 +41,10 @@ func runServeMCPStdio(cmd *cobra.Command, _ []string) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	slog.SetDefault(logger)
 
-	// Read --vault from the root persistent flag (env: WIKI_VAULT_DIR).
-	vaultDir, _ := cmd.Root().PersistentFlags().GetString("vault")
+	// --vault is a persistent flag on the root command (env: WIKI_VAULT_DIR).
+	// --instance-name is a persistent flag on `serve mcp` (env: WIKI_INSTANCE_NAME).
+	// Both surface through cmd.Flags() because cobra inherits persistent flags.
+	vaultDir, _ := cmd.Flags().GetString("vault")
 	if vaultDir == "" {
 		return fmt.Errorf("--vault is required (or set WIKI_VAULT_DIR)")
 	}
@@ -57,13 +52,7 @@ func runServeMCPStdio(cmd *cobra.Command, _ []string) error {
 
 	v := vault.New(vaultDir)
 	searchSvc := service.NewSearchService(search.NewSubstringSearcher(v))
-
-	activitySvc := service.NewActivityService(v.Storage)
-	onMutation := makeActivityCallback(activitySvc, nil, vaultDir, logger)
-	pageSvc := service.NewPageService(v.Storage,
-		service.WithExcludedDirs(v.ExcludedDirs),
-		service.WithOnMutation(onMutation),
-	)
+	pageSvc := buildMCPPageSvc(v, nil, nil, logger)
 
 	mcpSrv := mcpserver.New(v, searchSvc,
 		mcpserver.WithPageService(pageSvc),

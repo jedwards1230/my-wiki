@@ -50,7 +50,7 @@ func TestServeMCPStdio_Integration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, binPath, "--vault", vaultDir, "serve", "mcp-stdio", "--instance-name", "test-wiki")
+	cmd := exec.CommandContext(ctx, binPath, "--vault", vaultDir, "serve", "mcp", "stdio", "--instance-name", "test-wiki")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatalf("StdinPipe: %v", err)
