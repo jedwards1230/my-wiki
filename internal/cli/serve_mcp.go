@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -19,9 +20,15 @@ import (
 )
 
 // newServeMCPParentCmd is the parent command for `serve mcp <transport>`.
-// It owns the --instance-name persistent flag (inherited by both transports)
-// and provides a deprecated alias: `serve mcp` (no transport) routes to the
-// http subcommand with a stderr deprecation warning.
+// It groups the http and stdio subcommands. Bare `serve mcp` (no transport)
+// is marked Deprecated via cobra: cobra prints a deprecation message and
+// falls through to help (since the parent has no RunE), so users discover
+// the correct invocation rather than starting a server unexpectedly.
+//
+// --instance-name is a root persistent flag — see internal/cli/root.go.
+// All four MCP-server surfaces (embedded via serve --mcp-port, serve mcp
+// http, serve mcp stdio, and the deprecated alias's help output) read it
+// uniformly without scope-shifting.
 func newServeMCPParentCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mcp",
@@ -30,39 +37,14 @@ func newServeMCPParentCmd() *cobra.Command {
 
 Use 'serve mcp http' for the streamable-http transport (long-lived server,
 suitable for K8s deployment) or 'serve mcp stdio' for an on-demand stdio
-session (suitable for embedding in MCP clients like Claude Code).
-
-Bare 'serve mcp' is a deprecated alias for 'serve mcp http'.`,
-		RunE: runServeMCPDeprecated,
+session (suitable for embedding in MCP clients like Claude Code).`,
+		Deprecated: "use 'serve mcp http' or 'serve mcp stdio' explicitly. Bare 'serve mcp' will be removed in a future release.",
 	}
-
-	// --instance-name is shared by both transports: it identifies this wiki
-	// instance in the whoami tool response so clients can distinguish between
-	// multiple wiki servers (e.g. home-wiki vs work-wiki). Default is empty
-	// (preserves existing whoami behavior); env override is WIKI_INSTANCE_NAME.
-	cmd.PersistentFlags().String(
-		"instance-name",
-		envOr("WIKI_INSTANCE_NAME", ""),
-		"human-readable identifier for this wiki instance, surfaced via the whoami MCP tool (env: WIKI_INSTANCE_NAME)",
-	)
-
-	// Flags shared by parent (deprecated path) and http subcommand. The http
-	// subcommand redeclares them so it works standalone too.
-	cmd.Flags().String("port", envOr("WIKI_MCP_PORT", "8081"), "MCP server port (env: WIKI_MCP_PORT)")
-	cmd.Flags().Bool("watch", envOrBool("WIKI_WATCH", true), "watch vault directory for filesystem changes (env: WIKI_WATCH)")
 
 	cmd.AddCommand(newServeMCPHTTPCmd())
 	cmd.AddCommand(newServeMCPStdioCmd())
 
 	return cmd
-}
-
-// runServeMCPDeprecated handles the bare `serve mcp` invocation by warning
-// once on stderr and falling through to the http transport. Kept for one
-// release of grace so existing scripts/configs don't break instantly.
-func runServeMCPDeprecated(cmd *cobra.Command, args []string) error {
-	fmt.Fprintln(os.Stderr, "warning: 'wiki-server serve mcp' is deprecated; use 'wiki-server serve mcp http' instead")
-	return runServeMCPHTTP(cmd, args)
 }
 
 func newServeMCPHTTPCmd() *cobra.Command {
@@ -137,7 +119,7 @@ func runServeMCPHTTP(cmd *cobra.Command, _ []string) error {
 	if pipeline != nil {
 		mcpDispatchRouter = pipeline.router
 	}
-	mcpPageSvc := buildMCPPageSvc(v, mcpNotifier, mcpDispatchRouter, logger)
+	mcpPageSvc := buildPageService(v, mcpNotifier, mcpDispatchRouter, logger)
 
 	// Startup reconciliation.
 	if pipeline != nil && pipeline.cfg.ReconcileOnStart {
@@ -187,7 +169,7 @@ func runServeMCPHTTP(cmd *cobra.Command, _ []string) error {
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("starting wiki MCP server", "port", port, "vaultDir", vaultDir, "instanceName", instanceName)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("MCP server failed: %w", err)
 		}
 	}()

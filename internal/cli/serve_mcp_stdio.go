@@ -52,7 +52,7 @@ func runServeMCPStdio(cmd *cobra.Command, _ []string) error {
 
 	v := vault.New(vaultDir)
 	searchSvc := service.NewSearchService(search.NewSubstringSearcher(v))
-	pageSvc := buildMCPPageSvc(v, nil, nil, logger)
+	pageSvc := buildPageService(v, nil, nil, logger)
 
 	mcpSrv := mcpserver.New(v, searchSvc,
 		mcpserver.WithPageService(pageSvc),

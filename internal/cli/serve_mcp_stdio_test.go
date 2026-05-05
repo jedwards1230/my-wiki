@@ -1,3 +1,5 @@
+//go:build integration
+
 package cli_test
 
 import (
@@ -21,16 +23,13 @@ import (
 //  2. stderr may have logs but is non-fatal
 //  3. tools/list returns the expected tool set including "whoami"
 //
-// This test is gated by `-short` and the WIKI_SKIP_SUBPROCESS_TESTS env var
-// for sandboxed CI environments that cannot spawn child processes.
+// This file is gated by the `integration` build tag. Run with:
+//
+//	go test -tags=integration ./internal/cli/
+//
+// Default `go test ./...` skips this test (file is not compiled), so unit-test
+// runs stay fast and don't shell out to `go build`.
 func TestServeMCPStdio_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping subprocess integration test in -short mode")
-	}
-	if os.Getenv("WIKI_SKIP_SUBPROCESS_TESTS") != "" {
-		t.Skip("WIKI_SKIP_SUBPROCESS_TESTS set; skipping subprocess integration test")
-	}
-
 	// Build the binary into a temp dir so we don't pollute the worktree.
 	binDir := t.TempDir()
 	binPath := filepath.Join(binDir, "wiki-server")
