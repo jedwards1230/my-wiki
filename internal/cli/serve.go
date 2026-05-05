@@ -34,6 +34,7 @@ func newServeCmd() *cobra.Command {
 	// Add subcommands
 	cmd.AddCommand(newServeHTTPCmd())
 	cmd.AddCommand(newServeMCPCmd())
+	cmd.AddCommand(newServeMCPStdioCmd())
 
 	// Default to http if no subcommand given
 	cmd.RunE = runServeHTTP
@@ -154,7 +155,8 @@ func buildAuthMiddlewares(ctx context.Context, logger *slog.Logger, cfg *middlew
 
 // makeActivityCallback constructs a mutation callback that appends activity log
 // entries and marks the relevant files dirty for Quartz rebuild. The returned
-// callback is safe for concurrent use.
+// callback is safe for concurrent use. If notifier is nil (e.g. stdio mode),
+// dirty marking is skipped — activity entries still append to the vault.
 func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify.RebuildNotifier, vaultDir string, logger *slog.Logger) func(service.MutationEvent) {
 	var mu sync.Mutex
 	return func(evt service.MutationEvent) {
@@ -168,6 +170,9 @@ func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify
 		defer mu.Unlock()
 		if err := activitySvc.Append(entry); err != nil {
 			logger.Warn("auto-activity failed", "error", err, "path", evt.Path)
+		}
+		if notifier == nil {
+			return
 		}
 		today := time.Now().Format("2006-01-02")
 		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "activity", today+".md"), notify.ChangeModified)
