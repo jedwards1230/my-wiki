@@ -101,43 +101,67 @@ func TestServeMCPStdio_Integration(t *testing.T) {
 		t.Fatalf("write tools/list: %v", err)
 	}
 
-	// Read responses. Each JSON-RPC response is a single line of JSON.
+	// Pump stdout lines into a channel so the read loop is bounded by a
+	// timer rather than blocking on scanner.Scan() until EOF.
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	lineCh := make(chan string)
+	scanErrCh := make(chan error, 1)
+	go func() {
+		defer close(lineCh)
+		for scanner.Scan() {
+			lineCh <- scanner.Text()
+		}
+		scanErrCh <- scanner.Err()
+	}()
 
-	var responses []map[string]any
-	deadline := time.Now().Add(15 * time.Second)
-	for len(responses) < 2 && time.Now().Before(deadline) {
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				t.Fatalf("stdout scanner: %v", err)
+	// Collect responses by JSON-RPC id (responses are not guaranteed to
+	// arrive in request order).
+	responses := make(map[float64]map[string]any)
+	readDeadline := time.NewTimer(15 * time.Second)
+	defer readDeadline.Stop()
+
+readLoop:
+	for len(responses) < 2 {
+		select {
+		case line, ok := <-lineCh:
+			if !ok {
+				// stdout closed before we got both responses
+				break readLoop
 			}
-			break
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var msg map[string]any
+			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+				t.Fatalf("stdout contained non-JSON line (protocol corruption): %q\nerror: %v", line, err)
+			}
+			if msg["jsonrpc"] != "2.0" {
+				t.Fatalf("response missing jsonrpc:2.0 field: %v", msg)
+			}
+			id, ok := msg["id"].(float64)
+			if !ok {
+				// Notifications have no id; ignore for this test.
+				continue
+			}
+			responses[id] = msg
+		case <-readDeadline.C:
+			t.Fatalf("timeout waiting for responses; got %d, stderr will follow shutdown", len(responses))
+		case <-ctx.Done():
+			t.Fatalf("context done while reading: %v", ctx.Err())
 		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var msg map[string]any
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			t.Fatalf("stdout contained non-JSON line (protocol corruption): %q\nerror: %v", line, err)
-		}
-		// Per JSON-RPC, responses must include jsonrpc:2.0.
-		if msg["jsonrpc"] != "2.0" {
-			t.Fatalf("response missing jsonrpc:2.0 field: %v", msg)
-		}
-		responses = append(responses, msg)
 	}
 
 	// Close stdin so the child can drain and exit.
 	_ = stdin.Close()
 
-	// Wait for clean exit (the child receives EOF on stdin and Listen returns).
+	// Wait for clean exit and capture the exit error.
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
+	var waitErr error
 	select {
-	case <-waitCh:
-		// Child exited (any reason — stdio Listen returns nil on EOF).
+	case waitErr = <-waitCh:
 	case <-time.After(5 * time.Second):
 		_ = cmd.Process.Kill()
 		<-waitCh
@@ -146,12 +170,22 @@ func TestServeMCPStdio_Integration(t *testing.T) {
 
 	stderrBytes := <-stderrCh
 
+	if waitErr != nil {
+		t.Fatalf("subprocess exited non-zero: %v\nstderr:\n%s", waitErr, stderrBytes)
+	}
+	if scanErr := <-scanErrCh; scanErr != nil {
+		t.Fatalf("stdout scanner: %v", scanErr)
+	}
+
 	if len(responses) < 2 {
 		t.Fatalf("expected 2 responses, got %d. stderr:\n%s", len(responses), stderrBytes)
 	}
 
-	// Verify the second response (tools/list) includes the whoami tool.
-	listResp := responses[1]
+	// Verify the tools/list response (id=2) includes the whoami tool.
+	listResp, ok := responses[2]
+	if !ok {
+		t.Fatalf("missing response for tools/list (id=2); got ids=%v\nstderr:\n%s", responseIDs(responses), stderrBytes)
+	}
 	result, ok := listResp["result"].(map[string]any)
 	if !ok {
 		t.Fatalf("tools/list response missing result: %v\nstderr:\n%s", listResp, stderrBytes)
@@ -175,6 +209,15 @@ func TestServeMCPStdio_Integration(t *testing.T) {
 	if !foundWhoami {
 		t.Errorf("expected whoami tool in tools/list response, got %d tools", len(tools))
 	}
+}
+
+// responseIDs returns the sorted set of response ids for diagnostic output.
+func responseIDs(responses map[float64]map[string]any) []float64 {
+	ids := make([]float64, 0, len(responses))
+	for id := range responses {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // writeJSONRPC marshals msg and writes it followed by a newline to w.

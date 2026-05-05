@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -89,7 +90,10 @@ func runServeMCPStdio(cmd *cobra.Command, _ []string) error {
 
 // isShutdownErr returns true when err is a normal shutdown signal (context
 // cancellation from SIGINT/SIGTERM). The mcp-go stdio Listen returns
-// context.Canceled on signal-driven shutdown; treat that as success.
+// context.Canceled on signal-driven shutdown; treat that as success. We do
+// NOT treat context.DeadlineExceeded as success — this command runs under
+// signal.NotifyContext (no deadline), so a deadline error would indicate a
+// real bug rather than a clean shutdown.
 func isShutdownErr(ctx context.Context, err error) bool {
-	return ctx.Err() != nil && (err == context.Canceled || err == context.DeadlineExceeded)
+	return ctx.Err() != nil && errors.Is(err, context.Canceled)
 }
