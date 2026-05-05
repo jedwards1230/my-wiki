@@ -1,6 +1,11 @@
 version: "2"
 run:
   go: "1.25"
+  # Lint files behind the `integration` build tag too, so the subprocess
+  # integration test (gated with //go:build integration to keep default
+  # `go test ./...` fast and race-clean) still gets analyzed.
+  build-tags:
+    - integration
 linters:
   enable:
     - errcheck
