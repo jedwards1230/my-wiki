@@ -1061,7 +1061,7 @@ func TestSearchHandlerShortQuery(t *testing.T) {
 
 func TestWhoamiHandler(t *testing.T) {
 	v := setupTestVault(t)
-	handler := whoamiHandler(v.Dir)
+	handler := whoamiHandler(v.Dir, "")
 
 	result, err := handler(context.Background(), makeReq(map[string]any{}))
 	if err != nil {
@@ -1083,7 +1083,7 @@ func TestWhoamiHandler(t *testing.T) {
 
 func TestWhoamiHandler_WithUser(t *testing.T) {
 	v := setupTestVault(t)
-	handler := whoamiHandler(v.Dir)
+	handler := whoamiHandler(v.Dir, "")
 
 	ctx := middleware.WithUser(context.Background(), &middleware.UserInfo{
 		Username: "agent",
@@ -1112,4 +1112,52 @@ func TestNewCreatesServer(t *testing.T) {
 	if s == nil {
 		t.Fatal("expected non-nil MCP server")
 	}
+}
+
+// TestWhoamiHandler_WithInstanceName verifies that the instance_name field
+// is included when set, supporting per-vault identity for stdio mode.
+func TestWhoamiHandler_WithInstanceName(t *testing.T) {
+	v := setupTestVault(t)
+	handler := whoamiHandler(v.Dir, "work-wiki")
+
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if !strings.Contains(text, `"instance_name": "work-wiki"`) {
+		t.Errorf("expected instance_name field, got:\n%s", text)
+	}
+}
+
+// TestWhoamiHandler_EmptyInstanceNameOmitted verifies backwards compatibility:
+// when instance_name is empty (HTTP serve path), the field is omitted entirely.
+func TestWhoamiHandler_EmptyInstanceNameOmitted(t *testing.T) {
+	v := setupTestVault(t)
+	handler := whoamiHandler(v.Dir, "")
+
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := getTextContent(result)
+	if strings.Contains(text, "instance_name") {
+		t.Errorf("expected instance_name to be omitted when empty, got:\n%s", text)
+	}
+}
+
+// TestNewCreatesServer_WithInstanceName verifies the option threads through
+// New into whoami end-to-end.
+func TestNewCreatesServer_WithInstanceName(t *testing.T) {
+	v := setupTestVault(t)
+	s := New(v, nil, WithInstanceName("custom-instance"))
+	if s == nil {
+		t.Fatal("expected non-nil MCP server")
+	}
+	// The exported MCPServer doesn't expose registered handlers directly,
+	// so the handler-level test above (TestWhoamiHandler_WithInstanceName)
+	// is the round-trip. This case asserts construction succeeds with the
+	// option set.
 }

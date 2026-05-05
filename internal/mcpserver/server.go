@@ -15,8 +15,9 @@ import (
 type Option func(*options)
 
 type options struct {
-	notifier *notify.RebuildNotifier
-	pages    *service.PageService
+	notifier     *notify.RebuildNotifier
+	pages        *service.PageService
+	instanceName string
 }
 
 // WithRebuildNotifier sets a notifier called after successful vault mutations.
@@ -30,6 +31,16 @@ func WithRebuildNotifier(n *notify.RebuildNotifier) Option {
 func WithPageService(ps *service.PageService) Option {
 	return func(o *options) {
 		o.pages = ps
+	}
+}
+
+// WithInstanceName sets a human-readable identifier for this wiki instance
+// (e.g. "work-wiki", "home-wiki"). When set, it is included in the whoami
+// tool response so clients can distinguish between multiple wiki instances.
+// When empty (the default), whoami omits the field for backwards compatibility.
+func WithInstanceName(name string) Option {
+	return func(o *options) {
+		o.instanceName = name
 	}
 }
 
@@ -63,7 +74,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 	}
 
 	registerResources(s, pages)
-	registerTools(s, v.Dir, cfg.notifier, lint, directory, activity, pages, tags, searchSvc)
+	registerTools(s, v.Dir, cfg.instanceName, cfg.notifier, lint, directory, activity, pages, tags, searchSvc)
 
 	return s
 }
@@ -103,6 +114,7 @@ func NewStreamableHTTPServer(s *server.MCPServer) *server.StreamableHTTPServer {
 func registerTools(
 	s *server.MCPServer,
 	vaultDir string,
+	instanceName string,
 	notifier *notify.RebuildNotifier,
 	lint *service.LintService,
 	directory *service.DirectoryService,
@@ -326,7 +338,7 @@ func registerTools(
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 		),
-		whoamiHandler(vaultDir),
+		whoamiHandler(vaultDir, instanceName),
 	)
 
 	// --- activity: Append to activity log ---
