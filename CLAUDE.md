@@ -17,9 +17,12 @@ The server exposes three content paths: `/path` (Quartz HTML), `/path.md` (plain
 # Build
 go build -o wiki-server ./cmd/wiki-server
 
-# Test
+# Test (default — fast unit tests only)
 go test ./...
 go test -v -race -coverprofile=coverage.out ./...
+
+# Test including the stdio subprocess integration test (slower, builds binary)
+go test -tags=integration -v -race ./...
 
 # Test a single package
 go test -v ./internal/search/

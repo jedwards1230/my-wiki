@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -312,7 +313,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	if pipeline != nil {
 		dispatchRouter = pipeline.router
 	}
-	pageSvc := buildMCPPageSvc(v, notifier, dispatchRouter, logger)
+	pageSvc := buildPageService(v, notifier, dispatchRouter, logger)
 
 	// Startup reconciliation: when enabled and the dispatcher is wired,
 	// synthesize an inbox.changed event for any existing inbox/*.md files
@@ -384,7 +385,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	errCh := make(chan error, 2)
 	go func() {
 		logger.Info("starting wiki-server", "version", version, "port", port, "publicDir", publicDir, "vaultDir", vaultDir)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("HTTP server failed: %w", err)
 		}
 	}()
@@ -423,7 +424,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 
 		go func() {
 			logger.Info("starting wiki MCP server", "port", mcpPort, "vaultDir", vaultDir)
-			if err := mcpHTTPSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := mcpHTTPSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- fmt.Errorf("MCP server failed: %w", err)
 			}
 		}()
