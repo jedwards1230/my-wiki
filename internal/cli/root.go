@@ -50,6 +50,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newDirectoryCmd())
 	cmd.AddCommand(newLogCmd())
 	cmd.AddCommand(newActivityCmd())
+	cmd.AddCommand(newLaunchdCmd())
 
 	return cmd
 }

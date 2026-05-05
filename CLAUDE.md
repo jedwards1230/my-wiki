@@ -52,7 +52,15 @@ gofmt -w .
 ./wiki-server directory --vault /path/to/vault
 ./wiki-server log --vault /path/to/vault
 ./wiki-server activity --vault /path/to/vault
+
+# macOS LaunchAgent for daily lint (work-laptop path)
+./wiki-server --vault /path/to/vault --instance-name work-wiki launchd install
+./wiki-server --instance-name work-wiki launchd status
+./wiki-server --instance-name work-wiki launchd uninstall
 ```
+
+For a high-level architecture overview see [docs/OVERVIEW.md](docs/OVERVIEW.md).
+For the per-mode feature matrix see [docs/SERVER-MODES.md](docs/SERVER-MODES.md).
 
 ## Architecture
 
