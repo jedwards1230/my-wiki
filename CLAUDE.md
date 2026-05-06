@@ -17,9 +17,12 @@ The server exposes three content paths: `/path` (Quartz HTML), `/path.md` (plain
 # Build
 go build -o wiki-server ./cmd/wiki-server
 
-# Test
+# Test (default — fast unit tests only)
 go test ./...
 go test -v -race -coverprofile=coverage.out ./...
+
+# Test including the stdio subprocess integration test (slower, builds binary)
+go test -tags=integration -v -race ./...
 
 # Test a single package
 go test -v ./internal/search/
@@ -34,15 +37,32 @@ gofmt -w .
 # Run locally (needs vault dir and Quartz public output)
 ./wiki-server serve --vault /path/to/vault --public-dir /path/to/quartz/public --port 8080
 
-# Run MCP server standalone
-./wiki-server serve mcp --vault /path/to/vault --port 8081
+# Run MCP server standalone over HTTP (streamable-http transport)
+./wiki-server serve mcp http --vault /path/to/vault --port 8081
+
+# Run MCP server over stdio (for .mcp.json / Claude Code embedding)
+# Logs are written to stderr; stdout is reserved for the JSON-RPC protocol.
+# Skips HTTP, Quartz, OIDC, webhook dispatch, and the TF-IDF index.
+./wiki-server serve mcp stdio --vault /path/to/vault --instance-name work-wiki
+
+# Note: bare `serve mcp` (no transport) is deprecated. Cobra prints a deprecation
+# message and falls through to help — it does NOT start a server. Always specify
+# `serve mcp http` or `serve mcp stdio` explicitly.
 
 # CLI subcommands (operate on vault directly)
 ./wiki-server lint --vault /path/to/vault
 ./wiki-server directory --vault /path/to/vault
 ./wiki-server log --vault /path/to/vault
 ./wiki-server activity --vault /path/to/vault
+
+# macOS LaunchAgent for daily lint (work-laptop path)
+./wiki-server --vault /path/to/vault --instance-name work-wiki launchd install
+./wiki-server --instance-name work-wiki launchd status
+./wiki-server --instance-name work-wiki launchd uninstall
 ```
+
+For a high-level architecture overview see [docs/OVERVIEW.md](docs/OVERVIEW.md).
+For the per-mode feature matrix see [docs/SERVER-MODES.md](docs/SERVER-MODES.md).
 
 ## Architecture
 
@@ -87,6 +107,7 @@ Located at `deploy/helm/home-wiki/`. Published to `oci://ghcr.io/jedwards1230/ch
 | `WIKI_PORT` | `8080` | HTTP server port |
 | `WIKI_PUBLIC_DIR` | `/data/public` | Quartz static output directory |
 | `WIKI_MCP_PORT` | (disabled) | MCP server port (enables when non-zero) |
+| `WIKI_INSTANCE_NAME` | (empty) | Human-readable instance identifier surfaced via the `whoami` MCP tool. Honored across all MCP transports (`serve mcp http`, `serve mcp stdio`, and the embedded MCP via `--mcp-port`). When empty, `whoami` omits the field. |
 | `WIKI_IN_MEMORY_HTML` | `false` | When truthy, load `WIKI_PUBLIC_DIR` into an atomically-swappable in-memory `fs.FS` and serve from there; fsnotify drives debounced reloads on Quartz rebuilds. Eliminates the mid-rebuild 404 window. Adds the public tree's size to RSS. |
 | `WIKI_AUTH_ISSUER` | (disabled) | OIDC issuer URL for JWT auth (e.g. Authentik); enables auth when set. Protects mutating REST API routes and MCP endpoint. |
 | `WIKI_AUTH_AUDIENCE` | — | Expected JWT `aud` claim; required when `WIKI_AUTH_ISSUER` is set |

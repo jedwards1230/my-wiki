@@ -180,13 +180,16 @@ func tagsHandler(svc *service.TagService) server.ToolHandlerFunc {
 	}
 }
 
-func whoamiHandler(vaultDir string) server.ToolHandlerFunc {
+func whoamiHandler(vaultDir, instanceName string) server.ToolHandlerFunc {
 	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		info := map[string]any{
 			"name":       "home-wiki",
 			"version":    version.Value,
 			"vault_dir":  filepath.Base(vaultDir),
 			"go_version": runtime.Version(),
+		}
+		if instanceName != "" {
+			info["instance_name"] = instanceName
 		}
 		if u := middleware.UserFromContext(ctx); u != nil {
 			info["user"] = map[string]any{
