@@ -16,11 +16,12 @@ import (
 
 // labelBase is the reverse-DNS prefix for all wiki-server LaunchAgent labels.
 // Per-install labels append a suffix derived from --instance-name so that
-// home-wiki and work-wiki installs don't collide on the same machine.
-const labelBase = "cloud.lilbro.home-wiki"
+// distinct vault installs (e.g. home and work) don't collide on the same
+// machine.
+const labelBase = "cloud.lilbro.my-wiki"
 
 // plistTemplate renders a daily-lint LaunchAgent. Logs go under
-// ~/Library/Logs/home-wiki/<instance>/ so multiple installs stay tidy.
+// ~/Library/Logs/my-wiki/<instance>/ so multiple installs stay tidy.
 const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -67,7 +68,7 @@ func newLaunchdCmd() *cobra.Command {
 		Short: "Manage macOS LaunchAgent for scheduled vault lint",
 		Long: `Install, remove, or inspect the macOS LaunchAgent that runs ` + "`wiki-server lint`" + ` on a daily schedule.
 
-The plist label is derived from --instance-name so multiple installs (e.g. home-wiki and work-wiki) coexist. macOS only — other platforms return an error.`,
+The plist label is derived from --instance-name so multiple installs (e.g. home and work vaults) coexist. macOS only — other platforms return an error.`,
 	}
 	cmd.AddCommand(newLaunchdInstallCmd())
 	cmd.AddCommand(newLaunchdUninstallCmd())
@@ -280,7 +281,7 @@ func logDirFor(label string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}
-	return filepath.Join(home, "Library", "Logs", "home-wiki", label), nil
+	return filepath.Join(home, "Library", "Logs", "my-wiki", label), nil
 }
 
 // renderPlist builds the LaunchAgent plist. text/template does not escape
