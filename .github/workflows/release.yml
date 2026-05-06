@@ -156,7 +156,7 @@ jobs:
       - name: Update Chart.yaml
         run: |
           NEXT_VERSION="${{ steps.version.outputs.version }}"
-          CHART_FILE="deploy/helm/home-wiki/Chart.yaml"
+          CHART_FILE="deploy/helm/my-wiki/Chart.yaml"
 
           yq -i ".version = \"${NEXT_VERSION}\"" "$CHART_FILE"
           yq -i ".appVersion = \"${NEXT_VERSION}\"" "$CHART_FILE"
@@ -170,8 +170,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # Commit Chart.yaml bump (included in tag, not pushed to main)
-          if ! git diff --quiet deploy/helm/home-wiki/Chart.yaml; then
-            git add deploy/helm/home-wiki/Chart.yaml
+          if ! git diff --quiet deploy/helm/my-wiki/Chart.yaml; then
+            git add deploy/helm/my-wiki/Chart.yaml
             git commit -m "chore: bump chart version to ${{ steps.version.outputs.version }}"
           fi
 
@@ -239,18 +239,18 @@ jobs:
 
       - name: Package and push
         run: |
-          helm package deploy/helm/home-wiki/
-          helm push home-wiki-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+          helm package deploy/helm/my-wiki/
+          helm push my-wiki-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
 
       - name: Write summary
         run: |
-          CHART_VERSION=$(grep '^version:' deploy/helm/home-wiki/Chart.yaml | awk '{print $2}')
+          CHART_VERSION=$(grep '^version:' deploy/helm/my-wiki/Chart.yaml | awk '{print $2}')
           echo "## Helm Chart Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Chart Version | ${CHART_VERSION} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Registry | \`oci://ghcr.io/${{ github.repository_owner }}/charts/home-wiki\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry | \`oci://ghcr.io/${{ github.repository_owner }}/charts/my-wiki\` |" >> $GITHUB_STEP_SUMMARY
 
   release:
     name: Create GitHub Release
@@ -290,7 +290,7 @@ jobs:
           ## Helm Chart
 
           \`\`\`bash
-          helm install wiki oci://ghcr.io/${{ github.repository_owner }}/charts/home-wiki --version ${VERSION}
+          helm install wiki oci://ghcr.io/${{ github.repository_owner }}/charts/my-wiki --version ${VERSION}
           \`\`\`
 
           ${COMPARE_NOTE}
@@ -308,5 +308,5 @@ jobs:
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Version | ${VERSION} |" >> $GITHUB_STEP_SUMMARY
           echo "| Image | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Chart | \`oci://ghcr.io/${{ github.repository_owner }}/charts/home-wiki:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Chart | \`oci://ghcr.io/${{ github.repository_owner }}/charts/my-wiki:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Bump | ${{ needs.detect.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
