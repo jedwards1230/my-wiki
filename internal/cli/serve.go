@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jedwards1230/home-wiki/internal/api"
+	"github.com/jedwards1230/home-wiki/internal/dispatch"
 	"github.com/jedwards1230/home-wiki/internal/mcpserver"
 	"github.com/jedwards1230/home-wiki/internal/middleware"
 	"github.com/jedwards1230/home-wiki/internal/notify"
@@ -28,12 +30,12 @@ func newServeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the wiki server",
-		Long:  "Start the wiki HTTP server with static site, API, and optionally MCP transport.\n\nUse --mcp-port to start the MCP server alongside the HTTP server in the same process.\nThe 'serve mcp' subcommand is still available for running the MCP server standalone.",
+		Long:  "Start the wiki HTTP server with static site, API, and optionally MCP transport.\n\nUse --mcp-port to start the MCP server alongside the HTTP server in the same process.\nFor MCP-only deployments, use 'serve mcp http' (long-lived, K8s) or 'serve mcp stdio'\n(per-session, embedded in MCP clients like Claude Code).",
 	}
 
 	// Add subcommands
 	cmd.AddCommand(newServeHTTPCmd())
-	cmd.AddCommand(newServeMCPCmd())
+	cmd.AddCommand(newServeMCPParentCmd())
 
 	// Default to http if no subcommand given
 	cmd.RunE = runServeHTTP
@@ -154,7 +156,8 @@ func buildAuthMiddlewares(ctx context.Context, logger *slog.Logger, cfg *middlew
 
 // makeActivityCallback constructs a mutation callback that appends activity log
 // entries and marks the relevant files dirty for Quartz rebuild. The returned
-// callback is safe for concurrent use.
+// callback is safe for concurrent use. If notifier is nil (e.g. stdio mode),
+// dirty marking is skipped — activity entries still append to the vault.
 func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify.RebuildNotifier, vaultDir string, logger *slog.Logger) func(service.MutationEvent) {
 	var mu sync.Mutex
 	return func(evt service.MutationEvent) {
@@ -168,6 +171,9 @@ func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify
 		defer mu.Unlock()
 		if err := activitySvc.Append(entry); err != nil {
 			logger.Warn("auto-activity failed", "error", err, "path", evt.Path)
+		}
+		if notifier == nil {
+			return
 		}
 		today := time.Now().Format("2006-01-02")
 		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "activity", today+".md"), notify.ChangeModified)
@@ -303,15 +309,11 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// Shared PageService with auto-activity logging on mutations. When the
 	// dispatch pipeline is enabled, mutations also feed the router so
 	// inbox.changed events fire on API/MCP edits.
-	activitySvc := service.NewActivityService(v.Storage)
-	onMutation := makeActivityCallback(activitySvc, notifier, vaultDir, logger)
+	var dispatchRouter *dispatch.EventRouter
 	if pipeline != nil {
-		onMutation = mutationAdapter(pipeline.router, onMutation)
+		dispatchRouter = pipeline.router
 	}
-	pageSvc := service.NewPageService(v.Storage,
-		service.WithExcludedDirs(v.ExcludedDirs),
-		service.WithOnMutation(onMutation),
-	)
+	pageSvc := buildPageService(v, notifier, dispatchRouter, logger)
 
 	// Startup reconciliation: when enabled and the dispatcher is wired,
 	// synthesize an inbox.changed event for any existing inbox/*.md files
@@ -383,14 +385,21 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	errCh := make(chan error, 2)
 	go func() {
 		logger.Info("starting wiki-server", "version", version, "port", port, "publicDir", publicDir, "vaultDir", vaultDir)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("HTTP server failed: %w", err)
 		}
 	}()
 
-	// Optionally start MCP server in the same process
+	// Optionally start MCP server in the same process. --instance-name is a
+	// root persistent flag (env: WIKI_INSTANCE_NAME) so it surfaces here the
+	// same way it does in `serve mcp http` and `serve mcp stdio`.
 	if mcpPort > 0 {
-		mcpSrv := mcpserver.New(v, searchSvc, mcpserver.WithRebuildNotifier(notifier), mcpserver.WithPageService(pageSvc))
+		instanceName, _ := cmd.Flags().GetString("instance-name")
+		mcpSrv := mcpserver.New(v, searchSvc,
+			mcpserver.WithRebuildNotifier(notifier),
+			mcpserver.WithPageService(pageSvc),
+			mcpserver.WithInstanceName(instanceName),
+		)
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 		mux := http.NewServeMux()
@@ -416,7 +425,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 
 		go func() {
 			logger.Info("starting wiki MCP server", "port", mcpPort, "vaultDir", vaultDir)
-			if err := mcpHTTPSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := mcpHTTPSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- fmt.Errorf("MCP server failed: %w", err)
 			}
 		}()
@@ -441,145 +450,4 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	return firstErr
-}
-
-func newServeMCPCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "mcp",
-		Short: "Start a standalone MCP server (streamable-http transport)",
-		RunE:  runServeMCP,
-	}
-
-	cmd.Flags().String("port", envOr("WIKI_MCP_PORT", "8081"), "MCP server port (env: WIKI_MCP_PORT)")
-	cmd.Flags().Bool("watch", envOrBool("WIKI_WATCH", true), "watch vault directory for filesystem changes (env: WIKI_WATCH)")
-
-	return cmd
-}
-
-func runServeMCP(cmd *cobra.Command, _ []string) error {
-	port, _ := cmd.Flags().GetString("port")
-	vaultDir, _ := cmd.Root().Flags().GetString("vault")
-	watchEnabled, _ := cmd.Flags().GetBool("watch")
-
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
-
-	v := vault.New(vaultDir)
-
-	directorySvc := service.NewDirectoryService(v)
-
-	mcpNotifier := notify.New(2*time.Second, func(paths []string) {
-		if _, _, err := directorySvc.Generate(); err != nil {
-			logger.Warn("rebuild notifier: directory generate failed", "error", err)
-		}
-		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
-	})
-	defer mcpNotifier.Close()
-
-	// Build webhook dispatch pipeline (opt-in via WIKI_WEBHOOKS_CONFIG).
-	pipeline, err := buildDispatchPipeline(vaultDir, logger, nil)
-	if err != nil {
-		return fmt.Errorf("webhook dispatcher setup: %w", err)
-	}
-	defer func() {
-		if pipeline != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if cerr := pipeline.closer(shutdownCtx); cerr != nil {
-				logger.Warn("webhook dispatcher close", "error", cerr)
-			}
-		}
-	}()
-
-	// Start filesystem watcher for standalone MCP mode (no Quartz builder).
-	if watchEnabled {
-		var watcherSink notify.Sink = mcpNotifier
-		if pipeline != nil {
-			watcherSink = notify.NewFanoutSink(mcpNotifier, pipeline.sink)
-		}
-		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, watcherSink,
-			notify.WithExcludeDirs([]string{".obsidian", "raw", "private"}),
-			notify.WithWatcherLogger(logger),
-		)
-		if watchErr != nil {
-			logger.Warn("filesystem watcher failed to start", "error", watchErr)
-		} else {
-			go vaultWatcher.Run()
-			defer func() { _ = vaultWatcher.Close() }()
-			logger.Info("filesystem watcher started", "vaultDir", vaultDir)
-		}
-	}
-
-	// Shared PageService with auto-activity logging on mutations. When the
-	// dispatch pipeline is enabled, mutations also feed the router.
-	mcpActivitySvc := service.NewActivityService(v.Storage)
-	mcpOnMutation := makeActivityCallback(mcpActivitySvc, mcpNotifier, vaultDir, logger)
-	if pipeline != nil {
-		mcpOnMutation = mutationAdapter(pipeline.router, mcpOnMutation)
-	}
-	mcpPageSvc := service.NewPageService(v.Storage,
-		service.WithExcludedDirs(v.ExcludedDirs),
-		service.WithOnMutation(mcpOnMutation),
-	)
-
-	// Startup reconciliation.
-	if pipeline != nil && pipeline.cfg.ReconcileOnStart {
-		paths := scanInboxForReconcile(vaultDir, logger)
-		if len(paths) > 0 {
-			logger.Info("reconcile on start found pending inbox items", "count", len(paths))
-			pipeline.router.RecordReconcile(paths)
-		}
-	}
-
-	mcpSrv := mcpserver.New(v, nil, mcpserver.WithRebuildNotifier(mcpNotifier), mcpserver.WithPageService(mcpPageSvc))
-	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
-
-	authMWs, err := buildAuthMiddlewares(context.Background(), logger, authConfigFromEnv())
-	if err != nil {
-		return fmt.Errorf("MCP auth setup: %w", err)
-	}
-
-	var mcpAuthMW func(http.Handler) http.Handler
-	if authMWs != nil {
-		mcpAuthMW = authMWs.mcp
-	}
-
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", wrapAuth(httpTransport, mcpAuthMW))
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("ok"))
-	})
-
-	httpSrv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
-
-	errCh := make(chan error, 1)
-	go func() {
-		logger.Info("starting wiki MCP server", "port", port, "vaultDir", vaultDir)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- fmt.Errorf("MCP server failed: %w", err)
-		}
-	}()
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-	}
-
-	logger.Info("shutting down MCP server")
-	mcpNotifier.Close()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return httpSrv.Shutdown(shutdownCtx)
 }
