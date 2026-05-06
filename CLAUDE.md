@@ -45,7 +45,9 @@ gofmt -w .
 # Skips HTTP, Quartz, OIDC, webhook dispatch, and the TF-IDF index.
 ./wiki-server serve mcp stdio --vault /path/to/vault --instance-name work-wiki
 
-# Note: bare `serve mcp` (no transport) is a deprecated alias for `serve mcp http`.
+# Note: bare `serve mcp` (no transport) is deprecated. Cobra prints a deprecation
+# message and falls through to help — it does NOT start a server. Always specify
+# `serve mcp http` or `serve mcp stdio` explicitly.
 
 # CLI subcommands (operate on vault directly)
 ./wiki-server lint --vault /path/to/vault

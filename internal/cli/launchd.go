@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -282,14 +283,43 @@ func logDirFor(label string) (string, error) {
 	return filepath.Join(home, "Library", "Logs", "home-wiki", label), nil
 }
 
+// renderPlist builds the LaunchAgent plist. text/template does not escape
+// XML-significant runes, so any field that could contain '&', '<', '>', '"',
+// or '\” (paths with arbitrary characters, instance names, etc.) is run
+// through xml.EscapeText before being interpolated. Without this, a vault
+// path like "/Users/me/notes & stuff" would generate invalid XML and
+// `launchctl load` would reject the plist.
 func renderPlist(cfg plistConfig) ([]byte, error) {
+	escaped := plistConfig{
+		Label:      xmlEscape(cfg.Label),
+		BinaryPath: xmlEscape(cfg.BinaryPath),
+		VaultDir:   xmlEscape(cfg.VaultDir),
+		Hour:       cfg.Hour,
+		Minute:     cfg.Minute,
+		StdoutLog:  xmlEscape(cfg.StdoutLog),
+		StderrLog:  xmlEscape(cfg.StderrLog),
+	}
 	tmpl, err := template.New("plist").Parse(plistTemplate)
 	if err != nil {
 		return nil, err
 	}
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, cfg); err != nil {
+	if err := tmpl.Execute(&buf, escaped); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// xmlEscape returns s with XML-significant runes escaped for safe
+// interpolation into an XML body. Uses encoding/xml so the escaping matches
+// what an XML parser will accept; avoids html/template (which escapes for
+// HTML, not XML, and emits e.g. &#39; instead of &apos;).
+func xmlEscape(s string) string {
+	var buf bytes.Buffer
+	if err := xml.EscapeText(&buf, []byte(s)); err != nil {
+		// xml.EscapeText only fails if the underlying writer fails; bytes.Buffer
+		// can't fail. Return the original on the impossible path.
+		return s
+	}
+	return buf.String()
 }

@@ -390,14 +390,15 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
-	// Optionally start MCP server in the same process. When the embedded MCP
-	// is enabled, --instance-name is supplied via WIKI_INSTANCE_NAME env var
-	// (the --instance-name flag itself is scoped to `serve mcp` subcommands).
+	// Optionally start MCP server in the same process. --instance-name is a
+	// root persistent flag (env: WIKI_INSTANCE_NAME) so it surfaces here the
+	// same way it does in `serve mcp http` and `serve mcp stdio`.
 	if mcpPort > 0 {
+		instanceName, _ := cmd.Flags().GetString("instance-name")
 		mcpSrv := mcpserver.New(v, searchSvc,
 			mcpserver.WithRebuildNotifier(notifier),
 			mcpserver.WithPageService(pageSvc),
-			mcpserver.WithInstanceName(os.Getenv("WIKI_INSTANCE_NAME")),
+			mcpserver.WithInstanceName(instanceName),
 		)
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
