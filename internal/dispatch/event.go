@@ -9,7 +9,7 @@ import (
 	"encoding/hex"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/notify"
 )
 
 // SchemaVersion is the value stamped into Envelope.SchemaVersion. It lets

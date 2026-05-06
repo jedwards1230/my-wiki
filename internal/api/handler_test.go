@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jedwards1230/home-wiki/internal/middleware"
-	"github.com/jedwards1230/home-wiki/internal/search"
-	"github.com/jedwards1230/home-wiki/internal/service"
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/middleware"
+	"github.com/jedwards1230/my-wiki/internal/search"
+	"github.com/jedwards1230/my-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
 func setupTestVault(t *testing.T) *vault.Vault {

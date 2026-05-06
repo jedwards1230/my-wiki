@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
 // PageInfo describes a wiki page.

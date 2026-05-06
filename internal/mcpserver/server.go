@@ -3,10 +3,10 @@ package mcpserver
 import (
 	"context"
 
-	"github.com/jedwards1230/home-wiki/internal/notify"
-	"github.com/jedwards1230/home-wiki/internal/service"
-	"github.com/jedwards1230/home-wiki/internal/vault"
-	"github.com/jedwards1230/home-wiki/internal/version"
+	"github.com/jedwards1230/my-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/version"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/jedwards1230/home-wiki/internal/middleware"
+	"github.com/jedwards1230/my-wiki/internal/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/jedwards1230/home-wiki/internal/middleware"
+	"github.com/jedwards1230/my-wiki/internal/middleware"
 )
 
 // requireAuthConfig calls t.Fatal if cfg is nil and returns it typed for

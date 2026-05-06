@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
 func setupLintVault(t *testing.T) *vault.Vault {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
 // DirectoryEntry describes a wiki page for the directory listing.
