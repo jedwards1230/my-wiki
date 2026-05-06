@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/component: webhooks
 spec:
   groups:
-    - name: home-wiki-webhooks
+    - name: my-wiki-webhooks
       rules:
         # Failure rate = (terminal drops + circuit-open rejections) / total.
         # Each delivery increments exactly one outcome, so summing all
