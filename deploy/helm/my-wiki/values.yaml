@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/jedwards1230/home-wiki
+  repository: ghcr.io/jedwards1230/my-wiki
   tag: ""  # defaults to appVersion
   pullPolicy: IfNotPresent
 
@@ -22,8 +22,8 @@ ingress:
     secretName: wiki-tls
 
 obsidian:
-  vault: "Home Wiki"
-  deviceName: "home-wiki"
+  vault: "My Wiki"
+  deviceName: "my-wiki"
   excludedFolders: "private"
   syncMode: "bidirectional"
 
@@ -37,7 +37,7 @@ obsidianSync:
 quartz:
   concurrency: 4
   baseUrl: "wiki.example.com"
-  repoUrl: "https://github.com/jedwards1230/home-wiki/releases"
+  repoUrl: "https://github.com/jedwards1230/my-wiki/releases"
   # When true, wiki-server triggers Quartz builds via WIKI_QUARTZ_DIR instead
   # of running the quartz --watch sidecar. The setup-quartz init container
   # still runs on every pod start for the initial build (it wipes and
@@ -163,7 +163,7 @@ auth:
   # Required for Claude Desktop / Custom Connectors to discover how to auth.
   discovery:
     enabled: false
-    providerSlug: ""        # Authentik provider slug (e.g., "home-wiki")
+    providerSlug: ""        # Authentik provider slug (e.g., "my-wiki")
     resourceUrl: ""         # External URL (e.g., "https://wiki.lilbro.cloud")
     authentikInternalUrl: "http://authentik-server.web-services.svc.cluster.local:9000"
     authentikExternalHost: "auth.lilbro.cloud"
