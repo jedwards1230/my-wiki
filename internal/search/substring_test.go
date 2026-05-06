@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
 func setupTestVault(t *testing.T) *vault.Vault {
@@ -17,7 +17,7 @@ func setupTestVault(t *testing.T) *vault.Vault {
 	}
 
 	files := map[string]string{
-		"index.md":                    "---\ntitle: Home Wiki\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nAuto-generated index with kubernetes references.\n",
+		"index.md":                    "---\ntitle: My Wiki\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nAuto-generated index with kubernetes references.\n",
 		"about.md":                    "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\nThis is about the wiki.\n",
 		"project/alpha.md":            "---\ntitle: Alpha Project\ntags:\n  - project\n  - kubernetes\ndate: 2026-02-01\n---\n\nAlpha uses kubernetes for orchestration.\n",
 		"project/beta.md":             "---\ntitle: Beta Service\ntags:\n  - project\n  - networking\ndate: 2026-03-01\n---\n\nBeta handles networking between services.\n",

@@ -38,7 +38,7 @@ func WithUser(ctx context.Context, u *UserInfo) context.Context {
 
 // AuthConfig configures the OIDC JWT validation middleware.
 type AuthConfig struct {
-	// IssuerURL is the OIDC issuer (e.g., "https://auth.example.com/application/o/home-wiki/").
+	// IssuerURL is the OIDC issuer (e.g., "https://auth.example.com/application/o/my-wiki/").
 	// Must exactly match the `iss` value returned by the provider's discovery document.
 	IssuerURL string
 

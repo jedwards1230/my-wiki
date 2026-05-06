@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/memfs"
+	"github.com/jedwards1230/my-wiki/internal/memfs"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/notify"
 )
 
 // MutationEvent is the router's local shape for a vault mutation. We do not

@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/service"
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 	"github.com/spf13/cobra"
 )
 

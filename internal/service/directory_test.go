@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
 func setupDirectoryVault(t *testing.T) *vault.Vault {
@@ -67,7 +67,7 @@ func TestDirectoryService_Generate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "Home Wiki") {
+	if !strings.Contains(string(data), "My Wiki") {
 		t.Error("missing root title in generated index")
 	}
 }

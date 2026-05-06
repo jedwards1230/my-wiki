@@ -280,7 +280,7 @@ spec:
             {{- end }}
             {{- if .Values.webhooks.enabled }}
             - name: WIKI_WEBHOOKS_CONFIG
-              value: /etc/home-wiki/webhooks.yaml
+              value: /etc/my-wiki/webhooks.yaml
             {{- range .Values.webhooks.consumers }}
             {{- if .secretEnvKey }}
             - name: {{ .secretEnvKey }}
@@ -324,7 +324,7 @@ spec:
             {{- end }}
             {{- if .Values.webhooks.enabled }}
             - name: webhooks-config
-              mountPath: /etc/home-wiki
+              mountPath: /etc/my-wiki
               readOnly: true
             {{- end }}
           livenessProbe:

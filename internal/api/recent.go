@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/jedwards1230/home-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/service"
 )
 
 // handleRecentList is a convenience alias for GET /api/pages?sort_by=modified&limit=20.

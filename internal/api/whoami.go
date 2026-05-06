@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/jedwards1230/home-wiki/internal/middleware"
-	"github.com/jedwards1230/home-wiki/internal/version"
+	"github.com/jedwards1230/my-wiki/internal/middleware"
+	"github.com/jedwards1230/my-wiki/internal/version"
 )
 
 // ServerInfo describes the running wiki server instance.
@@ -28,7 +28,7 @@ type UserInfo struct {
 
 func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	info := ServerInfo{
-		Name:      "home-wiki",
+		Name:      "my-wiki",
 		Version:   version.Value,
 		VaultDir:  filepath.Base(h.vaultDir),
 		GoVersion: runtime.Version(),

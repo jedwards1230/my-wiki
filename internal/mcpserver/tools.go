@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/middleware"
-	"github.com/jedwards1230/home-wiki/internal/notify"
-	"github.com/jedwards1230/home-wiki/internal/service"
-	"github.com/jedwards1230/home-wiki/internal/version"
+	"github.com/jedwards1230/my-wiki/internal/middleware"
+	"github.com/jedwards1230/my-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/version"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -183,7 +183,7 @@ func tagsHandler(svc *service.TagService) server.ToolHandlerFunc {
 func whoamiHandler(vaultDir, instanceName string) server.ToolHandlerFunc {
 	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		info := map[string]any{
-			"name":       "home-wiki",
+			"name":       "my-wiki",
 			"version":    version.Value,
 			"vault_dir":  filepath.Base(vaultDir),
 			"go_version": runtime.Version(),

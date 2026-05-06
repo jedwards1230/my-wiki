@@ -1,4 +1,4 @@
-module github.com/jedwards1230/home-wiki
+module github.com/jedwards1230/my-wiki
 
 go 1.25.6
 

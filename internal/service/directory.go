@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
 // DirectoryEntry describes a wiki page for the directory listing.
@@ -358,7 +358,7 @@ func renderIndex(node *dirNode, allPages []DirectoryEntry, today string) string 
 	var b strings.Builder
 
 	// Frontmatter
-	title := "Home Wiki"
+	title := "My Wiki"
 	desc := "Shared knowledge base for the Edwards homelab"
 	if !isRoot {
 		title = titleCase(filepath.Base(node.rel))

@@ -17,7 +17,7 @@ func TestLoggingDispatcher_EmitsExpectedFields(t *testing.T) {
 
 	consumer := Consumer{
 		Name: "n8n-primary",
-		URL:  "https://n8n.example.com/webhook/home-wiki",
+		URL:  "https://n8n.example.com/webhook/my-wiki",
 	}
 	env := Envelope{
 		DeliveryID: "did-abc",
@@ -90,7 +90,7 @@ func TestLoggingDispatcher_RedactsSensitiveURLParts(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 	d := NewLoggingDispatcher(logger)
 
-	raw := "https://user:s3cret@n8n.example.com/webhook/home-wiki?token=abc123#x"
+	raw := "https://user:s3cret@n8n.example.com/webhook/my-wiki?token=abc123#x"
 	consumer := Consumer{Name: "n8n-primary", URL: raw}
 	env := Envelope{Event: EventInboxChanged, DeliveryID: "d"}
 
@@ -100,7 +100,7 @@ func TestLoggingDispatcher_RedactsSensitiveURLParts(t *testing.T) {
 
 	logged := buf.String()
 	// Positive: the safe form must appear.
-	if !strings.Contains(logged, "https://n8n.example.com/webhook/home-wiki") {
+	if !strings.Contains(logged, "https://n8n.example.com/webhook/my-wiki") {
 		t.Errorf("expected safe URL in log, got: %s", logged)
 	}
 	// Negative: secrets must not.

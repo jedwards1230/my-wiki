@@ -11,11 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/dispatch"
-	"github.com/jedwards1230/home-wiki/internal/mcpserver"
-	"github.com/jedwards1230/home-wiki/internal/notify"
-	"github.com/jedwards1230/home-wiki/internal/service"
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/dispatch"
+	"github.com/jedwards1230/my-wiki/internal/mcpserver"
+	"github.com/jedwards1230/my-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 	"github.com/spf13/cobra"
 )
 

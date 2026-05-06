@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/search"
+	"github.com/jedwards1230/my-wiki/internal/search"
 )
 
 // SearchService orchestrates search across one or more Searcher backends.

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/notify"
 )
 
 // captureDispatcher records every Dispatch call for assertion. Safe for

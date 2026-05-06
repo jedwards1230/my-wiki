@@ -5,15 +5,19 @@ import (
 	"testing"
 )
 
+// Tests use synthetic paths under /example/... rather than real developer
+// paths so the source doesn't bake in a username and stays portable across
+// machines.
+
 func TestRenderPlist_IncludesAllRequiredFields(t *testing.T) {
 	cfg := plistConfig{
-		Label:      "cloud.lilbro.home-wiki.lint.work-wiki",
+		Label:      "cloud.lilbro.my-wiki.lint.work-vault",
 		BinaryPath: "/usr/local/bin/wiki-server",
-		VaultDir:   "/Users/justin/Obsidian/work-wiki",
+		VaultDir:   "/example/Obsidian/work-vault",
 		Hour:       9,
 		Minute:     30,
-		StdoutLog:  "/Users/justin/Library/Logs/home-wiki/lint/lint.log",
-		StderrLog:  "/Users/justin/Library/Logs/home-wiki/lint/lint.err.log",
+		StdoutLog:  "/example/Library/Logs/my-wiki/lint/lint.log",
+		StderrLog:  "/example/Library/Logs/my-wiki/lint/lint.err.log",
 	}
 	out, err := renderPlist(cfg)
 	if err != nil {
@@ -22,14 +26,14 @@ func TestRenderPlist_IncludesAllRequiredFields(t *testing.T) {
 	got := string(out)
 
 	mustContain := []string{
-		`<string>cloud.lilbro.home-wiki.lint.work-wiki</string>`,
+		`<string>cloud.lilbro.my-wiki.lint.work-vault</string>`,
 		`<string>/usr/local/bin/wiki-server</string>`,
-		`<string>/Users/justin/Obsidian/work-wiki</string>`,
+		`<string>/example/Obsidian/work-vault</string>`,
 		`<string>lint</string>`,
 		`<integer>9</integer>`,
 		`<integer>30</integer>`,
-		`<string>/Users/justin/Library/Logs/home-wiki/lint/lint.log</string>`,
-		`<string>/Users/justin/Library/Logs/home-wiki/lint/lint.err.log</string>`,
+		`<string>/example/Library/Logs/my-wiki/lint/lint.log</string>`,
+		`<string>/example/Library/Logs/my-wiki/lint/lint.err.log</string>`,
 		`<key>RunAtLoad</key>`,
 		`<false/>`,
 	}
@@ -42,8 +46,8 @@ func TestRenderPlist_IncludesAllRequiredFields(t *testing.T) {
 
 func TestSanitizeLabel(t *testing.T) {
 	cases := map[string]string{
-		"work-wiki":         "work-wiki",
-		"home_wiki":         "home_wiki",
+		"work-vault":        "work-vault",
+		"home_vault":        "home_vault",
 		"my.instance":       "my.instance",
 		"weird name":        "weird-name",
 		"slash/path":        "slash-path",
@@ -62,9 +66,9 @@ func TestRenderPlist_EscapesXMLSignificantChars(t *testing.T) {
 	// Vault path with '&' would produce invalid XML if not escaped, and
 	// launchctl load would reject the plist.
 	cfg := plistConfig{
-		Label:      "cloud.lilbro.home-wiki.lint",
+		Label:      "cloud.lilbro.my-wiki.lint",
 		BinaryPath: "/usr/local/bin/wiki-server",
-		VaultDir:   "/Users/me/notes & <stuff>",
+		VaultDir:   "/example/notes & <stuff>",
 		Hour:       9,
 		Minute:     0,
 		StdoutLog:  "/tmp/log",
@@ -87,12 +91,12 @@ func TestRenderPlist_EscapesXMLSignificantChars(t *testing.T) {
 }
 
 func TestPlistPathFor_UsesHomeLaunchAgents(t *testing.T) {
-	got, err := plistPathFor("cloud.lilbro.home-wiki.lint")
+	got, err := plistPathFor("cloud.lilbro.my-wiki.lint")
 	if err != nil {
 		t.Fatalf("plistPathFor: %v", err)
 	}
 	// We don't hardcode $HOME, but the suffix must be stable.
-	if !strings.HasSuffix(got, "/Library/LaunchAgents/cloud.lilbro.home-wiki.lint.plist") {
+	if !strings.HasSuffix(got, "/Library/LaunchAgents/cloud.lilbro.my-wiki.lint.plist") {
 		t.Errorf("unexpected plist path: %s", got)
 	}
 }

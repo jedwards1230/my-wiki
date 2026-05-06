@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/notify"
 )
 
 // DebounceKey identifies one debounce bucket. The router keys on

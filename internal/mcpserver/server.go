@@ -3,10 +3,10 @@ package mcpserver
 import (
 	"context"
 
-	"github.com/jedwards1230/home-wiki/internal/notify"
-	"github.com/jedwards1230/home-wiki/internal/service"
-	"github.com/jedwards1230/home-wiki/internal/vault"
-	"github.com/jedwards1230/home-wiki/internal/version"
+	"github.com/jedwards1230/my-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/version"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -35,7 +35,7 @@ func WithPageService(ps *service.PageService) Option {
 }
 
 // WithInstanceName sets a human-readable identifier for this wiki instance
-// (e.g. "work-wiki", "home-wiki"). When set, it is included in the whoami
+// (e.g. "work-wiki", "my-wiki"). When set, it is included in the whoami
 // tool response so clients can distinguish between multiple wiki instances.
 // When empty (the default), whoami omits the field for backwards compatibility.
 func WithInstanceName(name string) Option {
@@ -52,7 +52,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 		o(&cfg)
 	}
 	s := server.NewMCPServer(
-		"home-wiki",
+		"my-wiki",
 		version.Value,
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),

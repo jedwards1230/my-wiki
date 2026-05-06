@@ -153,9 +153,9 @@ func (o *testOIDC) signToken(t *testing.T, overrides map[string]any) string {
 		"sub":                "user-123",
 		"exp":                time.Now().Add(1 * time.Hour).Unix(),
 		"iat":                time.Now().Unix(),
-		"preferred_username": "justin",
-		"email":              "justin@example.com",
-		"name":               "Justin Edwards",
+		"preferred_username": "alice",
+		"email":              "alice@example.com",
+		"name":               "Alice Example",
 		"groups":             []string{"admins"},
 	}
 	for k, v := range overrides {
@@ -204,7 +204,7 @@ func TestAuthValidToken(t *testing.T) {
 	if user == nil { //nolint:staticcheck // SA5011 false positive: t.Fatal terminates
 		t.Fatal("expected user in context")
 	}
-	if user.Subject != "user-123" || user.Username != "justin" || user.Email != "justin@example.com" { //nolint:staticcheck // SA5011
+	if user.Subject != "user-123" || user.Username != "alice" || user.Email != "alice@example.com" { //nolint:staticcheck // SA5011
 		t.Errorf("unexpected user: %+v", user)
 	}
 	if len(user.Groups) != 1 || user.Groups[0] != "admins" {

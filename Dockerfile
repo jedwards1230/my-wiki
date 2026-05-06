@@ -19,7 +19,7 @@ ARG BUILD_VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags="-s -w -X github.com/jedwards1230/home-wiki/internal/version.Value=${BUILD_VERSION}" -o /wiki-server ./cmd/wiki-server
+    go build -ldflags="-s -w -X github.com/jedwards1230/my-wiki/internal/version.Value=${BUILD_VERSION}" -o /wiki-server ./cmd/wiki-server
 
 # --- Main image ---
 FROM node:24-alpine

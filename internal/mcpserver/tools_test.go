@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/middleware"
-	"github.com/jedwards1230/home-wiki/internal/service"
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/middleware"
+	"github.com/jedwards1230/my-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -1069,7 +1069,7 @@ func TestWhoamiHandler(t *testing.T) {
 	}
 
 	text := getTextContent(result)
-	if !strings.Contains(text, `"name": "home-wiki"`) {
+	if !strings.Contains(text, `"name": "my-wiki"`) {
 		t.Errorf("expected name field, got:\n%s", text)
 	}
 	if !strings.Contains(text, `"version"`) {

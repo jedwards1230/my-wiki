@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jedwards1230/home-wiki/internal/middleware"
-	"github.com/jedwards1230/home-wiki/internal/search"
-	"github.com/jedwards1230/home-wiki/internal/service"
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/middleware"
+	"github.com/jedwards1230/my-wiki/internal/search"
+	"github.com/jedwards1230/my-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
 func setupTestVault(t *testing.T) *vault.Vault {
@@ -407,8 +407,8 @@ func TestWhoamiEndpoint(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Data.Name != "home-wiki" {
-		t.Errorf("expected name=home-wiki, got %q", resp.Data.Name)
+	if resp.Data.Name != "my-wiki" {
+		t.Errorf("expected name=my-wiki, got %q", resp.Data.Name)
 	}
 	if resp.Data.User != nil {
 		t.Error("expected no user info without auth context")

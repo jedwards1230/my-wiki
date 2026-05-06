@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jedwards1230/home-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
 func setupPagesVault(t *testing.T) (vault.Storage, string) {

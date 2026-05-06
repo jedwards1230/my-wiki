@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jedwards1230/home-wiki/internal/dispatch"
-	"github.com/jedwards1230/home-wiki/internal/notify"
-	"github.com/jedwards1230/home-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/dispatch"
+	"github.com/jedwards1230/my-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/service"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
