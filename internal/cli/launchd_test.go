@@ -58,6 +58,34 @@ func TestSanitizeLabel(t *testing.T) {
 	}
 }
 
+func TestRenderPlist_EscapesXMLSignificantChars(t *testing.T) {
+	// Vault path with '&' would produce invalid XML if not escaped, and
+	// launchctl load would reject the plist.
+	cfg := plistConfig{
+		Label:      "cloud.lilbro.home-wiki.lint",
+		BinaryPath: "/usr/local/bin/wiki-server",
+		VaultDir:   "/Users/me/notes & <stuff>",
+		Hour:       9,
+		Minute:     0,
+		StdoutLog:  "/tmp/log",
+		StderrLog:  "/tmp/err",
+	}
+	out, err := renderPlist(cfg)
+	if err != nil {
+		t.Fatalf("renderPlist: %v", err)
+	}
+	got := string(out)
+
+	// Raw chars must NOT appear in the body (only their escaped form).
+	if strings.Contains(got, "& <stuff>") {
+		t.Errorf("plist contains unescaped XML-significant chars; output:\n%s", got)
+	}
+	// Escaped form must be present.
+	if !strings.Contains(got, "&amp; &lt;stuff&gt;") {
+		t.Errorf("plist missing escaped form; output:\n%s", got)
+	}
+}
+
 func TestPlistPathFor_UsesHomeLaunchAgents(t *testing.T) {
 	got, err := plistPathFor("cloud.lilbro.home-wiki.lint")
 	if err != nil {
