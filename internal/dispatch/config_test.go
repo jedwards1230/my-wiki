@@ -25,7 +25,7 @@ events:
 
 consumers:
   - name: n8n-primary
-    url: https://n8n.example.com/webhook/home-wiki
+    url: https://n8n.example.com/webhook/my-wiki
     events:
       - inbox.changed
     secret_env: WIKI_WEBHOOK_N8N_SECRET

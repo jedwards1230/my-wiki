@@ -48,7 +48,7 @@ Stdio routes logs to stderr because stdout is reserved for the MCP JSON-RPC fram
 | `--port` (MCP-only HTTP) | ❌ | ❌ | ✅ | ❌ |
 | `--watch` (fsnotify) | ✅ | ✅ | ✅ | ❌ |
 
-`--instance-name` is honored by every MCP surface. It surfaces as `instance_name` in the `whoami` MCP tool response, letting agents distinguish home-wiki from work-wiki when both are connected.
+`--instance-name` is honored by every MCP surface. It surfaces as `instance_name` in the `whoami` MCP tool response, letting agents distinguish my-wiki from work-wiki when both are connected.
 
 ## When to pick which
 
@@ -60,7 +60,7 @@ Stdio routes logs to stderr because stdout is reserved for the MCP JSON-RPC fram
   "mcpServers": {
     "work-wiki": {
       "command": "wiki-server",
-      "args": ["--vault", "/Users/justin/Obsidian/work-wiki",
+      "args": ["--vault", "/path/to/your/vault",
                "--instance-name", "work-wiki",
                "serve", "mcp", "stdio"]
     }

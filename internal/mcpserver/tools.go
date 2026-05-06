@@ -183,7 +183,7 @@ func tagsHandler(svc *service.TagService) server.ToolHandlerFunc {
 func whoamiHandler(vaultDir, instanceName string) server.ToolHandlerFunc {
 	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		info := map[string]any{
-			"name":       "home-wiki",
+			"name":       "my-wiki",
 			"version":    version.Value,
 			"vault_dir":  filepath.Base(vaultDir),
 			"go_version": runtime.Version(),

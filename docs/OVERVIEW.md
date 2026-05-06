@@ -1,4 +1,4 @@
-# home-wiki Overview
+# my-wiki Overview
 
 A single Go binary (`wiki-server`) that turns an Obsidian vault into a queryable, agent-accessible knowledge base. Same binary runs as a 24/7 service on a homelab K8s cluster *and* as an on-demand stdio MCP server on a laptop, with the same vault conventions either way.
 

@@ -28,7 +28,7 @@ type UserInfo struct {
 
 func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	info := ServerInfo{
-		Name:      "home-wiki",
+		Name:      "my-wiki",
 		Version:   version.Value,
 		VaultDir:  filepath.Base(h.vaultDir),
 		GoVersion: runtime.Version(),

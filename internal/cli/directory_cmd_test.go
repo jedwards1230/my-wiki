@@ -110,7 +110,7 @@ func TestDirectoryGenerate(t *testing.T) {
 	}
 	content := string(data)
 
-	if !strings.Contains(content, "Home Wiki") {
+	if !strings.Contains(content, "My Wiki") {
 		t.Error("missing title in root index")
 	}
 	if !strings.Contains(content, "## Directory") {

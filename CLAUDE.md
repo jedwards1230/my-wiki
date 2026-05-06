@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Home Wiki is a Go server (`wiki-server`) that serves an Obsidian vault as a website. It combines:
+My Wiki is a Go server (`wiki-server`) that serves an Obsidian vault as a website. It combines:
 - **Quartz v4** static site generation (Node.js) for rendered HTML
 - **Go HTTP server** for static serving, markdown delivery, REST API, and MCP protocol
 - **obsidian-headless** for Obsidian Sync integration
@@ -92,7 +92,7 @@ Multi-stage build: Go binary built in `golang:1.25-alpine`, then copied into `no
 
 ## Helm Chart
 
-Located at `deploy/helm/home-wiki/`. Published to `oci://ghcr.io/jedwards1230/charts/home-wiki`. Chart version is auto-bumped by the release workflow.
+Located at `deploy/helm/my-wiki/`. Published to `oci://ghcr.io/jedwards1230/charts/my-wiki`. Chart version is auto-bumped by the release workflow.
 
 ## CI/CD
 

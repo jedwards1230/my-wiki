@@ -67,7 +67,7 @@ func TestDirectoryService_Generate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "Home Wiki") {
+	if !strings.Contains(string(data), "My Wiki") {
 		t.Error("missing root title in generated index")
 	}
 }

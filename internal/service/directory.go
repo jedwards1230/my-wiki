@@ -358,7 +358,7 @@ func renderIndex(node *dirNode, allPages []DirectoryEntry, today string) string 
 	var b strings.Builder
 
 	// Frontmatter
-	title := "Home Wiki"
+	title := "My Wiki"
 	desc := "Shared knowledge base for the Edwards homelab"
 	if !isRoot {
 		title = titleCase(filepath.Base(node.rel))

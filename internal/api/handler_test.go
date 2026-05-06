@@ -407,8 +407,8 @@ func TestWhoamiEndpoint(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Data.Name != "home-wiki" {
-		t.Errorf("expected name=home-wiki, got %q", resp.Data.Name)
+	if resp.Data.Name != "my-wiki" {
+		t.Errorf("expected name=my-wiki, got %q", resp.Data.Name)
 	}
 	if resp.Data.User != nil {
 		t.Error("expected no user info without auth context")

@@ -7,7 +7,7 @@ export const sharedPageComponents: SharedLayout = {
   afterBody: [],
   footer: Component.Footer({
     links: {
-      "Home Wiki %%BUILD_VERSION%%": process.env.QUARTZ_REPO_URL || "https://github.com/jackyzha0/quartz",
+      "My Wiki %%BUILD_VERSION%%": process.env.QUARTZ_REPO_URL || "https://github.com/jackyzha0/quartz",
     },
   }),
 }

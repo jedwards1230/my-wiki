@@ -1069,7 +1069,7 @@ func TestWhoamiHandler(t *testing.T) {
 	}
 
 	text := getTextContent(result)
-	if !strings.Contains(text, `"name": "home-wiki"`) {
+	if !strings.Contains(text, `"name": "my-wiki"`) {
 		t.Errorf("expected name field, got:\n%s", text)
 	}
 	if !strings.Contains(text, `"version"`) {
