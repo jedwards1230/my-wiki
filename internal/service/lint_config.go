@@ -19,6 +19,7 @@ import (
 // format (e.g. YAML frontmatter parsing, wikilink syntax) stay in code.
 type LintConfig struct {
 	Clippings ClippingsConfig `yaml:"clippings"`
+	Stub      StubConfig      `yaml:"stub"`
 }
 
 // ClippingsConfig governs the `clippings` lint check.
@@ -32,6 +33,17 @@ type ClippingsConfig struct {
 	RawPathPrefix string `yaml:"raw_path_prefix"`
 }
 
+// StubConfig governs the `stub` lint check that surfaces stray vault-root
+// markdown files that look like Obsidian-created placeholders (created
+// when a user clicks a wikilink to a non-existent page).
+type StubConfig struct {
+	// MinIdleSeconds is the mtime cooldown — a file isn't flagged as a
+	// stub until it has been untouched for at least this long. Protects
+	// against thrashing on a file the user is actively editing. Schema
+	// default: 3600 (1 hour).
+	MinIdleSeconds int `yaml:"min_idle_seconds"`
+}
+
 // DefaultLintConfig returns the config used when meta/lint-config.yaml is
 // absent. Default values mirror meta/schema.md.
 func DefaultLintConfig() LintConfig {
@@ -39,6 +51,9 @@ func DefaultLintConfig() LintConfig {
 		Clippings: ClippingsConfig{
 			Tag:           "clipping",
 			RawPathPrefix: "raw/clippings/",
+		},
+		Stub: StubConfig{
+			MinIdleSeconds: 3600,
 		},
 	}
 }
@@ -76,6 +91,9 @@ func LoadLintConfig(vaultDir string) (LintConfig, error) {
 	}
 	if fromFile.Clippings.RawPathPrefix != "" {
 		cfg.Clippings.RawPathPrefix = fromFile.Clippings.RawPathPrefix
+	}
+	if fromFile.Stub.MinIdleSeconds > 0 {
+		cfg.Stub.MinIdleSeconds = fromFile.Stub.MinIdleSeconds
 	}
 	return cfg, nil
 }
