@@ -114,6 +114,7 @@ Located at `deploy/helm/my-wiki/`. Published to `oci://ghcr.io/jedwards1230/char
 | `WIKI_AUTH_ALLOWED_GROUPS` | — | Comma-separated group names; token's `groups` claim must contain at least one. Required unless `WIKI_AUTH_ALLOW_ANY_USER=true`. |
 | `WIKI_AUTH_ALLOW_ANY_USER` | `false` | Explicit opt-in to permit any authenticated user when `WIKI_AUTH_ALLOWED_GROUPS` is empty (fail-closed default). |
 | `WIKI_AUTH_RESOURCE_METADATA_URL` | — | RFC 9728 Protected Resource Metadata URL; when set, 401 responses include `WWW-Authenticate` header for MCP OAuth discovery. |
+| `WIKI_WATCH_EXCLUDE_DIRS` | `.obsidian,raw,private` | Comma-separated top-level directories the filesystem watcher skips. Empty/unset uses defaults; whitespace or a lone comma disables exclusions entirely. |
 
 ## Vault Conventions
 
