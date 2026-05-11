@@ -416,14 +416,12 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 
 	// Optionally start MCP server in the same process. --instance-name is a
 	// root persistent flag (env: WIKI_INSTANCE_NAME) so it surfaces here the
-	// same way it does in `serve mcp http` and `serve mcp stdio`.
+	// same way it does in `serve mcp http` and `serve mcp stdio`. The MCP
+	// server itself is built via the shared helper so option wiring stays
+	// identical across all three transports.
 	if mcpPort > 0 {
 		instanceName, _ := cmd.Flags().GetString("instance-name")
-		mcpSrv := mcpserver.New(v, searchSvc,
-			mcpserver.WithRebuildNotifier(notifier),
-			mcpserver.WithPageService(pageSvc),
-			mcpserver.WithInstanceName(instanceName),
-		)
+		mcpSrv := buildMCPServer(v, searchSvc, notifier, pageSvc, instanceName)
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 		mux := http.NewServeMux()

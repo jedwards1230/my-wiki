@@ -27,7 +27,8 @@
 | Webhook dispatch | ✅ | ✅ | ✅ | ❌ |
 | Filesystem watcher (fsnotify) | ✅ | ✅ | ✅ | ❌ |
 | Quartz build pipeline | ✅ | ✅ | ❌ | ❌ |
-| TF-IDF search index | ✅ | ✅ | ❌ (substring only) | ❌ (substring only) |
+| Search MCP tool | n/a | ✅ (TF-IDF + substring) | ✅ (substring) | ✅ (substring) |
+| TF-IDF search index | ✅ | ✅ | ❌ | ❌ |
 | Activity auto-logging on mutations | ✅ | ✅ | ✅ | ✅ |
 | Prometheus `/metrics` | ✅ | ✅ | ❌ | ❌ |
 | Logs to | stdout (JSON) | stdout (JSON) | stdout (JSON) | **stderr** (JSON) |
@@ -73,6 +74,13 @@ Optional companion: `wiki-server launchd install` schedules a daily `lint` via m
 
 **Browser-only (no MCP):** surface (1). The default `serve` invocation without `--mcp-port`. Useful if you're hosting the wiki for read-only human consumption and don't want any agent surface.
 
-## Forward-looking note
+## Unified construction
 
-The HTTP MCP construction is duplicated between surfaces (2) and (3) — they build the same MCP server with overlapping but not identical wiring. Issue #65 tracks unifying them behind a single `runMCP(cfg)` helper. Stdio's "strip everything" stance also lives in the runner today; the same refactor would make it a flag flip rather than copy-paste, so future feature parity (e.g. webhook dispatch from stdio mutations) is cheap.
+The three MCP server surfaces share construction through two helpers in `internal/cli/mcp_runner.go`:
+
+- `buildMCPServer(...)` — single source of truth for MCP option wiring. Surfaces (2), (3), and (4) all call it.
+- `runMCP(ctx, vaultDir, cfg, logger)` — end-to-end runner for the two standalone surfaces. Drives the dependency graph from a small `mcpRunConfig` struct (`Transport`, `EnableWatcher`, `EnableDispatch`, `EnableAuth`, `EnableSearch`, `EnableSearchIndex`, `InstanceName`, `HTTPPort`).
+
+`serve mcp http` and `serve mcp stdio` are now thin shims that pre-set the config and call `runMCP`. The embedded MCP path (surface (2)) keeps its inline construction because it shares its dependency graph with the REST API, but it still uses `buildMCPServer` so the MCP option set stays identical across all three surfaces.
+
+Adding a new flag (e.g. webhook dispatch from stdio mutations) is now a config-struct field flip rather than a copy-paste between runners.
