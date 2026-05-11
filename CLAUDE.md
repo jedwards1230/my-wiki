@@ -72,12 +72,15 @@ internal/
   cli/                     Cobra command tree (serve, lint, directory, log, activity)
   server/                  HTTP server setup, static/markdown/raw handlers, middleware chain
   api/                     REST API handler — registers routes on /api/*, delegates to services
-  mcpserver/               MCP server (mcp-go) — registers wiki_* tools, streamable-http transport
+  mcpserver/               MCP server (mcp-go) — registers bare-name tools (read, write, edit, list, search, delete, move, lint, tags, whoami, activity), streamable-http transport
   service/                 Business logic layer — one service per domain (lint, pages, search, etc.)
   vault/                   Vault filesystem operations — page discovery, frontmatter parsing, wikilinks
   search/                  Search backends: Searcher interface, SubstringSearcher, IndexSearcher (TF-IDF)
   notify/                  Filesystem change debouncer — batches mutations and fires a callback
   middleware/              HTTP middleware: gzip, logging, metrics (Prometheus), cache headers
+  dispatch/                Webhook dispatch pipeline — config loader, debouncer, EventRouter, HTTP dispatcher, sinks
+  memfs/                   Atomically-swappable in-memory `fs.FS` for `WIKI_IN_MEMORY_HTML`
+  version/                 Build-time version string injected via -ldflags
 ```
 
 **Key patterns:**
@@ -101,26 +104,13 @@ Located at `deploy/helm/my-wiki/`. Published to `oci://ghcr.io/jedwards1230/char
 
 ## Environment Variables
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `WIKI_VAULT_DIR` | `/data/vault` | Path to Obsidian vault |
-| `WIKI_PORT` | `8080` | HTTP server port |
-| `WIKI_PUBLIC_DIR` | `/data/public` | Quartz static output directory |
-| `WIKI_MCP_PORT` | (disabled) | MCP server port (enables when non-zero) |
-| `WIKI_INSTANCE_NAME` | (empty) | Human-readable instance identifier surfaced via the `whoami` MCP tool. Honored across all MCP transports (`serve mcp http`, `serve mcp stdio`, and the embedded MCP via `--mcp-port`). When empty, `whoami` omits the field. |
-| `WIKI_IN_MEMORY_HTML` | `false` | When truthy, load `WIKI_PUBLIC_DIR` into an atomically-swappable in-memory `fs.FS` and serve from there; fsnotify drives debounced reloads on Quartz rebuilds. Eliminates the mid-rebuild 404 window. Adds the public tree's size to RSS. |
-| `WIKI_AUTH_ISSUER` | (disabled) | OIDC issuer URL for JWT auth (e.g. Authentik); enables auth when set. Protects mutating REST API routes and MCP endpoint. |
-| `WIKI_AUTH_AUDIENCE` | — | Expected JWT `aud` claim; required when `WIKI_AUTH_ISSUER` is set |
-| `WIKI_AUTH_ALLOWED_GROUPS` | — | Comma-separated group names; token's `groups` claim must contain at least one. Required unless `WIKI_AUTH_ALLOW_ANY_USER=true`. |
-| `WIKI_AUTH_ALLOW_ANY_USER` | `false` | Explicit opt-in to permit any authenticated user when `WIKI_AUTH_ALLOWED_GROUPS` is empty (fail-closed default). |
-| `WIKI_AUTH_RESOURCE_METADATA_URL` | — | RFC 9728 Protected Resource Metadata URL; when set, 401 responses include `WWW-Authenticate` header for MCP OAuth discovery. |
-| `WIKI_WATCH_EXCLUDE_DIRS` | `.obsidian,raw,private` | Comma-separated top-level directories the filesystem watcher skips. Empty/unset uses defaults; whitespace or a lone comma disables exclusions entirely. |
+All `WIKI_*` environment variables are defined as constants in [`internal/cli/envvars.go`](internal/cli/envvars.go) — that's the canonical inventory. Each constant's godoc describes the variable, its default, and its effect on behavior. Don't duplicate them here; update the godoc in `envvars.go` and the change propagates everywhere via `go doc`.
 
 ## Vault Conventions
 
-- `raw/` — source documents served natively, excluded from wiki page listing
+- `raw/` — source documents served natively, excluded from the page directory and the page-listing API. Files inside ARE valid wikilink targets (slug-indexed).
 - `private/` — excluded from sync and page listing
 - `.obsidian/` — Obsidian config, excluded from page listing
 - Pages have YAML frontmatter with `title`, `tags`, `date` fields
 - Wikilinks (`[[target]]`) are parsed for link checking
-- `meta/lint-config.yaml` (optional) — overrides schema-coupled lint values (clipping tag name, raw-path prefix, stub idle cooldown). Missing or partial → defaults from `service.DefaultLintConfig()`. Malformed → surfaced as an ERROR under the `clippings` check.
+- `meta/lint-config.yaml` (optional) — overrides schema-coupled lint values (clipping tag name, raw-path prefix, stub idle cooldown). Missing or partial → defaults from `service.DefaultLintConfig()`. Malformed → surfaced as an ERROR under both the `clippings` and `stub` checks (they share the same loaded config).
