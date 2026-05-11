@@ -120,11 +120,15 @@ type dirNode struct {
 // tags; leaf dirs get flat page tables.
 //
 // A directory is covered by Generate regardless of whether it currently
-// holds content pages. Directories that contain only sub-directories —
-// or that became empty when their last content page was deleted — are
-// still in the tree so their index.md is rewritten to reflect the new
-// state. Without this, a stale index pointing at a now-deleted page
-// would persist forever.
+// holds content pages. Directories that contain only sub-directories
+// still get a regenerated index.md reflecting the current subtree.
+//
+// Directories that became *fully* empty — no pages, no surviving
+// children after recursive pruning — are removed: the stale index.md
+// is deleted and `os.Remove` is attempted on the directory itself.
+// The rmdir succeeds only when the directory is truly empty (no
+// non-md files, no Obsidian metadata), so directories holding
+// non-wiki content are preserved with their index.md gone.
 func (s *DirectoryService) Generate() (string, int, error) {
 	entries, err := s.List("")
 	if err != nil {
@@ -161,13 +165,47 @@ func (s *DirectoryService) Generate() (string, int, error) {
 	filesWritten := 0
 	today := time.Now().Format("2006-01-02")
 
-	var writeIndexes func(node *dirNode) error
-	writeIndexes = func(node *dirNode) error {
+	// writeOrPrune walks the tree post-order. Non-root nodes that hold no
+	// pages and no surviving children are pruned: their stale index.md is
+	// removed and the directory itself is `os.Remove`d (succeeds only when
+	// the dir is truly empty). The pruned bool returned to the caller lets
+	// the parent recompute whether it too has become empty after children
+	// were removed.
+	var writeOrPrune func(node *dirNode, isRoot bool) (bool, error)
+	writeOrPrune = func(node *dirNode, isRoot bool) (bool, error) {
+		// Post-order: handle children first so we know which survived.
+		var survivors []*dirNode
+		for _, child := range node.children {
+			pruned, err := writeOrPrune(child, false)
+			if err != nil {
+				return false, err
+			}
+			if !pruned {
+				survivors = append(survivors, child)
+			}
+		}
+		node.children = survivors
+
+		// Prune this node when it's an empty non-root leaf after children
+		// settled. Root is never pruned — the wiki always has a homepage.
+		if !isRoot && len(node.pages) == 0 && len(node.children) == 0 {
+			indexPath := filepath.Join(s.vault.Dir, node.rel, "index.md")
+			if err := os.Remove(indexPath); err != nil && !os.IsNotExist(err) {
+				return false, err
+			}
+			// Attempt rmdir. Errors are deliberately swallowed: a non-empty
+			// directory (other files, hidden metadata) is fine — the index
+			// is gone and the dir survives. ENOENT means we already cleaned
+			// up in an earlier run.
+			_ = os.Remove(filepath.Join(s.vault.Dir, node.rel))
+			return true, nil
+		}
+
+		// Write index for this surviving node.
 		content := renderIndex(node, pages, today)
 		indexPath := filepath.Join(s.vault.Dir, node.rel, "index.md")
-
 		if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
-			return err
+			return false, err
 		}
 		newContent := []byte(content)
 		// Skip the write if bytes are unchanged. Rewriting with identical content
@@ -181,26 +219,18 @@ func (s *DirectoryService) Generate() (string, int, error) {
 		// *and* reintroduce the feedback loop on every call.
 		existing, readErr := os.ReadFile(indexPath)
 		if readErr != nil && !os.IsNotExist(readErr) {
-			return readErr
+			return false, readErr
 		}
-		if readErr == nil && bytes.Equal(existing, newContent) {
-			// No change — skip write.
-		} else {
+		if readErr != nil || !bytes.Equal(existing, newContent) {
 			if err := os.WriteFile(indexPath, newContent, 0o644); err != nil {
-				return err
+				return false, err
 			}
 			filesWritten++
 		}
-
-		for _, child := range node.children {
-			if err := writeIndexes(child); err != nil {
-				return err
-			}
-		}
-		return nil
+		return false, nil
 	}
 
-	if err := writeIndexes(root); err != nil {
+	if _, err := writeOrPrune(root, true); err != nil {
 		return "", 0, err
 	}
 
