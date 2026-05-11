@@ -86,6 +86,26 @@ func (vw *VaultWatcher) Run() {
 					if err := vw.addRecursive(event.Name); err != nil {
 						vw.logger.Warn("failed to add new directory to watcher", "path", event.Name, "error", err)
 					}
+					// Close the inotify subdirectory race: any .md files that
+					// arrived inside this new directory before our watch
+					// attached will have been missed. Walk the now-watched
+					// subtree and emit synthetic events so the dispatcher
+					// still sees them. Triggered when Obsidian Sync (or any
+					// atomic mv of a populated tree) creates a directory and
+					// its contents in a single operation.
+					//
+					// Offloaded to a goroutine: WalkDir on the event loop
+					// would block reads from watcher.Events long enough to
+					// overflow fsnotify's internal channel under a large
+					// atomic mv. The Sink contract permits concurrent
+					// MarkDirty calls, so the scan is independent of the
+					// event loop. Duplicates with naturally-fired events
+					// collapse in the downstream debouncer.
+					go func(dir string) {
+						if err := vw.emitInitialContents(dir); err != nil {
+							vw.logger.Warn("failed to scan new directory for existing files", "path", dir, "error", err)
+						}
+					}(event.Name)
 					continue
 				}
 			}
@@ -163,5 +183,33 @@ func (vw *VaultWatcher) addRecursive(dir string) error {
 			return filepath.SkipDir
 		}
 		return vw.watcher.Add(p)
+	})
+}
+
+// emitInitialContents walks dir and emits a synthetic Create event for every
+// .md file found. Used immediately after watching a newly-created directory
+// to close the inotify race window where files inside the directory may
+// have been created before the watch attached.
+//
+// Re-emitting events for files that *did* fire naturally is harmless: the
+// downstream debouncer collapses duplicates within its window.
+func (vw *VaultWatcher) emitInitialContents(dir string) error {
+	return filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(vw.vaultDir, p)
+		if d.IsDir() {
+			if vw.isExcluded(rel) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(p) != ".md" {
+			return nil
+		}
+		vw.logger.Debug("synthetic create for file in new subdirectory", "path", rel)
+		vw.sink.MarkDirty(p, ChangeCreated)
+		return nil
 	})
 }

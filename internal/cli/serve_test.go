@@ -76,6 +76,35 @@ func TestAuthConfigFromEnvResourceMetadataURLEmpty(t *testing.T) {
 	}
 }
 
+func TestExcludeDirsFromEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		env  string
+		want []string
+	}{
+		{"empty uses defaults", "", defaultWatchExcludeDirs},
+		{"override single", "ephemeral", []string{"ephemeral"}},
+		{"override multi", ".obsidian,raw,private,trash", []string{".obsidian", "raw", "private", "trash"}},
+		{"trims whitespace", " foo , bar ,baz", []string{"foo", "bar", "baz"}},
+		{"skips blank entries", "foo,,bar,", []string{"foo", "bar"}},
+		{"whitespace-only disables exclusions", "  ", []string{}},
+		{"lone comma disables exclusions", ",", []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("WIKI_WATCH_EXCLUDE_DIRS", tc.env)
+			got := excludeDirsFromEnv()
+			// Treat nil and []string{} as equal — both represent "no exclusions".
+			if len(got) == 0 && len(tc.want) == 0 {
+				return
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("excludeDirsFromEnv() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAuthConfigFromEnvAllowAnyUser(t *testing.T) {
 	cases := []struct {
 		value string

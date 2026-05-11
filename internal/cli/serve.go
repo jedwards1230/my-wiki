@@ -80,6 +80,30 @@ func envOrBool(key string, fallback bool) bool {
 	return fallback
 }
 
+// defaultWatchExcludeDirs lists vault subdirectories the filesystem watcher
+// skips by default — Obsidian metadata, raw byte storage (intentionally
+// silent), and the device-only private folder.
+var defaultWatchExcludeDirs = []string{".obsidian", "raw", "private"}
+
+// excludeDirsFromEnv returns the watcher exclude list, honoring
+// WIKI_WATCH_EXCLUDE_DIRS as a comma-separated override. Unset or empty
+// falls back to defaultWatchExcludeDirs (matches envOr semantics). To
+// disable all exclusions entirely, set the var to whitespace or a lone
+// comma — anything that produces no non-empty entries after splitting.
+func excludeDirsFromEnv() []string {
+	v := os.Getenv("WIKI_WATCH_EXCLUDE_DIRS")
+	if v == "" {
+		return defaultWatchExcludeDirs
+	}
+	out := make([]string, 0, strings.Count(v, ",")+1)
+	for _, d := range strings.Split(v, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // authConfigFromEnv returns an AuthConfig if WIKI_AUTH_ISSUER is set, nil otherwise.
 func authConfigFromEnv() *middleware.AuthConfig {
 	issuer := os.Getenv("WIKI_AUTH_ISSUER")
@@ -294,7 +318,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 			watcherSink = notify.NewFanoutSink(notifier, pipeline.sink)
 		}
 		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, watcherSink,
-			notify.WithExcludeDirs([]string{".obsidian", "raw", "private"}),
+			notify.WithExcludeDirs(excludeDirsFromEnv()),
 			notify.WithWatcherLogger(logger),
 		)
 		if watchErr != nil {
