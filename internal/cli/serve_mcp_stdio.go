@@ -1,19 +1,11 @@
 package cli
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/jedwards1230/my-wiki/internal/mcpserver"
-	"github.com/jedwards1230/my-wiki/internal/search"
-	"github.com/jedwards1230/my-wiki/internal/service"
-	"github.com/jedwards1230/my-wiki/internal/vault"
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 )
 
@@ -35,6 +27,10 @@ The --instance-name flag is inherited from the parent 'serve mcp' command.`,
 	}
 }
 
+// runServeMCPStdio is a thin shim that pre-sets the config for the per-session
+// stdio transport: every optional feature is off. Substring search stays on so
+// the historic stdio behavior — substring `search` tool available, no TF-IDF —
+// is preserved.
 func runServeMCPStdio(cmd *cobra.Command, _ []string) error {
 	// CRITICAL: stdout is the MCP JSON-RPC pipe. All structured logs must go
 	// to stderr or they will corrupt the protocol stream.
@@ -42,47 +38,22 @@ func runServeMCPStdio(cmd *cobra.Command, _ []string) error {
 	slog.SetDefault(logger)
 
 	// --vault is a persistent flag on the root command (env: WIKI_VAULT_DIR).
-	// --instance-name is a persistent flag on `serve mcp` (env: WIKI_INSTANCE_NAME).
-	// Both surface through cmd.Flags() because cobra inherits persistent flags.
+	// --instance-name is a persistent flag on the root command
+	// (env: WIKI_INSTANCE_NAME). Both surface through cmd.Flags() because
+	// cobra inherits persistent flags.
 	vaultDir, _ := cmd.Flags().GetString("vault")
-	if vaultDir == "" {
-		return fmt.Errorf("--vault is required (or set WIKI_VAULT_DIR)")
-	}
 	instanceName, _ := cmd.Flags().GetString("instance-name")
 
-	v := vault.New(vaultDir)
-	searchSvc := service.NewSearchService(search.NewSubstringSearcher(v))
-	pageSvc := buildPageService(v, nil, nil, logger)
-
-	mcpSrv := mcpserver.New(v, searchSvc,
-		mcpserver.WithPageService(pageSvc),
-		mcpserver.WithInstanceName(instanceName),
-	)
-	stdio := server.NewStdioServer(mcpSrv)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(cmdContext(cmd), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	logger.Info("starting wiki MCP stdio server",
-		"version", version,
-		"vaultDir", vaultDir,
-		"instanceName", instanceName,
-	)
-
-	if err := stdio.Listen(ctx, os.Stdin, os.Stdout); err != nil && !isShutdownErr(ctx, err) {
-		return fmt.Errorf("stdio server: %w", err)
-	}
-
-	logger.Info("wiki MCP stdio server stopped")
-	return nil
-}
-
-// isShutdownErr returns true when err is a normal shutdown signal (context
-// cancellation from SIGINT/SIGTERM). The mcp-go stdio Listen returns
-// context.Canceled on signal-driven shutdown; treat that as success. We do
-// NOT treat context.DeadlineExceeded as success — this command runs under
-// signal.NotifyContext (no deadline), so a deadline error would indicate a
-// real bug rather than a clean shutdown.
-func isShutdownErr(ctx context.Context, err error) bool {
-	return ctx.Err() != nil && errors.Is(err, context.Canceled)
+	return runMCP(ctx, vaultDir, mcpRunConfig{
+		Transport:         mcpTransportStdio,
+		EnableWatcher:     false,
+		EnableDispatch:    false,
+		EnableAuth:        false,
+		EnableSearch:      true,  // substring backend only
+		EnableSearchIndex: false, // no TF-IDF
+		InstanceName:      instanceName,
+	}, logger)
 }
