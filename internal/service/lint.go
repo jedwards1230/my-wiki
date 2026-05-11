@@ -424,12 +424,23 @@ func (s *LintService) lintPageLinks(relPath string) []LintIssue {
 // stripFrontmatter returns the body of a markdown document with any leading
 // `---\n…\n---` YAML frontmatter block removed. Returns the original string
 // unchanged when no frontmatter is present or the block is unterminated.
+//
+// Handles the empty-frontmatter edge case (`---\n---\nBody`) where the
+// closing marker sits directly after the opener with no inner content —
+// the substring `\n---` doesn't appear in `content[4:]` for that input,
+// so we have to check for a `---` prefix on the remainder before falling
+// back to the substring scan.
 func stripFrontmatter(content string) string {
 	if !strings.HasPrefix(content, "---\n") {
 		return content
 	}
-	if idx := strings.Index(content[4:], "\n---"); idx >= 0 {
-		return content[4+idx+4:]
+	rest := content[4:]
+	if strings.HasPrefix(rest, "---") {
+		// Empty frontmatter: skip the closing marker and the line break after it.
+		return strings.TrimPrefix(strings.TrimPrefix(rest, "---"), "\n")
+	}
+	if idx := strings.Index(rest, "\n---"); idx >= 0 {
+		return strings.TrimPrefix(rest[idx+4:], "\n")
 	}
 	return content
 }

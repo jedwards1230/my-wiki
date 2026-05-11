@@ -87,6 +87,32 @@ func TestLintService_Orphans(t *testing.T) {
 	}
 }
 
+// TestStripFrontmatter covers the documented frontmatter edge cases that
+// downstream lint checks (size, clippings) rely on. The empty-frontmatter
+// case (`---\n---\nBody`) is the regression that was silently leaving
+// frontmatter in the scanned body.
+func TestStripFrontmatter(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"no frontmatter", "Plain body.\n", "Plain body.\n"},
+		{"standard block", "---\ntitle: X\n---\nBody.\n", "Body.\n"},
+		{"empty block", "---\n---\nBody.\n", "Body.\n"},
+		{"unterminated returns input", "---\ntitle: X\nno closer", "---\ntitle: X\nno closer"},
+		{"trailing newline after closer trimmed", "---\nk: v\n---\n\nReal body.\n", "\nReal body.\n"},
+		{"no trailing newline after closer", "---\nk: v\n---", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripFrontmatter(tc.in); got != tc.want {
+				t.Errorf("stripFrontmatter(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestLintService_Clippings exercises the clippings check: a page tagged
 // `clipping` must contain at least one link into `raw/clippings/` in the
 // body. The frontmatter `raw:` field does not satisfy the rule on its
@@ -108,9 +134,11 @@ func TestLintService_Clippings(t *testing.T) {
 		// happens to mention raw/clippings/ — irrelevant).
 		"home/note.md": "---\ntitle: Note\ntags:\n  - home\ndate: 2026-05-10\n---\n\nSome text.\n",
 		// Ignored: tag list contains "clippings" (plural, legacy) — the
-		// check matches the canonical singular `clipping` only, so a
-		// legacy plural tag is silently skipped rather than nagged. The
-		// `tags` check is responsible for canonicalising old tags.
+		// check matches the canonical singular `clipping` (from config)
+		// only, so a legacy plural tag is silently skipped rather than
+		// nagged. Renaming legacy tags is a separate concern handled by
+		// the semantic (LLM-driven) maintenance audit, not the mechanical
+		// `tags` check (which only validates structure and counts).
 		"legacy/plural.md": "---\ntitle: Legacy Plural\ntags:\n  - clippings\ndate: 2026-05-10\n---\n\nNo raw link, but plural tag — skipped.\n",
 	}
 
