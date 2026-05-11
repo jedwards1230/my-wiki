@@ -377,6 +377,39 @@ func TestLintService_Stub_ConfigOverride(t *testing.T) {
 	}
 }
 
+// TestLintService_Stub_ConfigParseError surfaces a malformed
+// meta/lint-config.yaml as an ERROR-level issue under the "stub"
+// check rather than silently honoring defaults (mirrors the same
+// behavior in checkClippings).
+func TestLintService_Stub_ConfigParseError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "meta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bad := "stub:\n  min_idle_seconds: \"unterminated\n"
+	if err := os.WriteFile(filepath.Join(dir, "meta", "lint-config.yaml"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+	report, err := svc.Run("stub")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sawConfigError := false
+	for _, issue := range report.Issues {
+		if issue.Check == "stub" && issue.Level == "ERROR" && strings.Contains(issue.Message, "lint-config.yaml") {
+			sawConfigError = true
+			break
+		}
+	}
+	if !sawConfigError {
+		t.Errorf("expected an ERROR-level stub issue mentioning lint-config.yaml; got %+v", report.Issues)
+	}
+}
+
 func TestLintService_All(t *testing.T) {
 	v := setupLintVault(t)
 	svc := NewLintService(v, nil)

@@ -537,6 +537,17 @@ func (s *LintService) checkClippings(report *LintReport) {
 // Action is delegated to the maintenance audit agent (LLM judgment in
 // the loop) — this check only emits WARNs.
 func (s *LintService) checkStub(report *LintReport) {
+	// Surface a config parse error up-front: if the file exists but
+	// failed to load, the check is running on default cooldown and the
+	// user almost certainly wants to know — silently honoring defaults
+	// would make a misconfigured min_idle_seconds invisible.
+	if s.configErr != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "stub", Level: "ERROR",
+			Message: fmt.Sprintf("using default config: %v", s.configErr),
+		})
+	}
+
 	pages, err := s.vault.FindWikiPages()
 	if err != nil {
 		report.Issues = append(report.Issues, LintIssue{
