@@ -123,3 +123,4 @@ Located at `deploy/helm/my-wiki/`. Published to `oci://ghcr.io/jedwards1230/char
 - `.obsidian/` — Obsidian config, excluded from page listing
 - Pages have YAML frontmatter with `title`, `tags`, `date` fields
 - Wikilinks (`[[target]]`) are parsed for link checking
+- `meta/lint-config.yaml` (optional) — overrides schema-coupled lint values (clipping tag name, raw-path prefix). Missing or partial → defaults from `service.DefaultLintConfig()`. Malformed → surfaced as an ERROR under the `clippings` check.

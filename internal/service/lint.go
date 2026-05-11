@@ -11,18 +11,30 @@ import (
 
 // LintService provides vault lint operations.
 type LintService struct {
-	vault  *vault.Vault
-	logSvc *LogService
-	tagSvc *TagService
+	vault     *vault.Vault
+	logSvc    *LogService
+	tagSvc    *TagService
+	config    LintConfig
+	configErr error // non-nil when meta/lint-config.yaml exists but failed to parse
 }
 
-// NewLintService creates a LintService for the given vault.
+// NewLintService creates a LintService for the given vault. It eagerly
+// loads meta/lint-config.yaml (best-effort): a missing file is fine and
+// uses defaults; a malformed file is kept as configErr and surfaced as a
+// lint issue under the "config" check rather than failing construction.
 func NewLintService(v *vault.Vault, logSvc *LogService) *LintService {
-	return &LintService{vault: v, logSvc: logSvc, tagSvc: NewTagService(v)}
+	cfg, err := LoadLintConfig(v.Dir)
+	return &LintService{
+		vault:     v,
+		logSvc:    logSvc,
+		tagSvc:    NewTagService(v),
+		config:    cfg,
+		configErr: err,
+	}
 }
 
 // Run executes the specified lint check and returns a report.
-// Valid checks: "all", "frontmatter", "tags", "links", "orphans", "size", "log".
+// Valid checks: "all", "frontmatter", "tags", "links", "orphans", "size", "clippings", "log".
 func (s *LintService) Run(check string) (*LintReport, error) {
 	report := &LintReport{}
 
@@ -33,6 +45,7 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 		s.checkLinks(report)
 		s.checkOrphans(report)
 		s.checkSize(report)
+		s.checkClippings(report)
 		s.checkLog(report)
 	case "frontmatter":
 		s.checkFrontmatter(report)
@@ -44,10 +57,12 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 		s.checkOrphans(report)
 	case "size":
 		s.checkSize(report)
+	case "clippings":
+		s.checkClippings(report)
 	case "log":
 		s.checkLog(report)
 	default:
-		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, tags, links, orphans, size, or log", check)
+		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, tags, links, orphans, size, clippings, or log", check)
 	}
 
 	report.Total = len(report.Issues)
@@ -406,6 +421,98 @@ func (s *LintService) lintPageLinks(relPath string) []LintIssue {
 	return issues
 }
 
+// stripFrontmatter returns the body of a markdown document with any leading
+// `---\n…\n---` YAML frontmatter block removed. Returns the original string
+// unchanged when no frontmatter is present or the block is unterminated.
+//
+// Handles the empty-frontmatter edge case (`---\n---\nBody`) where the
+// closing marker sits directly after the opener with no inner content —
+// the substring `\n---` doesn't appear in `content[4:]` for that input,
+// so we have to check for a `---` prefix on the remainder before falling
+// back to the substring scan.
+func stripFrontmatter(content string) string {
+	if !strings.HasPrefix(content, "---\n") {
+		return content
+	}
+	rest := content[4:]
+	if strings.HasPrefix(rest, "---") {
+		// Empty frontmatter: skip the closing marker and the line break after it.
+		return strings.TrimPrefix(strings.TrimPrefix(rest, "---"), "\n")
+	}
+	if idx := strings.Index(rest, "\n---"); idx >= 0 {
+		return strings.TrimPrefix(rest[idx+4:], "\n")
+	}
+	return content
+}
+
+// checkClippings enforces the [[meta/schema#Clippings pattern]] rule: every
+// page tagged with the configured clipping tag must have at least one
+// navigable link to its verbatim raw file in the body — either a markdown
+// link to a path under the configured raw-path prefix or a wikilink to
+// one. The frontmatter `raw:` field is not enough on its own: it isn't
+// rendered as a link in Quartz, and stripping frontmatter before scanning
+// means the body must carry the connection independently.
+//
+// Both the tag name and the raw-path prefix are read from
+// meta/lint-config.yaml so this check stays in sync with the schema
+// without a code change. See [[LintConfig]].
+func (s *LintService) checkClippings(report *LintReport) {
+	// Surface a config parse error up-front: if the file exists but
+	// failed to load, the check is effectively running on defaults and
+	// the user almost certainly wants to know.
+	if s.configErr != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "clippings", Level: "ERROR",
+			Message: fmt.Sprintf("using default config: %v", s.configErr),
+		})
+	}
+
+	clippingTag := s.config.Clippings.Tag
+	rawPrefix := s.config.Clippings.RawPathPrefix
+
+	pages, err := s.vault.FindWikiPages()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "clippings", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+
+	for _, page := range pages {
+		fm, err := vault.ParseFrontmatter(page)
+		if err != nil || fm == nil {
+			continue
+		}
+
+		hasClippingTag := false
+		for _, t := range strings.Split(fm["tags"], ",") {
+			if strings.TrimSpace(t) == clippingTag {
+				hasClippingTag = true
+				break
+			}
+		}
+		if !hasClippingTag {
+			continue
+		}
+
+		data, err := os.ReadFile(page)
+		if err != nil {
+			continue
+		}
+		body := stripFrontmatter(string(data))
+
+		// Permissive substring match — accepts markdown URLs, root-relative
+		// paths, and wikilinks all targeting the raw-path prefix.
+		if !strings.Contains(body, rawPrefix) {
+			rel, _ := filepath.Rel(s.vault.Dir, page)
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "clippings", Level: "WARN",
+				Message: fmt.Sprintf("page tagged %q has no link into %q in body — add a '## Sources' section", clippingTag, rawPrefix),
+			})
+		}
+	}
+}
+
 // maxPageWords is the word-count threshold above which a page gets a size warning.
 const maxPageWords = 1000
 
@@ -427,13 +534,7 @@ func (s *LintService) checkSize(report *LintReport) {
 		}
 		content := string(data)
 
-		// Strip frontmatter before counting words.
-		if strings.HasPrefix(content, "---\n") {
-			if idx := strings.Index(content[4:], "\n---"); idx >= 0 {
-				content = content[4+idx+4:]
-			}
-		}
-
+		content = stripFrontmatter(content)
 		words := len(strings.Fields(content))
 		if words > maxPageWords {
 			report.Issues = append(report.Issues, LintIssue{

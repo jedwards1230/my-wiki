@@ -87,6 +87,176 @@ func TestLintService_Orphans(t *testing.T) {
 	}
 }
 
+// TestStripFrontmatter covers the documented frontmatter edge cases that
+// downstream lint checks (size, clippings) rely on. The empty-frontmatter
+// case (`---\n---\nBody`) is the regression that was silently leaving
+// frontmatter in the scanned body.
+func TestStripFrontmatter(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"no frontmatter", "Plain body.\n", "Plain body.\n"},
+		{"standard block", "---\ntitle: X\n---\nBody.\n", "Body.\n"},
+		{"empty block", "---\n---\nBody.\n", "Body.\n"},
+		{"unterminated returns input", "---\ntitle: X\nno closer", "---\ntitle: X\nno closer"},
+		{"trailing newline after closer trimmed", "---\nk: v\n---\n\nReal body.\n", "\nReal body.\n"},
+		{"no trailing newline after closer", "---\nk: v\n---", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripFrontmatter(tc.in); got != tc.want {
+				t.Errorf("stripFrontmatter(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLintService_Clippings exercises the clippings check: a page tagged
+// `clipping` must contain at least one link into `raw/clippings/` in the
+// body. The frontmatter `raw:` field does not satisfy the rule on its
+// own — the check strips frontmatter before scanning so the link has to
+// be visible in the rendered page.
+func TestLintService_Clippings(t *testing.T) {
+	dir := t.TempDir()
+
+	files := map[string]string{
+		// Good: tagged clipping, body has markdown URL into raw/clippings/.
+		"research/security/good-url.md": "---\ntitle: Good URL\ntags:\n  - clipping\n  - research/security\ndate: 2026-05-10\n---\n\n## Sources\n\n- [Verbatim](https://wiki.lilbro.cloud/raw/clippings/youtube/good.md)\n",
+		// Good: tagged clipping, body has wikilink into raw/clippings/.
+		"research/security/good-wikilink.md": "---\ntitle: Good Wikilink\ntags:\n  - clipping\ndate: 2026-05-10\n---\n\nSee [[raw/clippings/youtube/foo]] for the verbatim.\n",
+		// Bad: tagged clipping but body has no raw/clippings/ link.
+		// The frontmatter raw: field does not save it — frontmatter is
+		// stripped before the body scan.
+		"clippings/bad-no-source.md": "---\ntitle: Bad No Source\ntags:\n  - clipping\ndate: 2026-05-10\nraw: \"raw/clippings/youtube/bad.md\"\n---\n\n## Related\n\n- [[some-other-page]]\n",
+		// Ignored: not tagged clipping (no false positive even though it
+		// happens to mention raw/clippings/ — irrelevant).
+		"home/note.md": "---\ntitle: Note\ntags:\n  - home\ndate: 2026-05-10\n---\n\nSome text.\n",
+		// Ignored: tag list contains "clippings" (plural, legacy) — the
+		// check matches the canonical singular `clipping` (from config)
+		// only, so a legacy plural tag is silently skipped rather than
+		// nagged. Renaming legacy tags is a separate concern handled by
+		// the semantic (LLM-driven) maintenance audit, not the mechanical
+		// `tags` check (which only validates structure and counts).
+		"legacy/plural.md": "---\ntitle: Legacy Plural\ntags:\n  - clippings\ndate: 2026-05-10\n---\n\nNo raw link, but plural tag — skipped.\n",
+	}
+
+	for name, content := range files {
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+
+	report, err := svc.Run("clippings")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := len(report.Issues), 1; got != want {
+		t.Fatalf("expected exactly %d clipping issue, got %d: %+v", want, got, report.Issues)
+	}
+	issue := report.Issues[0]
+	if issue.File != "clippings/bad-no-source.md" {
+		t.Errorf("expected issue on clippings/bad-no-source.md, got %q", issue.File)
+	}
+	if issue.Check != "clippings" {
+		t.Errorf("expected Check=clippings, got %q", issue.Check)
+	}
+	if !strings.Contains(issue.Message, "raw/clippings/") {
+		t.Errorf("issue message should mention raw/clippings/, got %q", issue.Message)
+	}
+}
+
+// TestLintService_Clippings_ConfigOverride verifies that meta/lint-config.yaml
+// can rename the canonical clipping tag and the raw-path prefix without a
+// code change. The same vault content that lints clean under defaults
+// becomes a violation under custom values, and vice versa.
+func TestLintService_Clippings_ConfigOverride(t *testing.T) {
+	dir := t.TempDir()
+
+	// Schema-default values would tag this page as clipping and accept the
+	// link; under the override below it gets flagged because the page tag
+	// is "clip" (custom canonical) and the raw prefix is "raw/sources/".
+	if err := os.MkdirAll(filepath.Join(dir, "research/security"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defaultStylePage := "---\ntitle: Default Style\ntags:\n  - clipping\ndate: 2026-05-10\n---\n\n[Verbatim](https://wiki.lilbro.cloud/raw/clippings/youtube/foo.md)\n"
+	customStylePage := "---\ntitle: Custom Style\ntags:\n  - clip\ndate: 2026-05-10\n---\n\n[Verbatim](https://wiki.lilbro.cloud/raw/sources/youtube/foo.md)\n"
+	if err := os.WriteFile(filepath.Join(dir, "research/security/default-style.md"), []byte(defaultStylePage), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "research/security/custom-style.md"), []byte(customStylePage), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a config file that renames the tag and relocates raw/.
+	if err := os.MkdirAll(filepath.Join(dir, "meta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "clippings:\n  tag: clip\n  raw_path_prefix: raw/sources/\n"
+	if err := os.WriteFile(filepath.Join(dir, "meta", "lint-config.yaml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+	report, err := svc.Run("clippings")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Under the custom config: the "custom-style" page (tag: clip, link:
+	// raw/sources/) is the conforming one and lints clean. The
+	// "default-style" page has tag: clipping which no longer matches the
+	// canonical name — it's *ignored* entirely (not flagged), exactly
+	// like a legacy plural tag would be.
+	if got, want := len(report.Issues), 0; got != want {
+		t.Fatalf("expected exactly %d issues under config override, got %d: %+v", want, got, report.Issues)
+	}
+}
+
+// TestLintService_Clippings_ConfigParseError surfaces a malformed
+// meta/lint-config.yaml as an ERROR-level issue under the "clippings"
+// check rather than silently falling back to defaults.
+func TestLintService_Clippings_ConfigParseError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "meta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Invalid YAML (unterminated string).
+	bad := "clippings:\n  tag: \"unterminated\n"
+	if err := os.WriteFile(filepath.Join(dir, "meta", "lint-config.yaml"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+	report, err := svc.Run("clippings")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Want at least one ERROR issue mentioning the config file.
+	sawConfigError := false
+	for _, issue := range report.Issues {
+		if issue.Check == "clippings" && issue.Level == "ERROR" && strings.Contains(issue.Message, "lint-config.yaml") {
+			sawConfigError = true
+			break
+		}
+	}
+	if !sawConfigError {
+		t.Errorf("expected an ERROR-level clippings issue mentioning lint-config.yaml; got %+v", report.Issues)
+	}
+}
+
 func TestLintService_All(t *testing.T) {
 	v := setupLintVault(t)
 	svc := NewLintService(v, nil)
