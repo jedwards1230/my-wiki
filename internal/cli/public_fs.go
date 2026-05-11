@@ -49,7 +49,7 @@ func initMemfsMetrics() {
 // buildPublicFS returns an fs.FS for the rendered public directory
 // together with an optional cleanup function.
 //
-// When WIKI_IN_MEMORY_HTML is truthy (1/true/yes — case-insensitive)
+// When EnvInMemoryHTML is truthy (1/true/yes — case-insensitive)
 // the returned fs.FS is an atomically-swappable in-memory copy kept in
 // sync with publicDir via fsnotify. Writes to publicDir (typically
 // Quartz rebuilds) produce a full reload into a fresh snapshot that is
@@ -61,7 +61,7 @@ func initMemfsMetrics() {
 // path if the in-memory mode ever misbehaves in production — operators
 // can flip it off without redeploying by restarting with the env unset.
 func buildPublicFS(publicDir string, logger *slog.Logger) (fs.FS, func() error, error) {
-	if !envBool("WIKI_IN_MEMORY_HTML") {
+	if !envBool(EnvInMemoryHTML) {
 		return os.DirFS(publicDir), nil, nil
 	}
 

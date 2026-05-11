@@ -27,7 +27,7 @@ type dispatchPipeline struct {
 }
 
 // buildDispatchPipeline constructs the webhook dispatcher from the
-// WIKI_WEBHOOKS_CONFIG env var. Semantics:
+// EnvWebhooksConfig env var. Semantics:
 //   - empty env var → return (nil, nil); feature disabled, caller skips.
 //   - config path set but file missing or invalid → return an error; startup fails.
 //   - valid config → return a ready pipeline; caller wires sink and closer.
@@ -35,7 +35,7 @@ type dispatchPipeline struct {
 // registerer is used for Prometheus metric registration; pass nil to use the
 // default registry.
 func buildDispatchPipeline(vaultDir string, logger *slog.Logger, registerer prometheus.Registerer) (*dispatchPipeline, error) {
-	path := strings.TrimSpace(os.Getenv("WIKI_WEBHOOKS_CONFIG"))
+	path := strings.TrimSpace(os.Getenv(EnvWebhooksConfig))
 	if path == "" {
 		return nil, nil
 	}
@@ -43,7 +43,7 @@ func buildDispatchPipeline(vaultDir string, logger *slog.Logger, registerer prom
 	// path explicitly set to a nonexistent file is a misconfiguration —
 	// surface it rather than silently ignoring.
 	if _, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("WIKI_WEBHOOKS_CONFIG %q: %w", path, err)
+		return nil, fmt.Errorf("%s %q: %w", EnvWebhooksConfig, path, err)
 	}
 	cfg, err := dispatch.LoadConfig(path)
 	if err != nil {
@@ -52,7 +52,7 @@ func buildDispatchPipeline(vaultDir string, logger *slog.Logger, registerer prom
 	if cfg == nil {
 		// LoadConfig returned nil for an existing file — should not happen
 		// after the Stat check above, but guard anyway.
-		return nil, fmt.Errorf("WIKI_WEBHOOKS_CONFIG %q: unreadable", path)
+		return nil, fmt.Errorf("%s %q: unreadable", EnvWebhooksConfig, path)
 	}
 
 	httpDispatcher, err := dispatch.NewHTTPDispatcher(cfg, logger, registerer)
