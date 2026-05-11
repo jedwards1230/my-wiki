@@ -93,9 +93,19 @@ func (vw *VaultWatcher) Run() {
 					// still sees them. Triggered when Obsidian Sync (or any
 					// atomic mv of a populated tree) creates a directory and
 					// its contents in a single operation.
-					if err := vw.emitInitialContents(event.Name); err != nil {
-						vw.logger.Warn("failed to scan new directory for existing files", "path", event.Name, "error", err)
-					}
+					//
+					// Offloaded to a goroutine: WalkDir on the event loop
+					// would block reads from watcher.Events long enough to
+					// overflow fsnotify's internal channel under a large
+					// atomic mv. The Sink contract permits concurrent
+					// MarkDirty calls, so the scan is independent of the
+					// event loop. Duplicates with naturally-fired events
+					// collapse in the downstream debouncer.
+					go func(dir string) {
+						if err := vw.emitInitialContents(dir); err != nil {
+							vw.logger.Warn("failed to scan new directory for existing files", "path", dir, "error", err)
+						}
+					}(event.Name)
 					continue
 				}
 			}
