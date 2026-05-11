@@ -147,6 +147,88 @@ func TestLintService_Clippings(t *testing.T) {
 	}
 }
 
+// TestLintService_Clippings_ConfigOverride verifies that meta/lint-config.yaml
+// can rename the canonical clipping tag and the raw-path prefix without a
+// code change. The same vault content that lints clean under defaults
+// becomes a violation under custom values, and vice versa.
+func TestLintService_Clippings_ConfigOverride(t *testing.T) {
+	dir := t.TempDir()
+
+	// Schema-default values would tag this page as clipping and accept the
+	// link; under the override below it gets flagged because the page tag
+	// is "clip" (custom canonical) and the raw prefix is "raw/sources/".
+	if err := os.MkdirAll(filepath.Join(dir, "research/security"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defaultStylePage := "---\ntitle: Default Style\ntags:\n  - clipping\ndate: 2026-05-10\n---\n\n[Verbatim](https://wiki.lilbro.cloud/raw/clippings/youtube/foo.md)\n"
+	customStylePage := "---\ntitle: Custom Style\ntags:\n  - clip\ndate: 2026-05-10\n---\n\n[Verbatim](https://wiki.lilbro.cloud/raw/sources/youtube/foo.md)\n"
+	if err := os.WriteFile(filepath.Join(dir, "research/security/default-style.md"), []byte(defaultStylePage), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "research/security/custom-style.md"), []byte(customStylePage), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a config file that renames the tag and relocates raw/.
+	if err := os.MkdirAll(filepath.Join(dir, "meta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "clippings:\n  tag: clip\n  raw_path_prefix: raw/sources/\n"
+	if err := os.WriteFile(filepath.Join(dir, "meta", "lint-config.yaml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+	report, err := svc.Run("clippings")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Under the custom config: the "custom-style" page (tag: clip, link:
+	// raw/sources/) is the conforming one and lints clean. The
+	// "default-style" page has tag: clipping which no longer matches the
+	// canonical name — it's *ignored* entirely (not flagged), exactly
+	// like a legacy plural tag would be.
+	if got, want := len(report.Issues), 0; got != want {
+		t.Fatalf("expected exactly %d issues under config override, got %d: %+v", want, got, report.Issues)
+	}
+}
+
+// TestLintService_Clippings_ConfigParseError surfaces a malformed
+// meta/lint-config.yaml as an ERROR-level issue under the "clippings"
+// check rather than silently falling back to defaults.
+func TestLintService_Clippings_ConfigParseError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "meta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Invalid YAML (unterminated string).
+	bad := "clippings:\n  tag: \"unterminated\n"
+	if err := os.WriteFile(filepath.Join(dir, "meta", "lint-config.yaml"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+	report, err := svc.Run("clippings")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Want at least one ERROR issue mentioning the config file.
+	sawConfigError := false
+	for _, issue := range report.Issues {
+		if issue.Check == "clippings" && issue.Level == "ERROR" && strings.Contains(issue.Message, "lint-config.yaml") {
+			sawConfigError = true
+			break
+		}
+	}
+	if !sawConfigError {
+		t.Errorf("expected an ERROR-level clippings issue mentioning lint-config.yaml; got %+v", report.Issues)
+	}
+}
+
 func TestLintService_All(t *testing.T) {
 	v := setupLintVault(t)
 	svc := NewLintService(v, nil)

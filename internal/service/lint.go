@@ -11,14 +11,26 @@ import (
 
 // LintService provides vault lint operations.
 type LintService struct {
-	vault  *vault.Vault
-	logSvc *LogService
-	tagSvc *TagService
+	vault     *vault.Vault
+	logSvc    *LogService
+	tagSvc    *TagService
+	config    LintConfig
+	configErr error // non-nil when meta/lint-config.yaml exists but failed to parse
 }
 
-// NewLintService creates a LintService for the given vault.
+// NewLintService creates a LintService for the given vault. It eagerly
+// loads meta/lint-config.yaml (best-effort): a missing file is fine and
+// uses defaults; a malformed file is kept as configErr and surfaced as a
+// lint issue under the "config" check rather than failing construction.
 func NewLintService(v *vault.Vault, logSvc *LogService) *LintService {
-	return &LintService{vault: v, logSvc: logSvc, tagSvc: NewTagService(v)}
+	cfg, err := LoadLintConfig(v.Dir)
+	return &LintService{
+		vault:     v,
+		logSvc:    logSvc,
+		tagSvc:    NewTagService(v),
+		config:    cfg,
+		configErr: err,
+	}
 }
 
 // Run executes the specified lint check and returns a report.
@@ -423,13 +435,30 @@ func stripFrontmatter(content string) string {
 }
 
 // checkClippings enforces the [[meta/schema#Clippings pattern]] rule: every
-// page tagged `clipping` must have at least one navigable link to its
-// verbatim raw file in the body — either a markdown link to a path under
-// `raw/clippings/` or a wikilink to one. The frontmatter `raw:` field is
-// not enough on its own: it isn't rendered as a link in Quartz, and
-// stripping frontmatter before scanning means the body must carry the
-// connection independently.
+// page tagged with the configured clipping tag must have at least one
+// navigable link to its verbatim raw file in the body — either a markdown
+// link to a path under the configured raw-path prefix or a wikilink to
+// one. The frontmatter `raw:` field is not enough on its own: it isn't
+// rendered as a link in Quartz, and stripping frontmatter before scanning
+// means the body must carry the connection independently.
+//
+// Both the tag name and the raw-path prefix are read from
+// meta/lint-config.yaml so this check stays in sync with the schema
+// without a code change. See [[LintConfig]].
 func (s *LintService) checkClippings(report *LintReport) {
+	// Surface a config parse error up-front: if the file exists but
+	// failed to load, the check is effectively running on defaults and
+	// the user almost certainly wants to know.
+	if s.configErr != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "clippings", Level: "ERROR",
+			Message: fmt.Sprintf("using default config: %v", s.configErr),
+		})
+	}
+
+	clippingTag := s.config.Clippings.Tag
+	rawPrefix := s.config.Clippings.RawPathPrefix
+
 	pages, err := s.vault.FindWikiPages()
 	if err != nil {
 		report.Issues = append(report.Issues, LintIssue{
@@ -446,7 +475,7 @@ func (s *LintService) checkClippings(report *LintReport) {
 
 		hasClippingTag := false
 		for _, t := range strings.Split(fm["tags"], ",") {
-			if strings.TrimSpace(t) == "clipping" {
+			if strings.TrimSpace(t) == clippingTag {
 				hasClippingTag = true
 				break
 			}
@@ -461,14 +490,13 @@ func (s *LintService) checkClippings(report *LintReport) {
 		}
 		body := stripFrontmatter(string(data))
 
-		// Permissive substring match — accepts markdown URLs to
-		// `https://wiki.lilbro.cloud/raw/clippings/...`, root-relative
-		// `/raw/clippings/...`, and wikilinks `[[raw/clippings/...]]`.
-		if !strings.Contains(body, "raw/clippings/") {
+		// Permissive substring match — accepts markdown URLs, root-relative
+		// paths, and wikilinks all targeting the raw-path prefix.
+		if !strings.Contains(body, rawPrefix) {
 			rel, _ := filepath.Rel(s.vault.Dir, page)
 			report.Issues = append(report.Issues, LintIssue{
 				File: rel, Check: "clippings", Level: "WARN",
-				Message: "page tagged 'clipping' has no link into raw/clippings/ in body — add a '## Sources' section",
+				Message: fmt.Sprintf("page tagged %q has no link into %q in body — add a '## Sources' section", clippingTag, rawPrefix),
 			})
 		}
 	}
