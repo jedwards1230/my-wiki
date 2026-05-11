@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jedwards1230/my-wiki/internal/vault"
 )
@@ -254,6 +255,125 @@ func TestLintService_Clippings_ConfigParseError(t *testing.T) {
 	}
 	if !sawConfigError {
 		t.Errorf("expected an ERROR-level clippings issue mentioning lint-config.yaml; got %+v", report.Issues)
+	}
+}
+
+// TestLintService_Stub exercises the stub check that surfaces stray
+// Obsidian-created placeholders at the vault root. Covers the empty +
+// idle case (flagged), the cooldown skip (fresh mtime), the
+// content-present skip, the index.md exclusion, and the subdir
+// exclusion (only vault-root files count).
+func TestLintService_Stub(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(dir, "home"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	old := now.Add(-2 * time.Hour) // older than the 1h default cooldown
+	fresh := now.Add(-5 * time.Minute)
+
+	type entry struct {
+		path    string
+		body    string
+		modTime time.Time
+	}
+	entries := []entry{
+		// Flagged: empty vault-root file, mtime well past the cooldown.
+		{"Stub.md", "", old},
+		// Flagged: frontmatter present but body empty.
+		{"OnlyFrontmatter.md", "---\ntitle: Only Frontmatter\n---\n\n", old},
+		// Skipped: fresh mtime — user might still be filling it in.
+		{"Fresh.md", "", fresh},
+		// Skipped: has actual content.
+		{"WithContent.md", "---\ntitle: Real\n---\n\nSome body text.\n", old},
+		// Skipped: index.md is the auto-generated homepage.
+		{"index.md", "", old},
+		// Skipped: lives in a subdirectory, not at vault root.
+		{"home/empty-subdir-page.md", "", old},
+	}
+
+	for _, e := range entries {
+		full := filepath.Join(dir, e.path)
+		if err := os.WriteFile(full, []byte(e.body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(full, e.modTime, e.modTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+
+	report, err := svc.Run("stub")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]bool{}
+	for _, issue := range report.Issues {
+		if issue.Check == "stub" && issue.Level == "WARN" {
+			got[issue.File] = true
+		}
+	}
+	want := map[string]bool{
+		"Stub.md":            true,
+		"OnlyFrontmatter.md": true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d stub WARNs, got %d: %+v", len(want), len(got), report.Issues)
+	}
+	for path := range want {
+		if !got[path] {
+			t.Errorf("expected stub WARN on %q; got %+v", path, report.Issues)
+		}
+	}
+}
+
+// TestLintService_Stub_ConfigOverride verifies the mtime cooldown can
+// be tightened via meta/lint-config.yaml so the test can prove the
+// override path works without sleeping.
+func TestLintService_Stub_ConfigOverride(t *testing.T) {
+	dir := t.TempDir()
+
+	// File modified 30s ago — would normally be skipped (under the
+	// default 1h cooldown).
+	mt := time.Now().Add(-30 * time.Second)
+	full := filepath.Join(dir, "Recent.md")
+	if err := os.WriteFile(full, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(full, mt, mt); err != nil {
+		t.Fatal(err)
+	}
+
+	// Override cooldown to 10s — now the file is past the threshold.
+	if err := os.MkdirAll(filepath.Join(dir, "meta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "stub:\n  min_idle_seconds: 10\n"
+	if err := os.WriteFile(filepath.Join(dir, "meta", "lint-config.yaml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+	report, err := svc.Run("stub")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	saw := false
+	for _, issue := range report.Issues {
+		if issue.File == "Recent.md" && issue.Check == "stub" && issue.Level == "WARN" {
+			saw = true
+			break
+		}
+	}
+	if !saw {
+		t.Errorf("expected Recent.md to be flagged under tightened cooldown; got %+v", report.Issues)
 	}
 }
 

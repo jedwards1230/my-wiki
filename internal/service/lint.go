@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jedwards1230/my-wiki/internal/vault"
 )
@@ -34,7 +35,7 @@ func NewLintService(v *vault.Vault, logSvc *LogService) *LintService {
 }
 
 // Run executes the specified lint check and returns a report.
-// Valid checks: "all", "frontmatter", "tags", "links", "orphans", "size", "clippings", "log".
+// Valid checks: "all", "frontmatter", "tags", "links", "orphans", "size", "clippings", "stub", "log".
 func (s *LintService) Run(check string) (*LintReport, error) {
 	report := &LintReport{}
 
@@ -46,6 +47,7 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 		s.checkOrphans(report)
 		s.checkSize(report)
 		s.checkClippings(report)
+		s.checkStub(report)
 		s.checkLog(report)
 	case "frontmatter":
 		s.checkFrontmatter(report)
@@ -59,10 +61,12 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 		s.checkSize(report)
 	case "clippings":
 		s.checkClippings(report)
+	case "stub":
+		s.checkStub(report)
 	case "log":
 		s.checkLog(report)
 	default:
-		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, tags, links, orphans, size, clippings, or log", check)
+		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, tags, links, orphans, size, clippings, stub, or log", check)
 	}
 
 	report.Total = len(report.Issues)
@@ -510,6 +514,75 @@ func (s *LintService) checkClippings(report *LintReport) {
 				Message: fmt.Sprintf("page tagged %q has no link into %q in body — add a '## Sources' section", clippingTag, rawPrefix),
 			})
 		}
+	}
+}
+
+// checkStub surfaces stray vault-root markdown files that look like
+// Obsidian-created placeholders. When the user clicks a wikilink to a
+// page that doesn't exist (e.g. `[[Anthropic]]` inside a clipping
+// descriptor), Obsidian writes an empty `.md` at the vault root with
+// that name. These pile up over time and clutter the navigation.
+//
+// Detection (all must hold):
+//   - file lives at vault root (no directory separator in relative path)
+//   - filename is not "index.md" (auto-generated homepage)
+//   - body is empty after stripping frontmatter and trimming whitespace
+//   - mtime is older than `now - Stub.MinIdleSeconds`
+//
+// The mtime cooldown is the load-bearing safety: if you're actively
+// filling in a stub, every keystroke bumps mtime, so the check ignores
+// the file until you've been quiet for at least the configured window.
+// Default 1 hour, override via meta/lint-config.yaml.
+//
+// Action is delegated to the maintenance audit agent (LLM judgment in
+// the loop) — this check only emits WARNs.
+func (s *LintService) checkStub(report *LintReport) {
+	pages, err := s.vault.FindWikiPages()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "stub", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+
+	idle := time.Duration(s.config.Stub.MinIdleSeconds) * time.Second
+	cutoff := time.Now().Add(-idle)
+
+	for _, page := range pages {
+		rel, _ := filepath.Rel(s.vault.Dir, page)
+		rel = filepath.ToSlash(rel)
+
+		// Vault root only.
+		if strings.ContainsRune(rel, '/') {
+			continue
+		}
+		// Skip the auto-generated homepage.
+		if rel == "index.md" {
+			continue
+		}
+
+		info, err := os.Stat(page)
+		if err != nil {
+			continue
+		}
+		// Active-editing cooldown.
+		if info.ModTime().After(cutoff) {
+			continue
+		}
+
+		data, err := os.ReadFile(page)
+		if err != nil {
+			continue
+		}
+		body := strings.TrimSpace(stripFrontmatter(string(data)))
+		if body != "" {
+			continue
+		}
+
+		report.Issues = append(report.Issues, LintIssue{
+			File: rel, Check: "stub", Level: "WARN",
+			Message: fmt.Sprintf("vault-root file is empty and idle ≥ %ds — looks like an Obsidian stub from a clicked broken wikilink", s.config.Stub.MinIdleSeconds),
+		})
 	}
 }
 
