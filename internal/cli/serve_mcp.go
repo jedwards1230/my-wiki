@@ -51,9 +51,9 @@ func newServeMCPHTTPCmd() *cobra.Command {
 
 // runServeMCPHTTP is a thin shim that pre-sets the config for the long-lived
 // streamable-http transport: all features on except the TF-IDF search index
-// (which the standalone runner has historically omitted — substring search
-// only). The HTTP API runs separately under `serve http`, so the only search
-// backend exposed here is whatever this runner wires.
+// (which the standalone runner omits — substring search only, matching the
+// stdio runner). The HTTP API runs separately under `serve http`, so the only
+// search backend exposed here is whatever this runner wires.
 func runServeMCPHTTP(cmd *cobra.Command, _ []string) error {
 	port, _ := cmd.Flags().GetString("port")
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
@@ -72,8 +72,8 @@ func runServeMCPHTTP(cmd *cobra.Command, _ []string) error {
 		EnableWatcher:     watchEnabled,
 		EnableDispatch:    true,
 		EnableAuth:        true,
-		EnableSearch:      false, // historical: standalone HTTP passes nil search
-		EnableSearchIndex: false,
+		EnableSearch:      true,  // substring backend only (parity with stdio)
+		EnableSearchIndex: false, // no TF-IDF (embedded MCP path keeps that)
 		InstanceName:      instanceName,
 	}, logger)
 }
