@@ -136,6 +136,76 @@ func TestWatcherExcludesDirectories(t *testing.T) {
 	}
 }
 
+// TestWatcherDetectsFilesInAtomicallyMovedDirectory reproduces the inotify
+// subdirectory race: when a populated directory tree is moved into the vault
+// in a single operation (the pattern Obsidian Sync uses), fsnotify can
+// deliver the inner file events before our watch is attached. The watcher
+// must scan newly-watched directories after Add() to recover those events.
+func TestWatcherDetectsFilesInAtomicallyMovedDirectory(t *testing.T) {
+	dir := t.TempDir()
+	staging := t.TempDir()
+
+	// Build a populated subdirectory OUTSIDE the watched vault.
+	stagedSub := filepath.Join(staging, "clippings")
+	if err := os.MkdirAll(stagedSub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagedSub, "first.md"), []byte("# first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagedSub, "second.md"), []byte("# second"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var flushed []string
+
+	notifier := New(50*time.Millisecond, func(paths []string) {
+		mu.Lock()
+		flushed = append(flushed, paths...)
+		mu.Unlock()
+	})
+	defer notifier.Close()
+
+	vw, err := NewVaultWatcher(dir, notifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = vw.Close() }()
+	go vw.Run()
+	time.Sleep(50 * time.Millisecond)
+
+	// Atomically move the populated tree into the watched vault. The kernel
+	// emits the Create event for the directory and the file inodes inside
+	// it nearly simultaneously, so the inner-file events race with our
+	// watcher.Add() call. Without the synthetic-event scan, these would be
+	// silently lost (the bug observed when Obsidian Sync first created
+	// inbox/clippings/).
+	finalSub := filepath.Join(dir, "clippings")
+	if err := os.Rename(stagedSub, finalSub); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(400 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := map[string]bool{
+		filepath.Join(finalSub, "first.md"):  false,
+		filepath.Join(finalSub, "second.md"): false,
+	}
+	for _, p := range flushed {
+		if _, ok := want[p]; ok {
+			want[p] = true
+		}
+	}
+	for p, seen := range want {
+		if !seen {
+			t.Fatalf("missing synthetic create for %s; flushed=%v", p, flushed)
+		}
+	}
+}
+
 func TestWatcherDetectsNewSubdirectoryFiles(t *testing.T) {
 	dir := t.TempDir()
 
