@@ -43,8 +43,8 @@ func newServeMCPHTTPCmd() *cobra.Command {
 		RunE:  runServeMCPHTTP,
 	}
 
-	cmd.Flags().String("port", envOr("WIKI_MCP_PORT", "8081"), "MCP server port (env: WIKI_MCP_PORT)")
-	cmd.Flags().Bool("watch", envOrBool("WIKI_WATCH", true), "watch vault directory for filesystem changes (env: WIKI_WATCH)")
+	cmd.Flags().String("port", envOr(EnvMCPPort, "8081"), "MCP server port (env: "+EnvMCPPort+")")
+	cmd.Flags().Bool("watch", envOrBool(EnvWatch, true), "watch vault directory for filesystem changes (env: "+EnvWatch+")")
 
 	return cmd
 }

@@ -203,7 +203,7 @@ func runLaunchdStatus(cmd *cobra.Command, _ []string) error {
 func buildPlistConfig(cmd *cobra.Command) (plistConfig, error) {
 	vaultDir, _ := cmd.Flags().GetString("vault")
 	if vaultDir == "" {
-		return plistConfig{}, fmt.Errorf("--vault is required (or set WIKI_VAULT_DIR)")
+		return plistConfig{}, fmt.Errorf("--vault is required (or set " + EnvVaultDir + ")")
 	}
 	hour, _ := cmd.Flags().GetInt("hour")
 	minute, _ := cmd.Flags().GetInt("minute")

@@ -28,11 +28,11 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	// Persistent flag: --vault
-	defaultVault := os.Getenv("WIKI_VAULT_DIR")
+	defaultVault := os.Getenv(EnvVaultDir)
 	if defaultVault == "" {
 		defaultVault = "/data/vault"
 	}
-	cmd.PersistentFlags().String("vault", defaultVault, "path to wiki vault directory (env: WIKI_VAULT_DIR)")
+	cmd.PersistentFlags().String("vault", defaultVault, "path to wiki vault directory (env: "+EnvVaultDir+")")
 
 	// Persistent flag: --instance-name. Read by every MCP transport (embedded
 	// HTTP via serve --mcp-port, standalone serve mcp http, and serve mcp
@@ -41,8 +41,8 @@ func NewRootCmd() *cobra.Command {
 	// the embedded path env-only, which is a leaky abstraction.
 	cmd.PersistentFlags().String(
 		"instance-name",
-		os.Getenv("WIKI_INSTANCE_NAME"),
-		"human-readable identifier for this wiki instance, surfaced via the whoami MCP tool (env: WIKI_INSTANCE_NAME)",
+		os.Getenv(EnvInstanceName),
+		"human-readable identifier for this wiki instance, surfaced via the whoami MCP tool (env: "+EnvInstanceName+")",
 	)
 
 	cmd.AddCommand(newServeCmd())

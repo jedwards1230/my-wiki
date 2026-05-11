@@ -22,7 +22,7 @@ Substring search is the only search backend (no TF-IDF index).
 
 All logs are written to stderr — stdout is reserved for the JSON-RPC protocol.
 
-The --instance-name flag is inherited from the parent 'serve mcp' command.`,
+--instance-name is a root persistent flag — see internal/cli/root.go.`,
 		RunE: runServeMCPStdio,
 	}
 }

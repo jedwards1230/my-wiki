@@ -41,11 +41,11 @@ func newServeCmd() *cobra.Command {
 	cmd.RunE = runServeHTTP
 
 	// Flags shared with http subcommand
-	cmd.Flags().String("port", envOr("WIKI_PORT", "8080"), "HTTP port (env: WIKI_PORT)")
-	cmd.Flags().String("public-dir", envOr("WIKI_PUBLIC_DIR", "/data/public"), "path to Quartz public output (env: WIKI_PUBLIC_DIR)")
-	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: WIKI_MCP_PORT)")
-	cmd.Flags().String("quartz-dir", envOr("WIKI_QUARTZ_DIR", ""), "path to Quartz project directory; enables Quartz build triggering (env: WIKI_QUARTZ_DIR)")
-	cmd.Flags().Bool("watch", envOrBool("WIKI_WATCH", true), "watch vault directory for filesystem changes (env: WIKI_WATCH)")
+	cmd.Flags().String("port", envOr(EnvPort, "8080"), "HTTP port (env: "+EnvPort+")")
+	cmd.Flags().String("public-dir", envOr(EnvPublicDir, "/data/public"), "path to Quartz public output (env: "+EnvPublicDir+")")
+	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: "+EnvMCPPort+")")
+	cmd.Flags().String("quartz-dir", envOr(EnvQuartzDir, ""), "path to Quartz project directory; enables Quartz build triggering (env: "+EnvQuartzDir+")")
+	cmd.Flags().Bool("watch", envOrBool(EnvWatch, true), "watch vault directory for filesystem changes (env: "+EnvWatch+")")
 
 	return cmd
 }
@@ -57,11 +57,11 @@ func newServeHTTPCmd() *cobra.Command {
 		RunE:  runServeHTTP,
 	}
 
-	cmd.Flags().String("port", envOr("WIKI_PORT", "8080"), "HTTP port (env: WIKI_PORT)")
-	cmd.Flags().String("public-dir", envOr("WIKI_PUBLIC_DIR", "/data/public"), "path to Quartz public output (env: WIKI_PUBLIC_DIR)")
-	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: WIKI_MCP_PORT)")
-	cmd.Flags().String("quartz-dir", envOr("WIKI_QUARTZ_DIR", ""), "path to Quartz project directory; enables Quartz build triggering (env: WIKI_QUARTZ_DIR)")
-	cmd.Flags().Bool("watch", envOrBool("WIKI_WATCH", true), "watch vault directory for filesystem changes (env: WIKI_WATCH)")
+	cmd.Flags().String("port", envOr(EnvPort, "8080"), "HTTP port (env: "+EnvPort+")")
+	cmd.Flags().String("public-dir", envOr(EnvPublicDir, "/data/public"), "path to Quartz public output (env: "+EnvPublicDir+")")
+	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: "+EnvMCPPort+")")
+	cmd.Flags().String("quartz-dir", envOr(EnvQuartzDir, ""), "path to Quartz project directory; enables Quartz build triggering (env: "+EnvQuartzDir+")")
+	cmd.Flags().Bool("watch", envOrBool(EnvWatch, true), "watch vault directory for filesystem changes (env: "+EnvWatch+")")
 
 	return cmd
 }
@@ -86,12 +86,12 @@ func envOrBool(key string, fallback bool) bool {
 var defaultWatchExcludeDirs = []string{".obsidian", "raw", "private"}
 
 // excludeDirsFromEnv returns the watcher exclude list, honoring
-// WIKI_WATCH_EXCLUDE_DIRS as a comma-separated override. Unset or empty
+// EnvWatchExcludeDirs as a comma-separated override. Unset or empty
 // falls back to defaultWatchExcludeDirs (matches envOr semantics). To
 // disable all exclusions entirely, set the var to whitespace or a lone
 // comma — anything that produces no non-empty entries after splitting.
 func excludeDirsFromEnv() []string {
-	v := os.Getenv("WIKI_WATCH_EXCLUDE_DIRS")
+	v := os.Getenv(EnvWatchExcludeDirs)
 	if v == "" {
 		return defaultWatchExcludeDirs
 	}
@@ -104,19 +104,19 @@ func excludeDirsFromEnv() []string {
 	return out
 }
 
-// authConfigFromEnv returns an AuthConfig if WIKI_AUTH_ISSUER is set, nil otherwise.
+// authConfigFromEnv returns an AuthConfig if EnvAuthIssuer is set, nil otherwise.
 func authConfigFromEnv() *middleware.AuthConfig {
-	issuer := os.Getenv("WIKI_AUTH_ISSUER")
+	issuer := os.Getenv(EnvAuthIssuer)
 	if issuer == "" {
 		return nil
 	}
 	cfg := &middleware.AuthConfig{
 		IssuerURL:           issuer,
-		Audience:            os.Getenv("WIKI_AUTH_AUDIENCE"),
-		AllowAnyUser:        strings.EqualFold(os.Getenv("WIKI_AUTH_ALLOW_ANY_USER"), "true"),
-		ResourceMetadataURL: os.Getenv("WIKI_AUTH_RESOURCE_METADATA_URL"),
+		Audience:            os.Getenv(EnvAuthAudience),
+		AllowAnyUser:        strings.EqualFold(os.Getenv(EnvAuthAllowAnyUser), "true"),
+		ResourceMetadataURL: os.Getenv(EnvAuthResourceMetadataURL),
 	}
-	if groups := os.Getenv("WIKI_AUTH_ALLOWED_GROUPS"); groups != "" {
+	if groups := os.Getenv(EnvAuthAllowedGroups); groups != "" {
 		for _, g := range strings.Split(groups, ",") {
 			if g = strings.TrimSpace(g); g != "" {
 				cfg.AllowedGroups = append(cfg.AllowedGroups, g)
@@ -173,7 +173,7 @@ func buildAuthMiddlewares(ctx context.Context, logger *slog.Logger, cfg *middlew
 		"resource_metadata_url", cfg.ResourceMetadataURL,
 	)
 	if cfg.AllowAnyUser && len(cfg.AllowedGroups) == 0 {
-		logger.Warn("auth enabled with AllowAnyUser=true and no AllowedGroups; every authenticated token has full write access. Set WIKI_AUTH_ALLOWED_GROUPS to restrict.")
+		logger.Warn("auth enabled with AllowAnyUser=true and no AllowedGroups; every authenticated token has full write access. Set " + EnvAuthAllowedGroups + " to restrict.")
 	}
 	return &authMiddlewares{mcp: mcpMW, api: apiMW}, nil
 }
@@ -215,7 +215,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 
 	// Support env var for mcp-port when flag is at default
 	if mcpPort == 0 {
-		if envVal := os.Getenv("WIKI_MCP_PORT"); envVal != "" {
+		if envVal := os.Getenv(EnvMCPPort); envVal != "" {
 			_, _ = fmt.Sscanf(envVal, "%d", &mcpPort)
 		}
 	}
@@ -354,7 +354,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	if authMWs != nil {
 		apiOpts = append(apiOpts, api.WithAuthMiddleware(authMWs.api))
 	}
-	if strings.EqualFold(os.Getenv("WIKI_AUTH_READS"), "true") {
+	if strings.EqualFold(os.Getenv(EnvAuthReads), "true") {
 		apiOpts = append(apiOpts, api.WithAuthReads(true))
 	}
 	apiOpts = append(apiOpts, api.WithRebuildNotifier(notifier))
