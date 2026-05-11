@@ -87,6 +87,66 @@ func TestLintService_Orphans(t *testing.T) {
 	}
 }
 
+// TestLintService_Clippings exercises the clippings check: a page tagged
+// `clipping` must contain at least one link into `raw/clippings/` in the
+// body. The frontmatter `raw:` field does not satisfy the rule on its
+// own — the check strips frontmatter before scanning so the link has to
+// be visible in the rendered page.
+func TestLintService_Clippings(t *testing.T) {
+	dir := t.TempDir()
+
+	files := map[string]string{
+		// Good: tagged clipping, body has markdown URL into raw/clippings/.
+		"research/security/good-url.md": "---\ntitle: Good URL\ntags:\n  - clipping\n  - research/security\ndate: 2026-05-10\n---\n\n## Sources\n\n- [Verbatim](https://wiki.lilbro.cloud/raw/clippings/youtube/good.md)\n",
+		// Good: tagged clipping, body has wikilink into raw/clippings/.
+		"research/security/good-wikilink.md": "---\ntitle: Good Wikilink\ntags:\n  - clipping\ndate: 2026-05-10\n---\n\nSee [[raw/clippings/youtube/foo]] for the verbatim.\n",
+		// Bad: tagged clipping but body has no raw/clippings/ link.
+		// The frontmatter raw: field does not save it — frontmatter is
+		// stripped before the body scan.
+		"clippings/bad-no-source.md": "---\ntitle: Bad No Source\ntags:\n  - clipping\ndate: 2026-05-10\nraw: \"raw/clippings/youtube/bad.md\"\n---\n\n## Related\n\n- [[some-other-page]]\n",
+		// Ignored: not tagged clipping (no false positive even though it
+		// happens to mention raw/clippings/ — irrelevant).
+		"home/note.md": "---\ntitle: Note\ntags:\n  - home\ndate: 2026-05-10\n---\n\nSome text.\n",
+		// Ignored: tag list contains "clippings" (plural, legacy) — the
+		// check matches the canonical singular `clipping` only, so a
+		// legacy plural tag is silently skipped rather than nagged. The
+		// `tags` check is responsible for canonicalising old tags.
+		"legacy/plural.md": "---\ntitle: Legacy Plural\ntags:\n  - clippings\ndate: 2026-05-10\n---\n\nNo raw link, but plural tag — skipped.\n",
+	}
+
+	for name, content := range files {
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	v := vault.New(dir)
+	svc := NewLintService(v, nil)
+
+	report, err := svc.Run("clippings")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := len(report.Issues), 1; got != want {
+		t.Fatalf("expected exactly %d clipping issue, got %d: %+v", want, got, report.Issues)
+	}
+	issue := report.Issues[0]
+	if issue.File != "clippings/bad-no-source.md" {
+		t.Errorf("expected issue on clippings/bad-no-source.md, got %q", issue.File)
+	}
+	if issue.Check != "clippings" {
+		t.Errorf("expected Check=clippings, got %q", issue.Check)
+	}
+	if !strings.Contains(issue.Message, "raw/clippings/") {
+		t.Errorf("issue message should mention raw/clippings/, got %q", issue.Message)
+	}
+}
+
 func TestLintService_All(t *testing.T) {
 	v := setupLintVault(t)
 	svc := NewLintService(v, nil)

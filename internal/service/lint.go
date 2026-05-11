@@ -22,7 +22,7 @@ func NewLintService(v *vault.Vault, logSvc *LogService) *LintService {
 }
 
 // Run executes the specified lint check and returns a report.
-// Valid checks: "all", "frontmatter", "tags", "links", "orphans", "size", "log".
+// Valid checks: "all", "frontmatter", "tags", "links", "orphans", "size", "clippings", "log".
 func (s *LintService) Run(check string) (*LintReport, error) {
 	report := &LintReport{}
 
@@ -33,6 +33,7 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 		s.checkLinks(report)
 		s.checkOrphans(report)
 		s.checkSize(report)
+		s.checkClippings(report)
 		s.checkLog(report)
 	case "frontmatter":
 		s.checkFrontmatter(report)
@@ -44,10 +45,12 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 		s.checkOrphans(report)
 	case "size":
 		s.checkSize(report)
+	case "clippings":
+		s.checkClippings(report)
 	case "log":
 		s.checkLog(report)
 	default:
-		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, tags, links, orphans, size, or log", check)
+		return nil, fmt.Errorf("unknown check %q: must be all, frontmatter, tags, links, orphans, size, clippings, or log", check)
 	}
 
 	report.Total = len(report.Issues)
@@ -406,6 +409,71 @@ func (s *LintService) lintPageLinks(relPath string) []LintIssue {
 	return issues
 }
 
+// stripFrontmatter returns the body of a markdown document with any leading
+// `---\n…\n---` YAML frontmatter block removed. Returns the original string
+// unchanged when no frontmatter is present or the block is unterminated.
+func stripFrontmatter(content string) string {
+	if !strings.HasPrefix(content, "---\n") {
+		return content
+	}
+	if idx := strings.Index(content[4:], "\n---"); idx >= 0 {
+		return content[4+idx+4:]
+	}
+	return content
+}
+
+// checkClippings enforces the [[meta/schema#Clippings pattern]] rule: every
+// page tagged `clipping` must have at least one navigable link to its
+// verbatim raw file in the body — either a markdown link to a path under
+// `raw/clippings/` or a wikilink to one. The frontmatter `raw:` field is
+// not enough on its own: it isn't rendered as a link in Quartz, and
+// stripping frontmatter before scanning means the body must carry the
+// connection independently.
+func (s *LintService) checkClippings(report *LintReport) {
+	pages, err := s.vault.FindWikiPages()
+	if err != nil {
+		report.Issues = append(report.Issues, LintIssue{
+			Check: "clippings", Level: "ERROR", Message: err.Error(),
+		})
+		return
+	}
+
+	for _, page := range pages {
+		fm, err := vault.ParseFrontmatter(page)
+		if err != nil || fm == nil {
+			continue
+		}
+
+		hasClippingTag := false
+		for _, t := range strings.Split(fm["tags"], ",") {
+			if strings.TrimSpace(t) == "clipping" {
+				hasClippingTag = true
+				break
+			}
+		}
+		if !hasClippingTag {
+			continue
+		}
+
+		data, err := os.ReadFile(page)
+		if err != nil {
+			continue
+		}
+		body := stripFrontmatter(string(data))
+
+		// Permissive substring match — accepts markdown URLs to
+		// `https://wiki.lilbro.cloud/raw/clippings/...`, root-relative
+		// `/raw/clippings/...`, and wikilinks `[[raw/clippings/...]]`.
+		if !strings.Contains(body, "raw/clippings/") {
+			rel, _ := filepath.Rel(s.vault.Dir, page)
+			report.Issues = append(report.Issues, LintIssue{
+				File: rel, Check: "clippings", Level: "WARN",
+				Message: "page tagged 'clipping' has no link into raw/clippings/ in body — add a '## Sources' section",
+			})
+		}
+	}
+}
+
 // maxPageWords is the word-count threshold above which a page gets a size warning.
 const maxPageWords = 1000
 
@@ -427,13 +495,7 @@ func (s *LintService) checkSize(report *LintReport) {
 		}
 		content := string(data)
 
-		// Strip frontmatter before counting words.
-		if strings.HasPrefix(content, "---\n") {
-			if idx := strings.Index(content[4:], "\n---"); idx >= 0 {
-				content = content[4+idx+4:]
-			}
-		}
-
+		content = stripFrontmatter(content)
 		words := len(strings.Fields(content))
 		if words > maxPageWords {
 			report.Issues = append(report.Issues, LintIssue{
