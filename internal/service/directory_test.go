@@ -311,9 +311,10 @@ func TestDirectoryService_Generate_PrunesRecursively(t *testing.T) {
 	v := setupDirectoryVault(t)
 	svc := NewDirectoryService(v)
 
-	// Seed: research/security/ with a single page. The parent research/
-	// already exists from the base vault (with aerospace/ and root pages),
-	// so we pick a brand-new subtree that's exclusively this scenario.
+	// Seed: a brand-new experiments/alpha/ subtree with a single page.
+	// experiments/ doesn't exist in the base vault, so the recursive
+	// prune is exclusively driven by this scenario (no sibling content
+	// keeping the parent alive).
 	deepDir := filepath.Join(v.Dir, "experiments", "alpha")
 	if err := os.MkdirAll(deepDir, 0o755); err != nil {
 		t.Fatal(err)

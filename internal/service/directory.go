@@ -2,12 +2,14 @@ package service
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jedwards1230/my-wiki/internal/vault"
@@ -193,11 +195,15 @@ func (s *DirectoryService) Generate() (string, int, error) {
 			if err := os.Remove(indexPath); err != nil && !os.IsNotExist(err) {
 				return false, err
 			}
-			// Attempt rmdir. Errors are deliberately swallowed: a non-empty
-			// directory (other files, hidden metadata) is fine — the index
-			// is gone and the dir survives. ENOENT means we already cleaned
-			// up in an earlier run.
-			_ = os.Remove(filepath.Join(s.vault.Dir, node.rel))
+			// Attempt rmdir. ENOTEMPTY is the intentional "keep the dir,
+			// drop the index" case — a dir holding non-md content or
+			// hidden metadata stays put. ENOENT means we already cleaned
+			// up in an earlier run. Any other error (permissions, IO) is
+			// surfaced so unexpected failures aren't silently masked.
+			if err := os.Remove(filepath.Join(s.vault.Dir, node.rel)); err != nil &&
+				!os.IsNotExist(err) && !errors.Is(err, syscall.ENOTEMPTY) {
+				return false, err
+			}
 			return true, nil
 		}
 
