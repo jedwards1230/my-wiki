@@ -41,11 +41,10 @@ type Builder struct {
 	cfg          BuilderConfig
 	logger       *slog.Logger
 	backlinkIdx  *BacklinkIndex
-	mu           sync.Mutex // guards lastSnapshot / lastPages / lastRenderer / lastExplorer
+	mu           sync.Mutex // guards lastSnapshot / lastPages / lastRenderer
 	lastSnapshot *memfs.Snapshot
 	lastPages    map[string]*Page
 	lastRenderer *Renderer
-	lastExplorer []*ExplorerNode
 }
 
 // NewBuilder constructs a Builder. BaseURL is normalized; SiteTitle
@@ -100,23 +99,20 @@ func (b *Builder) RenderFragment(urlPath string) ([]byte, bool) {
 	b.mu.Lock()
 	r := b.lastRenderer
 	p := b.lastPages[strings.ToLower(slug)]
-	// Build a per-request explorer tree with this page's branch active.
-	// lastExplorer holds the base tree (no active marks) as a fallback.
-	b.mu.Unlock()
-	if r == nil || p == nil {
-		return nil, false
-	}
-	// Recompute the active-branch markers for this slug. We don't store
-	// the per-page explorer trees in the snapshot (too much memory) so we
-	// rebuild them on HX-Request: fragment re-exec. This only runs on
-	// client-side navigations, so the cost is acceptable.
-	b.mu.Lock()
 	allPages := make([]*Page, 0, len(b.lastPages))
 	for _, pg := range b.lastPages {
 		allPages = append(allPages, pg)
 	}
 	b.mu.Unlock()
-	explorer := BuildExplorerTree(allPages, slug)
+	if r == nil || p == nil {
+		return nil, false
+	}
+	// Build a per-request explorer tree with this page's branch active.
+	// htmx fragment swaps don't replace the sidebar, so this is only used
+	// when the user lands on a page directly (e.g. opening a deep URL in
+	// a new tab) — once per session.
+	explorer := cloneExplorerTree(BuildExplorerTree(allPages, ""))
+	markActiveRoots(explorer, slug)
 	td := TemplateData{Page: p, SiteTitle: b.cfg.SiteTitle, ActivePath: p.RelativeURL, Version: version.Value, BaseURL: b.cfg.BaseURL, Explorer: explorer}
 	buf, err := r.RenderFragment(p, td)
 	if err != nil {
@@ -282,13 +278,17 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 	snap := memfs.NewSnapshot()
 	now := time.Now()
 
-	// Build the explorer tree once from the full page set. Each page's
-	// TemplateData gets a copy with IsOpen/IsActive marked for that page.
+	// Build the explorer tree once from the full page set (sort + folder
+	// reconstruction is the expensive part). Each page's TemplateData
+	// gets a cheap deep-copy of the base tree with that page's ancestor
+	// chain marked open / active — O(N) per page instead of re-running
+	// the full O(N log N) build.
 	explorerBase := BuildExplorerTree(all, "")
 
 	for _, p := range all {
 		// Per-page explorer tree with this page's branch marked active.
-		explorer := BuildExplorerTree(all, p.Slug)
+		explorer := cloneExplorerTree(explorerBase)
+		markActiveRoots(explorer, p.Slug)
 		td := TemplateData{
 			Page:       p,
 			SiteTitle:  b.cfg.SiteTitle,
@@ -381,7 +381,6 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 	b.lastSnapshot = snap
 	b.lastPages = pageMap
 	b.lastRenderer = r
-	b.lastExplorer = explorerBase
 	b.mu.Unlock()
 
 	b.logger.Info("native renderer build complete",
@@ -507,11 +506,48 @@ func BuildExplorerTree(all []*Page, activeSlug string) []*ExplorerNode {
 	return root.Children
 }
 
+// cloneExplorerTree returns a deep-copy of the given roots so per-page
+// IsOpen / IsActive markers don't leak across pages when reusing the
+// base tree.
+func cloneExplorerTree(roots []*ExplorerNode) []*ExplorerNode {
+	if len(roots) == 0 {
+		return nil
+	}
+	out := make([]*ExplorerNode, len(roots))
+	for i, n := range roots {
+		c := *n
+		c.IsOpen = false
+		c.IsActive = false
+		c.Children = cloneExplorerTree(n.Children)
+		out[i] = &c
+	}
+	return out
+}
+
+// markActiveRoots is the top-level entry point for marking the active
+// branch on a cloned tree. Walks each root subtree.
+func markActiveRoots(roots []*ExplorerNode, activeSlug string) {
+	for _, r := range roots {
+		if markActive(r, activeSlug) {
+			return
+		}
+	}
+}
+
 // markActive walks the tree and sets IsActive on the matching leaf/folder.
 // Returns true when any child in this subtree is or contains the active slug,
-// so the caller can set IsOpen on the parent.
+// so the caller can set IsOpen on the parent. Folder-index pages (slug
+// ending in "/index") match the parent folder node since the tree
+// represents folder indexes as the folder node itself rather than a leaf.
 func markActive(node *ExplorerNode, activeSlug string) bool {
-	if node.Slug == activeSlug || node.URL == "/"+activeSlug+"/" {
+	// Strip the trailing "/index" or bare "index" so folder-index pages
+	// (rendered as the folder node) get marked correctly.
+	folderSlug := strings.TrimSuffix(activeSlug, "/index")
+	if folderSlug == "index" {
+		folderSlug = ""
+	}
+	if node.Slug == activeSlug || node.Slug == folderSlug ||
+		node.URL == "/"+activeSlug+"/" || node.URL == "/"+folderSlug+"/" {
 		node.IsActive = true
 		node.IsOpen = node.IsFolder
 		return true

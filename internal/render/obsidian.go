@@ -603,17 +603,18 @@ func (n *inlineTagNode) Dump(src []byte, level int) { ast.DumpHelper(n, src, lev
 //   - Inline code spans are already consumed by goldmark's code-span
 //     parser (priority 100) before we run (priority 97), so `#` inside
 //     backtick spans is invisible to us.
-//   - We reject `#` immediately preceded by an alphanumeric, `_`, `(`,
-//     or `[` in the source line to avoid matching URL fragments and
-//     issue-number patterns like `commit-#1234` or `[link](#anchor)`.
+//   - We reject `#` immediately preceded by an alphanumeric, `_`, `-`,
+//     `(`, or `[` in the source line to avoid matching URL fragments
+//     and dash-joined identifiers (e.g. `commit-#1234`, `[link](#x)`).
 type inlineTagParser struct{}
 
 func (p *inlineTagParser) Trigger() []byte { return []byte{'#'} }
 
-// isTagStart returns true when b is the first byte of a valid tag char
-// (lowercase ASCII letter, digit, `/`, or `-`). We require the first
-// char after `#` to be a lowercase letter so bare `#` or `#1234`
-// commit refs don't match.
+// isTagStart returns true when b is a valid first character after `#`.
+// Restricted to lowercase ASCII letters so bare `#`, numeric `#1234`
+// commit refs, and `/`/`-` lead-ins don't match. The continuation rule
+// (isTagContinue) is broader and permits digits, slashes, hyphens, and
+// underscores for nested-tag paths like `#meta/claude-code`.
 func isTagStart(b byte) bool {
 	return b >= 'a' && b <= 'z'
 }
