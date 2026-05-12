@@ -247,6 +247,9 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
           BUMP_TYPE: ${{ needs.detect.outputs.bump_type }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          REPO_OWNER: ${{ github.repository_owner }}
         run: |
           {
             echo "## Release ${TAG}"
@@ -255,6 +258,6 @@ jobs:
             echo "|-------|-------|"
             echo "| Version | ${VERSION} |"
             echo "| Image | \`${REGISTRY}/${IMAGE_NAME}:${VERSION}\` |"
-            echo "| Chart | \`oci://ghcr.io/${{ github.repository_owner }}/charts/my-wiki:${VERSION}\` |"
+            echo "| Chart | \`oci://ghcr.io/${REPO_OWNER}/charts/my-wiki:${VERSION}\` |"
             echo "| Bump | ${BUMP_TYPE} |"
           } >> $GITHUB_STEP_SUMMARY
