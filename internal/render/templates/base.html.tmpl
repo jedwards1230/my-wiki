@@ -166,10 +166,14 @@
 <script src="/_/static/vendor/katex/auto-render.min.js" defer></script>
 {{- end }}
 {{- if .HasMermaid }}
-<script type="module">
-  import mermaid from "/_/static/vendor/mermaid.min.js";
-  window.mermaid = mermaid;
-  mermaid.initialize({ startOnLoad: true });
+<script src="/_/static/vendor/mermaid.min.js" defer></script>
+<script defer>
+  document.addEventListener("DOMContentLoaded", function() {
+    if (typeof mermaid !== "undefined") {
+      mermaid.initialize({ startOnLoad: false, theme: "neutral" });
+      mermaid.run({ querySelector: "pre.mermaid" });
+    }
+  });
 </script>
 {{- end }}
 
