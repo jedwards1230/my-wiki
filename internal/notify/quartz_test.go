@@ -60,8 +60,12 @@ func TestQuartzBuilderCoalesces(t *testing.T) {
 		qb.Build()
 	}
 
-	// Wait for all builds to complete.
-	deadline := time.After(5 * time.Second)
+	// Wait for all builds to complete. Deadline must accommodate two
+	// sequential `exec.Command` invocations (initial + coalesced) on
+	// loaded CI/dev machines where /bin/sh process spawn can take a
+	// surprising amount of time. 15s gives ample headroom without
+	// masking real regressions.
+	deadline := time.After(15 * time.Second)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -130,8 +134,9 @@ func TestQuartzBuilderCoalescesWithCounter(t *testing.T) {
 		qb.Build()
 	}
 
-	// Wait for all builds to complete.
-	deadline := time.After(10 * time.Second)
+	// Wait for all builds to complete. Same generous deadline as the
+	// sibling test — exec.Command spawn cost dominates on busy systems.
+	deadline := time.After(20 * time.Second)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
