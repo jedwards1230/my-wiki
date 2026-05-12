@@ -1,9 +1,9 @@
 # Auto-version and release on push to main.
-# Builds Docker image, publishes Helm chart (both tagged with same version),
-# and creates a GitHub release.
-#
-# Supports semver labels (semver:patch, semver:minor, semver:major) on PRs,
-# defaults to patch bump, and manual workflow_dispatch triggers.
+# Detects bump type from PR labels (defaults to patch), then delegates the
+# version/tag/AI-release-notes pipeline to the shared
+# jedwards1230/release-workflows/.github/workflows/ai-release.yml workflow,
+# builds the Docker image + publishes the Helm chart, and creates the GitHub
+# Release with install snippets prepended to the AI-generated body.
 
 name: Release
 
@@ -31,7 +31,7 @@ on:
           - major
         default: patch
       dry_run:
-        description: "Dry run (skip tagging and pushing)"
+        description: "Dry run — compute version and preview notes without tagging or publishing"
         required: false
         type: boolean
         default: false
@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       bump_type: ${{ steps.bump.outputs.type }}
-      should_release: ${{ steps.bump.outputs.should_release }}
+      dry_run: ${{ steps.bump.outputs.dry_run }}
     steps:
       - name: Determine bump type
         id: bump
@@ -65,14 +65,12 @@ jobs:
         run: |
           # workflow_dispatch: use provided inputs
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            BUMP="${{ inputs.bump_type }}"
+            echo "type=${{ inputs.bump_type }}" >> $GITHUB_OUTPUT
             if [ "${{ inputs.dry_run }}" = "true" ]; then
-              echo "type=${BUMP}" >> $GITHUB_OUTPUT
-              echo "should_release=false" >> $GITHUB_OUTPUT
-              echo "::notice::Dry run: would release with bump_type=${BUMP}"
+              echo "dry_run=true" >> $GITHUB_OUTPUT
+              echo "::notice::Dry run: previewing release with bump_type=${{ inputs.bump_type }}"
             else
-              echo "type=${BUMP}" >> $GITHUB_OUTPUT
-              echo "should_release=true" >> $GITHUB_OUTPUT
+              echo "dry_run=false" >> $GITHUB_OUTPUT
             fi
             exit 0
           fi
@@ -102,85 +100,25 @@ jobs:
           else
             echo "type=patch" >> $GITHUB_OUTPUT
           fi
-          echo "should_release=true" >> $GITHUB_OUTPUT
+          echo "dry_run=false" >> $GITHUB_OUTPUT
 
-  tag:
-    name: Tag Release
+  prepare:
+    name: Tag & Generate Notes
     needs: [detect]
-    if: needs.detect.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Compute next version
-        id: version
-        run: |
-          BUMP_TYPE="${{ needs.detect.outputs.bump_type }}"
-
-          # Find latest semver tag
-          LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n1 || true)
-
-          if [ -z "$LATEST_TAG" ]; then
-            MAJOR=0; MINOR=0; PATCH=0
-            echo "No existing semver tags found, starting from 0.0.0"
-          else
-            LATEST_VERSION="${LATEST_TAG#v}"
-            MAJOR=$(echo "$LATEST_VERSION" | cut -d. -f1)
-            MINOR=$(echo "$LATEST_VERSION" | cut -d. -f2)
-            PATCH=$(echo "$LATEST_VERSION" | cut -d. -f3)
-            echo "Latest tag: $LATEST_TAG"
-          fi
-
-          case "$BUMP_TYPE" in
-            major) NEXT_VERSION="$((MAJOR + 1)).0.0" ;;
-            minor) NEXT_VERSION="${MAJOR}.$((MINOR + 1)).0" ;;
-            patch) NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
-          esac
-
-          NEXT_TAG="v${NEXT_VERSION}"
-
-          if git rev-parse "$NEXT_TAG" >/dev/null 2>&1; then
-            echo "::error::Tag $NEXT_TAG already exists"
-            exit 1
-          fi
-
-          echo "version=${NEXT_VERSION}" >> $GITHUB_OUTPUT
-          echo "tag=${NEXT_TAG}" >> $GITHUB_OUTPUT
-          echo "Next version: $NEXT_VERSION (tag: $NEXT_TAG)"
-
-      - name: Update Chart.yaml
-        run: |
-          NEXT_VERSION="${{ steps.version.outputs.version }}"
-          CHART_FILE="deploy/helm/my-wiki/Chart.yaml"
-
-          yq -i ".version = \"${NEXT_VERSION}\"" "$CHART_FILE"
-          yq -i ".appVersion = \"${NEXT_VERSION}\"" "$CHART_FILE"
-
-          echo "Updated $CHART_FILE:"
-          cat "$CHART_FILE"
-
-      - name: Create tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Commit Chart.yaml bump (included in tag, not pushed to main)
-          if ! git diff --quiet deploy/helm/my-wiki/Chart.yaml; then
-            git add deploy/helm/my-wiki/Chart.yaml
-            git commit -m "chore: bump chart version to ${{ steps.version.outputs.version }}"
-          fi
-
-          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.tag }}"
+    uses: jedwards1230/release-workflows/.github/workflows/ai-release.yml@v0
+    with:
+      service_name: home-wiki
+      service_description: "an Obsidian-backed personal wiki rendered with Quartz and served from K8s"
+      bump_type: ${{ needs.detect.outputs.bump_type }}
+      chart_path: deploy/helm/my-wiki/Chart.yaml
+      dry_run: ${{ needs.detect.outputs.dry_run == 'true' }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   build:
     name: Build and Push Image
-    needs: [tag]
+    needs: [detect, prepare]
+    if: needs.detect.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -188,7 +126,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.tag.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -212,18 +150,19 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
-            BUILD_VERSION=${{ needs.tag.outputs.version }}
+            BUILD_VERSION=${{ needs.prepare.outputs.version }}
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.tag.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           labels: |
-            org.opencontainers.image.version=${{ needs.tag.outputs.version }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   helm:
     name: Publish Helm Chart
-    needs: [tag]
+    needs: [detect, prepare]
+    if: needs.detect.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -231,7 +170,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.tag.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: azure/setup-helm@v5
 
       - name: Log in to GHCR
@@ -254,59 +193,71 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [tag, build, helm]
+    needs: [detect, prepare, build, helm]
+    if: needs.detect.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+      - name: Compose release body (install snippets + AI notes)
+        env:
+          BODY_B64: ${{ needs.prepare.outputs.release_body }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+
+          # ai-release.yml emits a base64-encoded body; decode before use.
+          echo "$BODY_B64" | base64 -d > /tmp/ai_body.md
+
+          # Prepend install snippets so consumers see "how do I get this?"
+          # before scrolling through the AI summary + commit list.
+          {
+            echo "## Install"
+            echo ""
+            echo "### Docker"
+            echo ""
+            echo '```bash'
+            echo "docker pull ${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+            echo '```'
+            echo ""
+            echo "### Helm"
+            echo ""
+            echo '```bash'
+            echo "helm install wiki oci://ghcr.io/${REPO_OWNER}/charts/my-wiki --version ${VERSION}"
+            echo '```'
+            echo ""
+            echo "---"
+            echo ""
+          } > /tmp/release_body.md
+          cat /tmp/ai_body.md >> /tmp/release_body.md
 
       - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${{ needs.tag.outputs.tag }}"
-          VERSION="${{ needs.tag.outputs.version }}"
-
-          # Find previous tag for changelog
-          PREV_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | grep -B1 "^${TAG}$" | head -1)
-          if [ "$PREV_TAG" = "$TAG" ] || [ -z "$PREV_TAG" ]; then
-            COMPARE_NOTE="Initial release"
-          else
-            COMPARE_NOTE="**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
-          fi
-
-          gh release create "${TAG}" \
-            --title "Release ${VERSION}" \
-            --notes "$(cat <<EOF
-          ## Docker Image
-
-          \`\`\`bash
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
-          \`\`\`
-
-          ## Helm Chart
-
-          \`\`\`bash
-          helm install wiki oci://ghcr.io/${{ github.repository_owner }}/charts/my-wiki --version ${VERSION}
-          \`\`\`
-
-          ${COMPARE_NOTE}
-          EOF
-          )" \
-            --latest
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Release ${{ needs.prepare.outputs.version }}
+          body_path: /tmp/release_body.md
+          make_latest: true
 
       - name: Write workflow summary
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          BUMP_TYPE: ${{ needs.detect.outputs.bump_type }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          REPO_OWNER: ${{ github.repository_owner }}
         run: |
-          TAG="${{ needs.tag.outputs.tag }}"
-          VERSION="${{ needs.tag.outputs.version }}"
-          echo "## Release ${TAG}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Version | ${VERSION} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Image | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Chart | \`oci://ghcr.io/${{ github.repository_owner }}/charts/my-wiki:${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Bump | ${{ needs.detect.outputs.bump_type }} |" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Release ${TAG}"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Version | ${VERSION} |"
+            echo "| Image | \`${REGISTRY}/${IMAGE_NAME}:${VERSION}\` |"
+            echo "| Chart | \`oci://ghcr.io/${REPO_OWNER}/charts/my-wiki:${VERSION}\` |"
+            echo "| Bump | ${BUMP_TYPE} |"
+          } >> $GITHUB_STEP_SUMMARY
