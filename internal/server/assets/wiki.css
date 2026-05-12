@@ -176,20 +176,28 @@ code, pre, kbd {
   left: 0;
 }
 
-/* ----------- Layout grid */
+/* ----------- Layout grid
+ *
+ * Three-column grid matching Quartz's proportions:
+ *   left sidebar (fixed)  |  main content (flex)  |  right sidebar (fixed)
+ *
+ * At 1920px: ~320px + ~860px + ~320px = ~1500px total
+ * At 1280px: right rail hidden; ~320px + ~900px = ~1220px
+ * At 799px:  single column, left sidebar hidden
+ */
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(220px, 18rem) minmax(0, 1fr) minmax(220px, 18rem);
+  grid-template-columns: 320px minmax(0, 1fr) 320px;
   gap: var(--gap);
-  max-width: 1400px;
+  max-width: 1500px;
   margin: 0 auto;
   padding: 2rem 1.5rem;
 }
 
 @media (max-width: 1199px) {
   .layout {
-    grid-template-columns: minmax(220px, 18rem) minmax(0, 1fr);
+    grid-template-columns: 320px minmax(0, 1fr);
   }
   .sidebar-right {
     display: none;
@@ -260,6 +268,122 @@ code, pre, kbd {
 }
 .darkmode button svg {
   display: block;
+}
+
+/* ----------- Explorer tree (left sidebar) */
+
+.explorer {
+  margin-top: 0.5rem;
+}
+
+/* Top-level "Explorer" disclosure widget — always open on load */
+.explorer-top {
+  /* details reset */
+}
+.explorer-top > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--darkgray);
+  font-family: var(--font-header);
+  font-weight: 700;
+  user-select: none;
+  margin-bottom: 0.25rem;
+}
+.explorer-top > summary::-webkit-details-marker { display: none; }
+.explorer-top > summary::marker { display: none; }
+
+/* Chevron on the Explorer toggle — rotates when collapsed */
+.explorer-top > summary .fold-icon {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.explorer-top:not([open]) > summary .fold-icon {
+  transform: rotate(-90deg);
+}
+
+.explorer-ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+.explorer-ul .explorer-ul {
+  padding-left: 1rem;
+}
+
+.explorer-folder > details > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  padding: 0.1rem 0;
+  font-size: 0.9rem;
+  color: var(--dark);
+  user-select: none;
+  border-radius: 4px;
+}
+.explorer-folder > details > summary::-webkit-details-marker { display: none; }
+.explorer-folder > details > summary::marker { display: none; }
+.explorer-folder > details > summary:hover {
+  background: var(--highlight);
+}
+.explorer-folder > details > summary.is-active {
+  color: var(--secondary);
+  font-weight: 600;
+}
+
+/* Folder chevron rotates when expanded */
+.folder-icon {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  color: var(--gray);
+}
+.explorer-folder > details:not([open]) > summary .folder-icon {
+  transform: rotate(-90deg);
+}
+
+.folder-link,
+.folder-name {
+  color: inherit;
+  text-decoration: none;
+  font-size: inherit;
+}
+.folder-link:hover { text-decoration: underline; }
+
+.explorer-file {
+  padding: 0.1rem 0;
+}
+.explorer-link {
+  font-size: 0.9rem;
+  display: block;
+  padding: 0.1rem 0.25rem;
+  border-radius: 4px;
+  color: var(--darkgray);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.explorer-link:hover {
+  background: var(--highlight);
+  color: var(--dark);
+  text-decoration: none;
+}
+.explorer-link.is-active {
+  color: var(--secondary);
+  font-weight: 600;
+  background: var(--highlight);
+}
+
+/* Collapse animation */
+.explorer-folder > details > .explorer-ul {
+  overflow: hidden;
 }
 
 .toc ul {
