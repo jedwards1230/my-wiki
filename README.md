@@ -19,13 +19,18 @@ Serves the rendered vault at <http://localhost:8080>.
 ```bash
 go build -o wiki-server ./cmd/wiki-server
 
-# HTTP server (browser + REST + embedded MCP)
-./wiki-server serve --vault /path/to/vault --port 8080
+# HTTP server (browser + REST + embedded MCP).
+# --public-dir must point at a built Quartz output (run `npx quartz build` first,
+# or use the Docker Compose flow which builds it for you).
+./wiki-server serve \
+  --vault /path/to/vault \
+  --public-dir /path/to/quartz/public \
+  --port 8080
 
 # MCP server over HTTP (streamable-http)
 ./wiki-server serve mcp http --vault /path/to/vault --port 8081
 
-# MCP server over stdio (for Claude Code / .mcp.json)
+# MCP server over stdio (for Claude Code / .mcp.json) — no HTTP, no Quartz, no auth
 ./wiki-server serve mcp stdio --vault /path/to/vault
 ```
 
@@ -40,11 +45,13 @@ go build -o wiki-server ./cmd/wiki-server
 
 ## CLI
 
+One-shot vault-maintenance commands that share the same `--vault` flag as `serve`:
+
 ```bash
-./wiki-server lint       --vault /path/to/vault    # frontmatter + link checks
-./wiki-server directory  --vault /path/to/vault    # generate page directory
-./wiki-server log        --vault /path/to/vault    # vault activity log
-./wiki-server activity   --vault /path/to/vault    # recent mutations
+./wiki-server lint      [all|frontmatter|tags|links|orphans|size|clippings|stub|log]
+./wiki-server directory                              # list all pages with metadata
+./wiki-server log       [today|YYYY-MM-DD|lint]      # view / lint the activity log
+./wiki-server activity  <type> <title> [--summary X] # append a structured log entry
 ```
 
 A macOS LaunchAgent for daily lint is available via `wiki-server launchd install`.
