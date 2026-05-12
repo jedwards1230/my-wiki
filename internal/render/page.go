@@ -121,6 +121,37 @@ type ListEntry struct {
 	Tags        []string
 }
 
+// ExplorerNode is one node in the left-sidebar explorer tree. Folders are
+// rendered as collapsible <details>/<summary>; leaves are plain links.
+type ExplorerNode struct {
+	// Name is the display label (humanized segment, e.g. "Homelab" from "homelab").
+	Name string
+
+	// Slug is the canonical URL slug for this node — empty for virtual
+	// folders that have no index page of their own.
+	Slug string
+
+	// URL is the href for this node. Leaf pages get their /{slug}/ URL;
+	// folders with an index page get the folder URL; purely virtual folders
+	// get an empty string (no link — just a label in the summary).
+	URL string
+
+	// IsFolder is true when this node has children.
+	IsFolder bool
+
+	// Children are sub-folders and leaf pages, sorted folders-first then
+	// alphabetically by Name within each group.
+	Children []*ExplorerNode
+
+	// IsActive is true when this node's URL matches the current page.
+	// Ancestors of the active node also get IsOpen=true.
+	IsActive bool
+
+	// IsOpen controls whether a folder's <details> is rendered open. Set
+	// when this folder is an ancestor of (or is) the active page.
+	IsOpen bool
+}
+
 // BuildBreadcrumb returns the breadcrumb trail for a slug. The first item
 // is always "Home" → "/"; subsequent items are derived from the slug's
 // path segments.

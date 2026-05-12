@@ -41,10 +41,11 @@ type Builder struct {
 	cfg          BuilderConfig
 	logger       *slog.Logger
 	backlinkIdx  *BacklinkIndex
-	mu           sync.Mutex // guards lastSnapshot / lastPages / lastRenderer
+	mu           sync.Mutex // guards lastSnapshot / lastPages / lastRenderer / lastExplorer
 	lastSnapshot *memfs.Snapshot
 	lastPages    map[string]*Page
 	lastRenderer *Renderer
+	lastExplorer []*ExplorerNode
 }
 
 // NewBuilder constructs a Builder. BaseURL is normalized; SiteTitle
@@ -99,11 +100,24 @@ func (b *Builder) RenderFragment(urlPath string) ([]byte, bool) {
 	b.mu.Lock()
 	r := b.lastRenderer
 	p := b.lastPages[strings.ToLower(slug)]
+	// Build a per-request explorer tree with this page's branch active.
+	// lastExplorer holds the base tree (no active marks) as a fallback.
 	b.mu.Unlock()
 	if r == nil || p == nil {
 		return nil, false
 	}
-	td := TemplateData{Page: p, SiteTitle: b.cfg.SiteTitle, ActivePath: p.RelativeURL, Version: version.Value, BaseURL: b.cfg.BaseURL}
+	// Recompute the active-branch markers for this slug. We don't store
+	// the per-page explorer trees in the snapshot (too much memory) so we
+	// rebuild them on HX-Request: fragment re-exec. This only runs on
+	// client-side navigations, so the cost is acceptable.
+	b.mu.Lock()
+	allPages := make([]*Page, 0, len(b.lastPages))
+	for _, pg := range b.lastPages {
+		allPages = append(allPages, pg)
+	}
+	b.mu.Unlock()
+	explorer := BuildExplorerTree(allPages, slug)
+	td := TemplateData{Page: p, SiteTitle: b.cfg.SiteTitle, ActivePath: p.RelativeURL, Version: version.Value, BaseURL: b.cfg.BaseURL, Explorer: explorer}
 	buf, err := r.RenderFragment(p, td)
 	if err != nil {
 		return nil, false
@@ -268,7 +282,13 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 	snap := memfs.NewSnapshot()
 	now := time.Now()
 
+	// Build the explorer tree once from the full page set. Each page's
+	// TemplateData gets a copy with IsOpen/IsActive marked for that page.
+	explorerBase := BuildExplorerTree(all, "")
+
 	for _, p := range all {
+		// Per-page explorer tree with this page's branch marked active.
+		explorer := BuildExplorerTree(all, p.Slug)
 		td := TemplateData{
 			Page:       p,
 			SiteTitle:  b.cfg.SiteTitle,
@@ -276,6 +296,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 			BuildDate:  now.Format("2006-01-02"),
 			Version:    version.Value,
 			BaseURL:    b.cfg.BaseURL,
+			Explorer:   explorer,
 		}
 		buf, err := r.RenderToBytes(p, td)
 		if err != nil {
@@ -303,7 +324,14 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 			IsListPage:      true,
 			ListEntries:     pagesToEntries(ps),
 		}
-		td := TemplateData{Page: page, SiteTitle: b.cfg.SiteTitle, ActivePath: page.RelativeURL, Version: version.Value, BaseURL: b.cfg.BaseURL}
+		td := TemplateData{
+			Page:       page,
+			SiteTitle:  b.cfg.SiteTitle,
+			ActivePath: page.RelativeURL,
+			Version:    version.Value,
+			BaseURL:    b.cfg.BaseURL,
+			Explorer:   explorerBase,
+		}
 		buf, err := r.RenderList(page, td)
 		if err != nil {
 			return nil, fmt.Errorf("render tag %s: %w", tag, err)
@@ -342,6 +370,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		SiteTitle: b.cfg.SiteTitle,
 		Version:   version.Value,
 		BaseURL:   b.cfg.BaseURL,
+		Explorer:  explorerBase,
 	}
 	if buf, err := r.Render404(notFoundData); err == nil {
 		_ = snap.AddFile("404.html", buf, now)
@@ -352,6 +381,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 	b.lastSnapshot = snap
 	b.lastPages = pageMap
 	b.lastRenderer = r
+	b.lastExplorer = explorerBase
 	b.mu.Unlock()
 
 	b.logger.Info("native renderer build complete",
@@ -361,6 +391,138 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		"bytes", snap.Bytes(),
 	)
 	return snap, nil
+}
+
+// BuildExplorerTree builds the collapsible file-tree for the left sidebar.
+// It walks `all` pages, reconstructs the folder hierarchy, and marks the
+// path from root to `activeSlug` as open. The tree is sorted folders-first
+// then alphabetically within each group, mirroring Quartz's explorer.
+func BuildExplorerTree(all []*Page, activeSlug string) []*ExplorerNode {
+	// Collect slug → title from pages.
+	titles := make(map[string]string, len(all))
+	for _, p := range all {
+		titles[p.Slug] = p.Title
+	}
+
+	// root is a virtual folder whose Children become the top-level nodes.
+	root := &ExplorerNode{IsFolder: true}
+	nodeMap := map[string]*ExplorerNode{"": root}
+
+	// Ensure a folder node exists for every ancestor segment of `slug`.
+	var ensureFolder func(slug string) *ExplorerNode
+	ensureFolder = func(slug string) *ExplorerNode {
+		if n, ok := nodeMap[slug]; ok {
+			return n
+		}
+		parentSlug := ""
+		name := slug
+		if idx := strings.LastIndexByte(slug, '/'); idx >= 0 {
+			parentSlug = slug[:idx]
+			name = slug[idx+1:]
+		}
+		parent := ensureFolder(parentSlug)
+
+		// Determine URL: if there's an index page (slug/index) use the
+		// folder URL; otherwise the folder is virtual (no link).
+		url := ""
+		if _, ok := titles[slug+"/index"]; ok {
+			url = "/" + slug + "/"
+		}
+
+		n := &ExplorerNode{
+			Name:     humanizeSegment(name),
+			Slug:     slug,
+			URL:      url,
+			IsFolder: true,
+		}
+		nodeMap[slug] = n
+		parent.Children = append(parent.Children, n)
+		return n
+	}
+
+	// Add a leaf node for each page. Folders (index pages) are represented
+	// by the parent folder node rather than a separate leaf.
+	for _, p := range all {
+		// Skip folder index pages and the root index — they are represented
+		// by the folder node itself.
+		if p.Slug == "index" {
+			continue
+		}
+		parts := strings.Split(p.Slug, "/")
+		isIndex := parts[len(parts)-1] == "index"
+
+		if isIndex {
+			// A folder index page: ensure the folder node exists (ensureFolder
+			// above will wire the URL). No separate leaf.
+			folderSlug := strings.Join(parts[:len(parts)-1], "/")
+			ensureFolder(folderSlug)
+			continue
+		}
+
+		// Regular leaf page: ensure parent folder exists, then add leaf.
+		parentSlug := ""
+		if len(parts) > 1 {
+			parentSlug = strings.Join(parts[:len(parts)-1], "/")
+		}
+		parent := ensureFolder(parentSlug)
+
+		leaf := &ExplorerNode{
+			Name: func() string {
+				if t, ok := titles[p.Slug]; ok && t != "" {
+					return t
+				}
+				return humanizeSegment(parts[len(parts)-1])
+			}(),
+			Slug:     p.Slug,
+			URL:      p.RelativeURL,
+			IsFolder: false,
+		}
+		parent.Children = append(parent.Children, leaf)
+	}
+
+	// Sort each level: folders first, then leaves; alphabetically within
+	// each group by Name.
+	var sortChildren func(node *ExplorerNode)
+	sortChildren = func(node *ExplorerNode) {
+		sort.Slice(node.Children, func(i, j int) bool {
+			a, b := node.Children[i], node.Children[j]
+			if a.IsFolder != b.IsFolder {
+				return a.IsFolder
+			}
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		})
+		for _, child := range node.Children {
+			if child.IsFolder {
+				sortChildren(child)
+			}
+		}
+	}
+	sortChildren(root)
+
+	// Mark the active node and open all ancestors.
+	if activeSlug != "" && activeSlug != "index" {
+		markActive(root, activeSlug)
+	}
+
+	return root.Children
+}
+
+// markActive walks the tree and sets IsActive on the matching leaf/folder.
+// Returns true when any child in this subtree is or contains the active slug,
+// so the caller can set IsOpen on the parent.
+func markActive(node *ExplorerNode, activeSlug string) bool {
+	if node.Slug == activeSlug || node.URL == "/"+activeSlug+"/" {
+		node.IsActive = true
+		node.IsOpen = node.IsFolder
+		return true
+	}
+	for _, child := range node.Children {
+		if markActive(child, activeSlug) {
+			node.IsOpen = true
+			return true
+		}
+	}
+	return false
 }
 
 // groupByTag returns tag → pages, lowercased. Pages with no tags are skipped.
