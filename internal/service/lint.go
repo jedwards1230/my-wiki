@@ -254,7 +254,7 @@ func (s *LintService) checkLinks(report *LintReport) {
 		}
 		for _, link := range links {
 			key := strings.ToLower(link)
-			if slugs[key] {
+			if _, ok := slugs[key]; ok {
 				continue
 			}
 			bl, ok := seen[key]
@@ -319,7 +319,7 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 	// no links are broken.
 	anyOrphaned := false
 	for slug := range deletedSlugs {
-		if !slugs[slug] {
+		if _, ok := slugs[slug]; !ok {
 			anyOrphaned = true
 			break
 		}
@@ -346,7 +346,8 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 		}
 		for _, link := range links {
 			target := strings.ToLower(link)
-			if deletedSlugs[target] && !slugs[target] {
+			_, stillExists := slugs[target]
+			if deletedSlugs[target] && !stillExists {
 				issues = append(issues, LintIssue{
 					File: rel, Check: "links", Level: "WARN",
 					Message: fmt.Sprintf("broken link [[%s]] (target was deleted)", link),
@@ -415,7 +416,7 @@ func (s *LintService) lintPageLinks(relPath string) []LintIssue {
 	var issues []LintIssue
 	for _, link := range links {
 		target := strings.ToLower(link)
-		if !slugs[target] {
+		if _, ok := slugs[target]; !ok {
 			issues = append(issues, LintIssue{
 				File: relPath, Check: "links", Level: "WARN",
 				Message: fmt.Sprintf("broken link [[%s]]", link),

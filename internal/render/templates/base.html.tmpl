@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ .Title }} — {{ .SiteTitle }}</title>
+{{- if .Description }}
+<meta name="description" content="{{ .Description }}">
+{{- end }}
+<link rel="stylesheet" href="/_/static/wiki.css">
+{{- if .HasMath }}
+<link rel="stylesheet" href="/_/static/vendor/katex/katex.min.css">
+{{- end }}
+<link rel="canonical" href="{{ .RelativeURL }}">
+<meta name="generator" content="my-wiki native renderer">
+</head>
+<body hx-ext="morph" data-active-path="{{ .ActivePath }}">
+
+<a class="skip-link" href="#main">Skip to content</a>
+<div id="a11y-announcer" class="sr-only" role="status" aria-live="polite"></div>
+
+<div class="layout">
+
+  <aside class="sidebar sidebar-left" aria-label="Navigation" hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top">
+    <h1 class="page-title"><a href="/">{{ .SiteTitle }}</a></h1>
+    <div class="search">
+      <button type="button" class="search-button" aria-label="Search">Search</button>
+    </div>
+    <div class="darkmode" x-data="{ mode: $persist('auto').as('darkmode') }">
+      <button type="button" x-on:click="mode = (mode === 'dark' ? 'light' : 'dark'); document.documentElement.setAttribute('data-theme', mode)" :aria-label="'Toggle theme: ' + mode">
+        <span x-show="mode === 'dark'">Light mode</span>
+        <span x-show="mode !== 'dark'">Dark mode</span>
+      </button>
+    </div>
+    <nav class="explorer" aria-label="Site navigation">
+      <ul id="explorer-tree">
+        <li><a href="/">Home</a></li>
+      </ul>
+    </nav>
+  </aside>
+
+  <main id="main" tabindex="-1" hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top">
+    {{ template "content" . }}
+  </main>
+
+  {{- if not .IsListPage }}
+  <aside class="sidebar sidebar-right" aria-label="Page tools">
+    {{- if .TOC }}
+    <nav class="toc" aria-label="On this page">
+      <h2>On this page</h2>
+      <ul>
+        {{- range .TOC }}
+        <li class="toc-depth-{{ .Depth }}"><a href="#{{ .Anchor }}">{{ .Text }}</a></li>
+        {{- end }}
+      </ul>
+    </nav>
+    {{- end }}
+    {{- if .Backlinks }}
+    <section class="backlinks">
+      <h2>Backlinks</h2>
+      <ul>
+        {{- range .Backlinks }}
+        <li><a href="{{ .URL }}">{{ .Title }}</a>{{ if .Snippet }} — <span class="backlink-snippet">{{ .Snippet }}</span>{{ end }}</li>
+        {{- end }}
+      </ul>
+    </section>
+    {{- end }}
+  </aside>
+  {{- end }}
+
+</div>
+
+<script src="/_/static/vendor/htmx.min.js" defer></script>
+<script src="/_/static/vendor/htmx-idiomorph-ext.min.js" defer></script>
+<script src="/_/static/vendor/alpine-persist.min.js" defer></script>
+<script src="/_/static/vendor/alpine.min.js" defer></script>
+<script src="/_/static/wiki.js" defer></script>
+{{- if .HasMath }}
+<script src="/_/static/vendor/katex/katex.min.js" defer></script>
+<script src="/_/static/vendor/katex/auto-render.min.js" defer></script>
+{{- end }}
+{{- if .HasMermaid }}
+<script type="module">
+  import mermaid from "/_/static/vendor/mermaid.min.js";
+  window.mermaid = mermaid;
+  mermaid.initialize({ startOnLoad: true });
+</script>
+{{- end }}
+
+</body>
+</html>
+
+{{ define "content" }}
+<article class="page" data-slug="{{ .Slug }}">
+  <nav class="breadcrumbs" aria-label="Breadcrumb">
+    <ol>
+      {{- range .BreadcrumbItems }}
+      <li{{ if .Last }} aria-current="page"{{ end }}>
+        {{- if .Last -}}
+          {{ .Label }}
+        {{- else -}}
+          <a href="{{ .URL }}">{{ .Label }}</a>
+        {{- end -}}
+      </li>
+      {{- end }}
+    </ol>
+  </nav>
+  <header class="article-header">
+    <h1 class="article-title">{{ .Title }}</h1>
+    {{- if or (not .Created.IsZero) .ReadingTime .Tags }}
+    <div class="article-meta">
+      {{- if not .Created.IsZero }}<time datetime="{{ formatDate .Created }}">{{ formatDateLong .Created }}</time>{{ end }}
+      {{- if .ReadingTime }} · <span class="reading-time">{{ readingTime .ReadingTime }}</span>{{ end }}
+      {{- if .Tags }} · <span class="tags">{{ range $i, $t := .Tags }}{{ if $i }}, {{ end }}<a href="/tags/{{ $t }}/">#{{ $t }}</a>{{ end }}</span>{{ end }}
+    </div>
+    {{- end }}
+    {{- if and (not .IsListPage) .Slug }}
+    <a class="raw-link" href="/{{ .Slug }}.md" hx-boost="false">View source</a>
+    {{- end }}
+  </header>
+
+  <div class="article-body">
+    {{- if .IsListPage }}
+      {{- if .ListEntries }}
+      <ul class="list-entries">
+        {{- range .ListEntries }}
+        <li>
+          <a href="{{ .URL }}">{{ .Title }}</a>
+          {{- if .Description }} — {{ .Description }}{{ end }}
+        </li>
+        {{- end }}
+      </ul>
+      {{- else }}
+      <p>Nothing here yet.</p>
+      {{- end }}
+    {{- else }}
+      {{ .ContentHTML }}
+    {{- end }}
+  </div>
+</article>
+{{ end }}

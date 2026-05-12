@@ -9,12 +9,21 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/spf13/cobra v1.10.2
+	github.com/yuin/goldmark v1.8.2
+	github.com/yuin/goldmark-emoji v1.0.6
+	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
+	github.com/yuin/goldmark-meta v1.1.0
+	go.abhg.dev/goldmark/mermaid v0.6.0
+	go.abhg.dev/goldmark/wikilink v0.6.0
 	go.yaml.in/yaml/v2 v2.4.2
+	golang.org/x/sync v0.20.0
 )
 
 require (
+	github.com/alecthomas/chroma/v2 v2.24.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -29,4 +38,5 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
+	gopkg.in/yaml.v2 v2.3.0 // indirect
 )

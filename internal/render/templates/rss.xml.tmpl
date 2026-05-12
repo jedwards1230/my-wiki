@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+  <title>{{ .SiteTitle }}</title>
+  <link>{{ .SiteURL }}</link>
+  <description>{{ .Description }}</description>
+  {{- range .Items }}
+  <item>
+    <title>{{ .Title }}</title>
+    <link>{{ .URL }}</link>
+    {{- if .Description }}<description>{{ .Description }}</description>{{ end }}
+    {{- if .PubDate }}<pubDate>{{ .PubDate }}</pubDate>{{ end }}
+    <guid>{{ .URL }}</guid>
+  </item>
+  {{- end }}
+</channel>
+</rss>
