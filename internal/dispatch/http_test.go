@@ -254,7 +254,12 @@ func TestHTTPDispatcher_RetryThenSucceed(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 
-	waitUntil(t, 2*time.Second, func() bool { return atomic.LoadInt32(&hits) >= 3 })
+	// Wait for the success counter, not just for hits — the counter is
+	// incremented after the request returns to the dispatcher goroutine,
+	// so polling hits leaves a race window where the counter is still 0.
+	waitUntil(t, 5*time.Second, func() bool {
+		return labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeSuccess) >= 1
+	})
 
 	if got := labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeSuccess); got != 1 {
 		t.Errorf("success counter: got %v want 1", got)

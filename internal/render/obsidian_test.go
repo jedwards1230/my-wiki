@@ -175,6 +175,39 @@ func TestWikilinkHomePage(t *testing.T) {
 	}
 }
 
+// Wikilinks to folder-index pages (e.g. [[home/index|home/]]) must resolve
+// to the folder URL ("/home/") not the raw slug URL ("/home/index/").
+func TestWikilinkFolderIndex(t *testing.T) {
+	slugs := map[string]string{
+		"home/index": "home/index",
+		"home":       "home/index", // basename shortcut
+	}
+	cases := []struct {
+		name string
+		in   string
+		want string
+		miss string
+	}{
+		// Full-path target with alias: [[home/index|home/]]
+		{"full-path-alias", "[[home/index|home/]]", `href="/home/"`, `/home/index/`},
+		// Bare basename target: [[home]]
+		{"basename", "[[home]]", `href="/home/"`, `/home/index/`},
+		// Obsidian raw format uses \| as alias separator: [[home/index\|home/]]
+		{"obsidian-escaped-pipe", `[[home/index\|home/]]`, `href="/home/"`, `/home/index/`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := renderMD(t, c.in, slugs)
+			if !strings.Contains(out, c.want) {
+				t.Errorf("folder-index wikilink %q: expected %q in %q", c.in, c.want, out)
+			}
+			if strings.Contains(out, c.miss) {
+				t.Errorf("folder-index wikilink %q: unexpected %q in %q", c.in, c.miss, out)
+			}
+		})
+	}
+}
+
 func TestEmbedImage(t *testing.T) {
 	slugs := map[string]string{}
 	out := renderMD(t, "![[fixtures/photo.png]]", slugs)
@@ -227,6 +260,23 @@ func TestRenderPageTagsAndHomeURL(t *testing.T) {
 	}
 	if q.RelativeURL != "/notes/foo/" {
 		t.Errorf("nested page RelativeURL = %q, want \"/notes/foo/\"", q.RelativeURL)
+	}
+
+	// Folder-index pages (e.g. home/index.md) collapse to /<folder>/ so
+	// the sitemap, breadcrumb, tag-page entries, and resolver agree.
+	f, err := r.RenderPage("home/index.md", []byte("# home\n"), time.Time{})
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	if f.RelativeURL != "/home/" {
+		t.Errorf("folder-index RelativeURL = %q, want \"/home/\"", f.RelativeURL)
+	}
+	deep, err := r.RenderPage("research/aerospace/index.md", []byte("# aerospace\n"), time.Time{})
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	if deep.RelativeURL != "/research/aerospace/" {
+		t.Errorf("deep folder-index RelativeURL = %q, want \"/research/aerospace/\"", deep.RelativeURL)
 	}
 }
 
