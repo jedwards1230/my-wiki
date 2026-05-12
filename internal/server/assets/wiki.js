@@ -159,6 +159,22 @@
   // then keep idle. Click a node to navigate.
   let graphCache = null;
   let graphRaf = 0;
+
+  // Persistent set of slugs the user has visited this session. Powers the
+  // visited-vs-unvisited node coloring (Quartz parity). Best-effort —
+  // localStorage failures (private browsing, quota) degrade silently to
+  // "nothing is marked visited" rather than throwing.
+  const GRAPH_VISITED_KEY = "wiki-graph-visited";
+  function loadVisited() {
+    try {
+      const raw = localStorage.getItem(GRAPH_VISITED_KEY);
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch (_) { return new Set(); }
+  }
+  function saveVisited(set) {
+    try { localStorage.setItem(GRAPH_VISITED_KEY, JSON.stringify([...set])); } catch (_) { /* ignore */ }
+  }
+
   function initGraph() {
     cancelAnimationFrame(graphRaf);
     const cv = document.querySelector(".graph-canvas[data-graph-src]");
@@ -168,6 +184,12 @@
     if (!slug || !src) return;
     const ctx = cv.getContext("2d");
     if (!ctx) return;
+
+    // Mark the current page as visited so the next page's graph paints
+    // this node in the visited color.
+    const visited = loadVisited();
+    if (!visited.has(slug)) { visited.add(slug); saveVisited(visited); }
+
     const dpr = window.devicePixelRatio || 1;
     const W = cv.width, H = cv.height;
     cv.width = W * dpr; cv.height = H * dpr;
@@ -188,6 +210,18 @@
       });
       const keep = new Set([slug]);
       (adj.get(slug) || new Set()).forEach(id => keep.add(id));
+
+      // Count site-wide links per node — drives node radius so hub pages
+      // visually stand out (Quartz: `2 + sqrt(numLinks)`, capped at 7
+      // so a node never dominates the small right-rail canvas).
+      const siteLinkCount = new Map();
+      g.nodes.forEach(n => siteLinkCount.set(n.id, 0));
+      (g.links || []).forEach(function (l) {
+        siteLinkCount.set(l.source, (siteLinkCount.get(l.source) || 0) + 1);
+        siteLinkCount.set(l.target, (siteLinkCount.get(l.target) || 0) + 1);
+      });
+      const nodeRadius = id => Math.min(7, 2 + Math.sqrt(siteLinkCount.get(id) || 0));
+
       const nodes = g.nodes.filter(n => keep.has(n.id)).map(function (n, i) {
         return {
           id: n.id,
@@ -197,11 +231,26 @@
           y: H / 2 + 40 * Math.sin(i),
           vx: 0, vy: 0,
           here: n.id === slug,
+          visited: visited.has(n.id),
+          r: nodeRadius(n.id),
         };
       });
       const byId = new Map(nodes.map(n => [n.id, n]));
       const links = (g.links || []).filter(l => byId.has(l.source) && byId.has(l.target));
-      // hover state for label rendering
+      // Per-node neighbour set within the displayed subgraph — used for
+      // hover dimming (non-neighbours fade so the active branch reads
+      // clearly).
+      const nbrs = new Map(nodes.map(n => [n.id, new Set([n.id])]));
+      links.forEach(function (l) {
+        nbrs.get(l.source).add(l.target);
+        nbrs.get(l.target).add(l.source);
+      });
+
+      // Persistent labels when the subgraph is small enough to read
+      // comfortably (Quartz parity for the "blank until hover" feel).
+      const showAllLabels = nodes.length <= 15;
+
+      // hover state for label rendering + neighbour dimming
       let hover = null;
       cv.style.cursor = "default";
       cv.onmousemove = function (e) {
@@ -210,18 +259,33 @@
         hover = null;
         for (const n of nodes) {
           const dx = n.x - mx, dy = n.y - my;
-          if (dx * dx + dy * dy < 64) { hover = n; break; }
+          if (dx * dx + dy * dy < (n.r + 4) * (n.r + 4)) { hover = n; break; }
         }
         cv.style.cursor = hover ? "pointer" : "default";
       };
-      cv.onclick = function () { if (hover) window.location.href = hover.url; };
+      cv.onclick = function () {
+        if (!hover) return;
+        // Mark the destination visited before navigating so the next
+        // page's graph picks up the change before reload completes.
+        const v = loadVisited(); v.add(hover.id); saveVisited(v);
+        window.location.href = hover.url;
+      };
       // force layout — short fixed iteration budget
       let iter = 0;
       const maxIter = 400;
       const cs = getComputedStyle(document.documentElement);
-      const fg = cs.getPropertyValue("--graph-edge").trim() || "#a8b5bd";
-      const node = cs.getPropertyValue("--graph-node").trim() || "#284b63";
-      const here = cs.getPropertyValue("--graph-node-active").trim() || "#0b4a6f";
+      const colEdge = cs.getPropertyValue("--graph-edge").trim() || "#a8b5bd";
+      const colNode = cs.getPropertyValue("--graph-node").trim() || "#284b63";
+      const colHere = cs.getPropertyValue("--graph-node-active").trim() || "#0b4a6f";
+      const colVisited = cs.getPropertyValue("--graph-node-visited").trim() || "#84a59d";
+      const colLabel = cs.getPropertyValue("--text").trim() || "#000";
+      function drawLabel(n) {
+        const t = n.title;
+        const tw = ctx.measureText(t).width;
+        const tx = Math.min(W - tw - 4, Math.max(4, n.x + n.r + 2));
+        const ty = Math.max(12, n.y - n.r - 2);
+        ctx.fillText(t, tx, ty);
+      }
       function step() {
         for (let i = 0; i < nodes.length; i++) {
           const a = nodes[i];
@@ -255,25 +319,41 @@
           n.y = Math.max(10, Math.min(H - 10, n.y));
         }
         ctx.clearRect(0, 0, W, H);
-        ctx.strokeStyle = fg; ctx.lineWidth = 1;
+
+        // Links — dim non-neighbours of the hovered node so the active
+        // branch reads clearly. Without hover, all links draw at full
+        // strength.
+        ctx.lineWidth = 1;
+        const hoverNbrs = hover ? nbrs.get(hover.id) : null;
         for (const l of links) {
+          const active = !hoverNbrs || (hoverNbrs.has(l.source) && hoverNbrs.has(l.target));
+          ctx.globalAlpha = active ? 1 : 0.15;
+          ctx.strokeStyle = colEdge;
           const a = byId.get(l.source), b = byId.get(l.target);
           ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
         }
+        // Nodes — same dimming rule; current page always full strength.
         for (const n of nodes) {
+          const active = !hoverNbrs || hoverNbrs.has(n.id) || n.here;
+          ctx.globalAlpha = active ? 1 : 0.25;
           ctx.beginPath();
-          ctx.arc(n.x, n.y, n.here ? 5 : 4, 0, Math.PI * 2);
-          ctx.fillStyle = n.here ? here : node;
+          ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+          ctx.fillStyle = n.here ? colHere : (n.visited ? colVisited : colNode);
           ctx.fill();
         }
-        if (hover) {
-          ctx.fillStyle = cs.getPropertyValue("--text").trim() || "#000";
-          ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
-          const t = hover.title;
-          const tw = ctx.measureText(t).width;
-          const tx = Math.min(W - tw - 4, Math.max(4, hover.x + 8));
-          const ty = Math.max(12, hover.y - 8);
-          ctx.fillText(t, tx, ty);
+        ctx.globalAlpha = 1;
+
+        // Labels: always show on the hovered node; show on all nodes
+        // when the subgraph is small enough to read comfortably.
+        ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+        ctx.fillStyle = colLabel;
+        if (showAllLabels) {
+          for (const n of nodes) {
+            if (hoverNbrs && !hoverNbrs.has(n.id) && !n.here) continue;
+            drawLabel(n);
+          }
+        } else if (hover) {
+          drawLabel(hover);
         }
         if (++iter < maxIter || hover) {
           graphRaf = requestAnimationFrame(step);
