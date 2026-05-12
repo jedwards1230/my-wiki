@@ -49,6 +49,7 @@ func WithPageService(ps *service.PageService) HandlerOption {
 
 // Handler holds all API services and registers routes.
 type Handler struct {
+	vault           *vault.Vault
 	vaultDir        string
 	lint            *service.LintService
 	directory       *service.DirectoryService
@@ -68,6 +69,7 @@ type Handler struct {
 func NewHandler(v *vault.Vault, searchSvc *service.SearchService, opts ...HandlerOption) *Handler {
 	logSvc := service.NewLogService(v.Storage)
 	h := &Handler{
+		vault:     v,
 		vaultDir:  v.Dir,
 		lint:      service.NewLintService(v, logSvc),
 		directory: service.NewDirectoryService(v),
@@ -94,6 +96,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/pages", h.wrapRead(http.HandlerFunc(h.handlePageList)))
 	mux.Handle("GET /api/recent", h.wrapRead(http.HandlerFunc(h.handleRecentList)))
 	mux.Handle("GET /api/search", h.wrapRead(http.HandlerFunc(h.handleSearch)))
+	mux.Handle("GET /api/graph.json", h.wrapRead(http.HandlerFunc(h.handleGraph)))
 	mux.Handle("GET /api/tags", h.wrapRead(http.HandlerFunc(h.handleTags)))
 	mux.Handle("GET /api/whoami", h.wrapRead(http.HandlerFunc(h.handleWhoami)))
 

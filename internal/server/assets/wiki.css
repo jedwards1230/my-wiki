@@ -74,6 +74,12 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
 
+  /* Graph view (right-rail widget). */
+  --graph-edge: rgba(78, 78, 78, 0.35);
+  --graph-node: var(--secondary);
+  --graph-node-active: #0b4a6f;
+  --text: var(--dark);
+
   --font-header: "Schibsted Grotesk", system-ui, sans-serif;
   --font-body: "Source Sans 3", system-ui, sans-serif;
   --font-code: "IBM Plex Mono", ui-monospace, monospace;
@@ -89,6 +95,10 @@ html[data-theme="dark"] {
   --tertiary: #84a59d;
   --highlight: rgba(143, 159, 169, 0.15);
   --textHighlight: #fff23688;
+  --graph-edge: rgba(212, 212, 212, 0.3);
+  --graph-node: var(--secondary);
+  --graph-node-active: #b3d9ec;
+  --text: var(--dark);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -490,6 +500,25 @@ p code, li code {
   margin: 0;
 }
 
+/* ----------- Graph view (right-rail widget) */
+
+.graph {
+  margin: 0 0 1.5rem 0;
+}
+.graph h2 {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem 0;
+}
+.graph-canvas {
+  display: block;
+  width: 100%;
+  max-width: 280px;
+  height: 200px;
+  border: 1px solid var(--lightgray);
+  border-radius: var(--radius);
+  background: var(--light);
+}
+
 /* ----------- Reduced motion */
 
 @media (prefers-reduced-motion: reduce) {
@@ -498,4 +527,5 @@ p code, li code {
     transition-duration: 0.001s !important;
   }
   html { scroll-behavior: auto; }
+  .graph-canvas { display: none; }
 }
