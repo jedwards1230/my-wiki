@@ -14,6 +14,7 @@ import (
 
 	"github.com/jedwards1230/my-wiki/internal/memfs"
 	"github.com/jedwards1230/my-wiki/internal/vault"
+	"github.com/jedwards1230/my-wiki/internal/version"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -101,7 +102,7 @@ func (b *Builder) RenderFragment(urlPath string) ([]byte, bool) {
 	if r == nil || p == nil {
 		return nil, false
 	}
-	td := TemplateData{Page: p, SiteTitle: b.cfg.SiteTitle, ActivePath: p.RelativeURL}
+	td := TemplateData{Page: p, SiteTitle: b.cfg.SiteTitle, ActivePath: p.RelativeURL, Version: version.Value}
 	buf, err := r.RenderFragment(p, td)
 	if err != nil {
 		return nil, false
@@ -272,6 +273,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 			SiteTitle:  b.cfg.SiteTitle,
 			ActivePath: p.RelativeURL,
 			BuildDate:  now.Format("2006-01-02"),
+			Version:    version.Value,
 		}
 		buf, err := r.RenderToBytes(p, td)
 		if err != nil {
@@ -299,7 +301,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 			IsListPage:      true,
 			ListEntries:     pagesToEntries(ps),
 		}
-		td := TemplateData{Page: page, SiteTitle: b.cfg.SiteTitle, ActivePath: page.RelativeURL}
+		td := TemplateData{Page: page, SiteTitle: b.cfg.SiteTitle, ActivePath: page.RelativeURL, Version: version.Value}
 		buf, err := r.RenderList(page, td)
 		if err != nil {
 			return nil, fmt.Errorf("render tag %s: %w", tag, err)
@@ -329,6 +331,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 	notFoundData := TemplateData{
 		Page:      &Page{Title: "Not found", Slug: "404", RelativeURL: "/404/"},
 		SiteTitle: b.cfg.SiteTitle,
+		Version:   version.Value,
 	}
 	if buf, err := r.Render404(notFoundData); err == nil {
 		_ = snap.AddFile("404.html", buf, now)

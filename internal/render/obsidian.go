@@ -43,6 +43,12 @@ func (r *SlugResolver) ResolveWikilink(n *wikilink.Node) ([]byte, error) {
 	target := string(n.Target)
 	frag := string(n.Fragment)
 
+	// Obsidian stores aliased wikilinks as [[target\|alias]] in raw markdown.
+	// The abhg wikilink parser does not treat \| as an escape sequence, so the
+	// target arrives with a trailing backslash. Strip it so the slug lookup
+	// against "home/index" (not "home/index\") resolves correctly.
+	target = strings.TrimSuffix(target, `\`)
+
 	// Image / embed: [[foo.png]] — the abhg renderer handles embeds via the
 	// Embed flag and emits <img>. We resolve such links to /raw/{target}
 	// because images live in the raw/ tree.
@@ -67,13 +73,16 @@ func (r *SlugResolver) ResolveWikilink(n *wikilink.Node) ([]byte, error) {
 		// Quartz does for broken links.
 		return nil, nil
 	}
-	// "index" is the home page — emit "/" instead of "/index/" so wikilink
-	// hrefs match the canonical URL set by RenderPage and the server's
-	// index.html mount point.
+	// "index" is the home page — emit "/" instead of "/index/".
+	// "foo/index" is a folder index — emit "/foo/" (the folder URL) so
+	// wikilinks like [[home/index|home/]] resolve to the canonical folder URL.
 	var url string
-	if canonical == "index" {
+	switch {
+	case canonical == "index":
 		url = "/"
-	} else {
+	case strings.HasSuffix(canonical, "/index"):
+		url = "/" + strings.TrimSuffix(canonical, "/index") + "/"
+	default:
 		url = "/" + canonical + "/"
 	}
 	if frag != "" {
@@ -790,7 +799,7 @@ func (r *transcludeRenderer) render(w util.BufWriter, src []byte, node ast.Node,
 	hasDestKeys.Store(n, struct{}{})
 	_, _ = w.WriteString(`<a href="`)
 	_, _ = w.Write(util.URLEscape(dest, true))
-	_, _ = w.WriteString(`">`)
+	_, _ = w.WriteString(`" class="internal">`)
 	return ast.WalkContinue, nil
 }
 

@@ -188,6 +188,7 @@ type TemplateData struct {
 	SiteTitle  string
 	ActivePath string // for explorer active-state — same as Page.RelativeURL
 	BuildDate  string
+	Version    string
 }
 
 // ParsePage parses a page's source to AST without rendering. Used by

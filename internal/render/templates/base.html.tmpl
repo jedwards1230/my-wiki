@@ -28,8 +28,8 @@
     </div>
     <div class="darkmode" x-data="{ mode: $persist('auto').as('darkmode') }">
       <button type="button" x-on:click="mode = (mode === 'dark' ? 'light' : 'dark'); document.documentElement.setAttribute('data-theme', mode)" :aria-label="'Toggle theme: ' + mode">
-        <span x-show="mode === 'dark'">Light mode</span>
-        <span x-show="mode !== 'dark'">Dark mode</span>
+        <svg x-show="mode === 'dark'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        <svg x-show="mode !== 'dark'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       </button>
     </div>
     <nav class="explorer" aria-label="Site navigation">
@@ -70,6 +70,10 @@
 
 </div>
 
+<footer class="site-footer">
+  <p>my-wiki v{{ .Version }}</p>
+</footer>
+
 <script src="/_/static/vendor/htmx.min.js" defer></script>
 <script src="/_/static/vendor/htmx-idiomorph-ext.min.js" defer></script>
 <script src="/_/static/vendor/alpine-persist.min.js" defer></script>
@@ -107,12 +111,18 @@
   </nav>
   <header class="article-header">
     <h1 class="article-title">{{ .Title }}</h1>
-    {{- if or (not .Created.IsZero) .ReadingTime .Tags }}
+    {{- if or (not .Created.IsZero) .ReadingTime }}
     <div class="article-meta">
       {{- if not .Created.IsZero }}<time datetime="{{ formatDate .Created }}">{{ formatDateLong .Created }}</time>{{ end }}
       {{- if .ReadingTime }} · <span class="reading-time">{{ readingTime .ReadingTime }}</span>{{ end }}
-      {{- if .Tags }} · <span class="tags">{{ range $i, $t := .Tags }}{{ if $i }}, {{ end }}<a href="/tags/{{ $t }}/">#{{ $t }}</a>{{ end }}</span>{{ end }}
     </div>
+    {{- end }}
+    {{- if .Tags }}
+    <ul class="tags">
+      {{- range .Tags }}
+      <li><a href="/tags/{{ . }}/" class="internal tag-link">{{ . }}</a></li>
+      {{- end }}
+    </ul>
     {{- end }}
     {{- if and (not .IsListPage) .Slug }}
     <a class="raw-link" href="/{{ .Slug }}.md" hx-boost="false">View source</a>
