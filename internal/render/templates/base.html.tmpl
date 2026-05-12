@@ -64,6 +64,12 @@
 
   {{- if not .IsListPage }}
   <aside class="sidebar sidebar-right" aria-label="Page tools">
+    {{- if .Slug }}
+    <section class="graph" aria-label="Graph view">
+      <h2>Graph View</h2>
+      <canvas class="graph-canvas" data-slug="{{ .Slug }}" data-graph-src="/api/graph.json" width="280" height="200"></canvas>
+    </section>
+    {{- end }}
     {{- if .TOC }}
     <nav class="toc" aria-label="On this page">
       <h2>On this page</h2>
