@@ -76,8 +76,9 @@
 
   /* Graph view (right-rail widget). */
   --graph-edge: rgba(78, 78, 78, 0.35);
-  --graph-node: var(--secondary);
-  --graph-node-active: #0b4a6f;
+  --graph-node: var(--gray);
+  --graph-node-visited: var(--tertiary);
+  --graph-node-active: var(--secondary);
   --text: var(--dark);
 
   --font-header: "Schibsted Grotesk", system-ui, sans-serif;
@@ -96,8 +97,9 @@ html[data-theme="dark"] {
   --highlight: rgba(143, 159, 169, 0.15);
   --textHighlight: #fff23688;
   --graph-edge: rgba(212, 212, 212, 0.3);
-  --graph-node: var(--secondary);
-  --graph-node-active: #b3d9ec;
+  --graph-node: var(--gray);
+  --graph-node-visited: var(--tertiary);
+  --graph-node-active: var(--secondary);
   --text: var(--dark);
 }
 
@@ -130,10 +132,12 @@ body {
 
 a {
   color: var(--secondary);
+  font-weight: 500;
   text-decoration: none;
+  transition: color 0.15s ease;
 }
 a:hover {
-  text-decoration: underline;
+  color: var(--tertiary);
 }
 a.broken {
   color: var(--gray);
@@ -342,34 +346,38 @@ body.right-rail-collapsed .right-rail-toggle {
 
 .sidebar {
   font-size: 0.9rem;
+  line-height: 1.4;
 }
 .sidebar h2 {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--darkgray);
+  margin: 1rem 0 0.4rem;
 }
 .sidebar ul {
   list-style: none;
   padding-left: 0;
-  margin: 0.5rem 0;
+  margin: 0.25rem 0;
 }
 .sidebar li {
-  margin: 0.25rem 0;
+  margin: 0;
 }
 
 .page-title {
   font-family: var(--font-header);
   font-size: 1.4rem;
-  margin: 0 0 1rem;
+  margin: 0 0 0.6rem;
+  line-height: 1.2;
 }
 .page-title a {
   color: var(--dark);
+  font-weight: 700;
 }
 
 .search {
   position: relative;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 .search-input {
   width: 100%;
@@ -427,7 +435,7 @@ body.right-rail-collapsed .right-rail-toggle {
   cursor: pointer;
 }
 .darkmode {
-  margin: 0.5rem 0;
+  margin: 0.25rem 0;
 }
 .darkmode button {
   background: none;
@@ -447,7 +455,7 @@ body.right-rail-collapsed .right-rail-toggle {
 /* ----------- Explorer tree (left sidebar) */
 
 .explorer {
-  margin-top: 0.5rem;
+  margin-top: 0.25rem;
 }
 
 /* Top-level "Explorer" disclosure widget — always open on load */
@@ -460,14 +468,14 @@ body.right-rail-collapsed .right-rail-toggle {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--darkgray);
   font-family: var(--font-header);
   font-weight: 700;
   user-select: none;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.35rem;
 }
 .explorer-top > summary::-webkit-details-marker { display: none; }
 .explorer-top > summary::marker { display: none; }
@@ -486,8 +494,13 @@ body.right-rail-collapsed .right-rail-toggle {
   padding-left: 0;
   margin: 0;
 }
+/* Nested branches indent slightly and get a faint guide-line on the
+   left (Quartz parity) so the tree shape is readable without taking
+   much horizontal room. */
 .explorer-ul .explorer-ul {
-  padding-left: 1rem;
+  margin-left: 6px;
+  padding-left: 0.7rem;
+  border-left: 1px solid var(--lightgray);
 }
 
 .explorer-folder > details > summary {
@@ -496,8 +509,9 @@ body.right-rail-collapsed .right-rail-toggle {
   align-items: center;
   gap: 0.3rem;
   cursor: pointer;
-  padding: 0.1rem 0;
+  padding: 0.1rem 0.25rem 0.1rem 0;
   font-size: 0.9rem;
+  line-height: 1.4;
   color: var(--dark);
   user-select: none;
   border-radius: 4px;
@@ -531,10 +545,11 @@ body.right-rail-collapsed .right-rail-toggle {
 .folder-link:hover { text-decoration: underline; }
 
 .explorer-file {
-  padding: 0.1rem 0;
+  padding: 0;
 }
 .explorer-link {
   font-size: 0.9rem;
+  line-height: 1.4;
   display: block;
   padding: 0.1rem 0.25rem;
   border-radius: 4px;
@@ -606,17 +621,19 @@ ul.tags li {
   margin: 0;
 }
 
-/* Chip pill shared by tag-links and inline wikilinks */
+/* Chip pill shared by tag-links and inline wikilinks. Matches Quartz's
+   `a.internal` shape (highlight bg, 5px radius, tight 0.1rem padding,
+   1.4rem line-height so the pill height matches our 1.55 body
+   line-box and doesn't push surrounding lines apart). */
 a.internal {
   background: var(--highlight);
   border-radius: 5px;
-  padding: 0 0.1em;
-  text-decoration: none;
+  padding: 0 0.1rem;
+  line-height: 1.4rem;
   color: var(--secondary);
 }
 a.internal:hover {
-  background: var(--highlight);
-  text-decoration: underline;
+  color: var(--tertiary);
 }
 
 /* Tag-link chips (larger padding than plain wikilinks) */
