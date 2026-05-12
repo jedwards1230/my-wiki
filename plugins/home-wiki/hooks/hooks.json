@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Is there anything from this turn worth capturing in the Home Wiki (shared knowledge base for homelab, projects, guides, research)? Answer ok:true if nothing worth capturing. Answer ok:true with a brief note if something is worth capturing."
+          }
+        ]
+      }
+    ]
+  }
+}

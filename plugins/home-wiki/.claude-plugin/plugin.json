@@ -1,0 +1,9 @@
+{
+  "name": "home-wiki",
+  "version": "0.0.6",
+  "description": "Home Wiki MCP tools and Stop hook for wiki capture prompts",
+  "author": {
+    "name": "jedwards1230"
+  },
+  "repository": "https://github.com/jedwards1230/my-wiki"
+}

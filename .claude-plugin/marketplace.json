@@ -1,0 +1,16 @@
+{
+  "name": "jedwards1230-my-wiki",
+  "owner": {
+    "name": "jedwards1230"
+  },
+  "metadata": {
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "home-wiki",
+      "source": "./plugins/home-wiki",
+      "description": "Home Wiki MCP tools and Stop hook for wiki capture prompts"
+    }
+  ]
+}
