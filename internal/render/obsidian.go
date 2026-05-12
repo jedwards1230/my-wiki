@@ -580,6 +580,126 @@ func extractTOC(doc ast.Node, source []byte) []TOCEntry {
 }
 
 // =============================================================================
+// Inline #tag parser → <a class="internal tag-link" href="/tags/{tag}/">
+// =============================================================================
+
+// inlineTagNode is the AST node for `#tag`, `#tag/sub`, `#tag/sub/sub`.
+type inlineTagNode struct {
+	ast.BaseInline
+	tag string // normalized tag slug (lowercase, no leading #)
+}
+
+var kindInlineTag = ast.NewNodeKind("ObsidianInlineTag")
+
+func (n *inlineTagNode) Kind() ast.NodeKind         { return kindInlineTag }
+func (n *inlineTagNode) Dump(src []byte, level int) { ast.DumpHelper(n, src, level, nil, nil) }
+
+// inlineTagParser matches `#tag`, `#tag/sub`, `#tag/sub/sub` in body text.
+// False-positive guards (enforced in Parse):
+//   - Goldmark handles `[link](#anchor)` as a link destination before
+//     inline parsers run — the `#` inside `()` is never seen by us.
+//   - `# Heading` is a block-level ATX heading and never reaches inline
+//     parsing.
+//   - Inline code spans are already consumed by goldmark's code-span
+//     parser (priority 100) before we run (priority 97), so `#` inside
+//     backtick spans is invisible to us.
+//   - We reject `#` immediately preceded by an alphanumeric, `_`, `(`,
+//     or `[` in the source line to avoid matching URL fragments and
+//     issue-number patterns like `commit-#1234` or `[link](#anchor)`.
+type inlineTagParser struct{}
+
+func (p *inlineTagParser) Trigger() []byte { return []byte{'#'} }
+
+// isTagStart returns true when b is the first byte of a valid tag char
+// (lowercase ASCII letter, digit, `/`, or `-`). We require the first
+// char after `#` to be a lowercase letter so bare `#` or `#1234`
+// commit refs don't match.
+func isTagStart(b byte) bool {
+	return b >= 'a' && b <= 'z'
+}
+
+// isTagContinue returns true for chars that can follow the opening letter.
+func isTagContinue(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '/' || b == '-' || b == '_'
+}
+
+func (p *inlineTagParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
+	line, segment := block.PeekLine()
+	if len(line) < 2 || line[0] != '#' {
+		return nil
+	}
+
+	// Guard: reject `#` preceded by a word char, `(`, or `[` — those
+	// indicate a URL fragment, issue-number, or markdown link destination.
+	// block.Position() returns the absolute offset into the source;
+	// segment.Start is the byte offset of the current line's start.
+	// The character immediately before the `#` is at segment.Start - 1
+	// relative to the source — but we can read it from the raw source
+	// via the reader's Source() method if available. Simpler: check
+	// whether the column before the trigger is a word/bracket char by
+	// reading back from the segment start + current column offset.
+	//
+	// goldmark advances segment.Start on each Advance call, so the
+	// current position within the line is (current offset - segment.Start).
+	// The character before the `#` on this line (if any) can be found by
+	// checking the last byte consumed before we were called.
+	//
+	// Practical approach: read the source and look at the byte before this
+	// `#`. If the reader doesn't expose the full source we skip this check
+	// (safe to proceed; most false-positives are caught by the block parser).
+	src := block.Source()
+	if segment.Start > 0 {
+		prev := src[segment.Start-1]
+		if (prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') ||
+			(prev >= '0' && prev <= '9') || prev == '_' || prev == '-' ||
+			prev == '(' || prev == '[' {
+			return nil
+		}
+	}
+
+	// The first char after '#' must be a lowercase letter.
+	if !isTagStart(line[1]) {
+		return nil
+	}
+
+	end := 1
+	for end < len(line) && isTagContinue(line[end]) {
+		end++
+	}
+	// Tag must end at a word boundary: next char must not be a tag-continue
+	// char (or we've reached end of line). This is automatically satisfied
+	// by the loop above.
+	if end < 2 {
+		return nil
+	}
+
+	tag := strings.ToLower(string(line[1:end]))
+	n := &inlineTagNode{tag: tag}
+	block.Advance(end) // consume `#tag...`
+	_ = pc
+	return n
+}
+
+type inlineTagRenderer struct{}
+
+func (r *inlineTagRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(kindInlineTag, r.render)
+}
+
+func (r *inlineTagRenderer) render(w util.BufWriter, _ []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkSkipChildren, nil
+	}
+	n := node.(*inlineTagNode)
+	_, _ = w.WriteString(`<a class="internal tag-link" href="/tags/`)
+	_, _ = w.WriteString(n.tag)
+	_, _ = w.WriteString(`/">`)
+	_, _ = w.WriteString(n.tag)
+	_, _ = w.WriteString(`</a>`)
+	return ast.WalkSkipChildren, nil
+}
+
+// =============================================================================
 // Extension assembly
 // =============================================================================
 
@@ -596,6 +716,9 @@ func (e *obsidianExtension) Extend(m goldmark.Markdown) {
 			util.Prioritized(&highlightParser{}, 200),
 			util.Prioritized(&commentParser{}, 199),
 			util.Prioritized(&mathInlineParser{}, 198),
+			// inlineTagParser runs after code-span (100) so #tag inside
+			// backtick spans is never seen here (already consumed).
+			util.Prioritized(&inlineTagParser{}, 97),
 		),
 		parser.WithBlockParsers(
 			util.Prioritized(&mathBlockParser{}, 200),
@@ -611,6 +734,7 @@ func (e *obsidianExtension) Extend(m goldmark.Markdown) {
 			util.Prioritized(&commentRenderer{}, 199),
 			util.Prioritized(&mathRenderer{}, 198),
 			util.Prioritized(newCalloutRenderer(), 197),
+			util.Prioritized(&inlineTagRenderer{}, 97),
 		),
 	)
 }
