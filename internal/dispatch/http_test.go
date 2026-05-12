@@ -299,11 +299,20 @@ func TestHTTPDispatcher_AllRetriesFail(t *testing.T) {
 	// one). Intermediate failures are tracked in retry_total, not
 	// dispatch_total — asserting success=0 confirms nothing slipped
 	// through.
+	//
+	// Wait on the log line, not the counter — the dropped counter is
+	// incremented from a different goroutine than the log emit, so on
+	// slow CI machines the counter can reach 1 microseconds before the
+	// log line is flushed to the buffer. Polling for the log message is
+	// strictly stronger (it implies the counter is also set).
 	waitUntil(t, 3*time.Second, func() bool {
-		return labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeDropped) == 1
+		return strings.Contains(buf.String(), "dispatch.dropped")
 	})
 	if got := atomic.LoadInt32(&hits); got != 3 {
 		t.Errorf("server hits: got %d want 3", got)
+	}
+	if got := labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeDropped); got != 1 {
+		t.Errorf("dropped counter: got %v want 1", got)
 	}
 	if got := labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeSuccess); got != 0 {
 		t.Errorf("success counter: got %v want 0", got)
@@ -313,9 +322,6 @@ func TestHTTPDispatcher_AllRetriesFail(t *testing.T) {
 		t.Errorf("retry_total: got %v want 2", got)
 	}
 	logged := buf.String()
-	if !strings.Contains(logged, "dispatch.dropped") {
-		t.Errorf("expected dispatch.dropped in logs: %s", logged)
-	}
 	if !strings.Contains(logged, "dispatch.attempt.failed") {
 		t.Errorf("expected dispatch.attempt.failed in logs: %s", logged)
 	}
