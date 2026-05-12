@@ -439,13 +439,19 @@ func (r *Renderer) RenderToBytes(_ *Page, data TemplateData) ([]byte, error) {
 
 // RenderFragment re-executes just the `content` block — used by the
 // HX-Request: true branch to swap #main without re-shipping the full
-// shell. Same TemplateData; the template's `{{ define "content" }}`
-// block is executed in isolation.
+// shell. The `content` block emits the inner article; we wrap it in
+// the same `<main id="main">` element the base template uses so that
+// htmx's `hx-select="#main" hx-swap="outerHTML"` finds a #main in the
+// response and the new element keeps the hx-boost / hx-target wiring
+// for subsequent navigations. Without the wrapper htmx selects
+// nothing — the main area renders empty until the user refreshes.
 func (r *Renderer) RenderFragment(_ *Page, data TemplateData) ([]byte, error) {
 	var buf bytes.Buffer
+	buf.WriteString(`<main id="main" tabindex="-1" hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top">`)
 	if err := r.templates.ExecuteTemplate(&buf, "content", data); err != nil {
 		return nil, err
 	}
+	buf.WriteString(`</main>`)
 	return buf.Bytes(), nil
 }
 
