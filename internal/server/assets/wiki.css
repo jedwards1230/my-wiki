@@ -551,8 +551,14 @@ body.right-rail-collapsed .right-rail-toggle {
   color: inherit;
   text-decoration: none;
   font-size: inherit;
+  font-weight: 600; /* explicit — global a{500} overrides inherit */
+  line-height: inherit;
+  display: inline-block;
 }
-.folder-link:hover { text-decoration: underline; }
+.folder-link:hover {
+  color: var(--tertiary);
+  text-decoration: none;
+}
 
 .explorer-file {
   padding: 0;
