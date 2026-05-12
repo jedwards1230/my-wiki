@@ -267,6 +267,7 @@ type TemplateData struct {
 // before any page is rendered — a page can transclude another page that
 // hasn't been visited yet in the render pass.
 func (r *Renderer) ParsePage(path string, source []byte) (*ParsedPage, parser.Context, ast.Node) {
+	source = escapePipesInsideWikilinks(source)
 	ctx := parser.NewContext()
 	reader := text.NewReader(source)
 	doc := r.parseMD.Parser().Parse(reader, parser.WithContext(ctx))
@@ -304,6 +305,7 @@ func (r *Renderer) ParsePage(path string, source []byte) (*ParsedPage, parser.Co
 // TranscludeSource so the visited-set + depth are page-scoped. Without
 // the cache, the shared default goldmark is used.
 func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*Page, error) {
+	source = escapePipesInsideWikilinks(source)
 	p := &Page{Modified: modTime}
 
 	slug := slugFromPath(path)
@@ -483,6 +485,67 @@ func (r *Renderer) Templates() *template.Template { return r.templates }
 func slugFromPath(p string) string {
 	p = strings.TrimSuffix(p, ".md")
 	return filepath.ToSlash(p)
+}
+
+// escapePipesInsideWikilinks rewrites `[[target|alias]]` → `[[target\|alias]]`
+// in the source before goldmark sees it. The GFM table parser runs before
+// inline parsers, so an unescaped pipe inside a wikilink located in a table
+// cell is consumed as a column separator — cell splits in half and the
+// wikilink never resolves. Quartz handles this by running its wikilink
+// transformer pre-parse; we accomplish the same with a tiny scan that only
+// touches text inside `[[...]]` segments.
+//
+// Already-escaped pipes (`\|`) and pipes outside any `[[...]]` are
+// untouched, so this is safe on documents authored either way.
+func escapePipesInsideWikilinks(src []byte) []byte {
+	if len(src) < 4 {
+		return src
+	}
+	var out []byte
+	inLink := false
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if !inLink {
+			if c == '[' && i+1 < len(src) && src[i+1] == '[' {
+				inLink = true
+				if out == nil {
+					out = make([]byte, 0, len(src)+16)
+					out = append(out, src[:i]...)
+				}
+				out = append(out, '[', '[')
+				i++
+				continue
+			}
+			if out != nil {
+				out = append(out, c)
+			}
+			continue
+		}
+		// inside [[...]]
+		if c == ']' && i+1 < len(src) && src[i+1] == ']' {
+			inLink = false
+			out = append(out, ']', ']')
+			i++
+			continue
+		}
+		if c == '\n' {
+			// Wikilinks don't span lines in Obsidian — bail out so a
+			// stray `[[` doesn't accidentally swallow the rest of the
+			// document.
+			inLink = false
+			out = append(out, c)
+			continue
+		}
+		if c == '|' && (i == 0 || src[i-1] != '\\') {
+			out = append(out, '\\', '|')
+			continue
+		}
+		out = append(out, c)
+	}
+	if out == nil {
+		return src
+	}
+	return out
 }
 
 // parseDate accepts the common frontmatter date shapes: ISO 8601, RFC 3339,

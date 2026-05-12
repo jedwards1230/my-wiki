@@ -195,6 +195,60 @@ code, pre, kbd {
   padding: 2rem 1.5rem;
 }
 
+/* Right-rail collapse — body[.right-rail-collapsed] hides the rail
+   contents and zeros its grid column so main expands into the space.
+   The toggle button (.right-rail-toggle) sits at the left edge of the
+   rail when expanded and anchors to the viewport edge when collapsed
+   so it's always reachable. State persisted via Alpine $persist. */
+body.right-rail-collapsed .layout {
+  grid-template-columns: 320px minmax(0, 1fr) 0;
+}
+body.right-rail-collapsed .sidebar-right > *:not(.right-rail-toggle) {
+  display: none;
+}
+body.right-rail-collapsed .sidebar-right {
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  overflow: visible;
+}
+
+.sidebar-right {
+  position: relative;
+}
+.right-rail-toggle {
+  position: absolute;
+  left: -16px;
+  top: 0.5rem;
+  z-index: 10;
+  width: 28px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--light);
+  border: 1px solid var(--lightgray);
+  border-radius: 4px;
+  color: var(--darkgray);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+.right-rail-toggle:hover {
+  color: var(--dark);
+  border-color: var(--gray);
+}
+body.right-rail-collapsed .right-rail-toggle {
+  position: fixed;
+  left: auto;
+  right: 0;
+  top: 5rem;
+  border-radius: 4px 0 0 4px;
+  border-right: none;
+  opacity: 0.85;
+}
+
 @media (max-width: 1199px) {
   .layout {
     grid-template-columns: 320px minmax(0, 1fr);

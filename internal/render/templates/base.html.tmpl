@@ -33,7 +33,7 @@
 
 <meta name="generator" content="my-wiki native renderer">
 </head>
-<body hx-ext="morph" data-active-path="{{ .ActivePath }}" x-data="{ drawer: false }">
+<body hx-ext="morph" data-active-path="{{ .ActivePath }}" x-data="{ drawer: false, rightCollapsed: $persist(false).as('rightRailCollapsed') }" :class="{ 'right-rail-collapsed': rightCollapsed }">
 
 <a class="skip-link" href="#main">Skip to content</a>
 <div id="a11y-announcer" class="sr-only" role="status" aria-live="polite"></div>
@@ -115,6 +115,12 @@
 
   {{- if not .IsListPage }}
   <aside class="sidebar sidebar-right" aria-label="Page tools">
+    <button type="button" class="right-rail-toggle" title="Toggle right sidebar"
+            :aria-label="rightCollapsed ? 'Show page tools' : 'Hide page tools'"
+            :aria-expanded="(!rightCollapsed).toString()"
+            x-on:click="rightCollapsed = !rightCollapsed">
+      <span aria-hidden="true" x-text="rightCollapsed ? '«' : '»'"></span>
+    </button>
     {{- if .Slug }}
     <section class="graph" aria-label="Graph view">
       <h2>Graph View</h2>
