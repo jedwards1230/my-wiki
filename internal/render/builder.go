@@ -302,9 +302,21 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		if err != nil {
 			return nil, fmt.Errorf("render page %s: %w", p.Slug, err)
 		}
-		key := p.Slug + "/index.html"
-		if p.Slug == "index" {
+		// File key must match how Page.RelativeURL is served:
+		//   index            → index.html              (URL "/")
+		//   foo/index        → foo/index.html          (URL "/foo/")
+		//   foo/bar          → foo/bar/index.html      (URL "/foo/bar/")
+		// Without the "/index" collapse, /foo/ would 404 because the
+		// file would live at foo/index/index.html — http.FileServer
+		// only auto-resolves /foo/ to foo/index.html, not deeper.
+		var key string
+		switch {
+		case p.Slug == "index":
 			key = "index.html"
+		case strings.HasSuffix(p.Slug, "/index"):
+			key = strings.TrimSuffix(p.Slug, "/index") + "/index.html"
+		default:
+			key = p.Slug + "/index.html"
 		}
 		if err := snap.AddFile(key, buf, p.Modified); err != nil {
 			return nil, fmt.Errorf("snapshot add %s: %w", key, err)
