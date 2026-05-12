@@ -1,0 +1,25 @@
+# Validates Claude Code plugin marketplace version bumps for this repo.
+# Delegates to the reusable workflow in jedwards1230/claude-plugin-actions so
+# the check logic and bundled script stay in one place.
+name: Plugin Version Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/**"
+      - ".claude-plugin/marketplace.json"
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - "plugins/**"
+      - ".claude-plugin/marketplace.json"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check:
+    uses: jedwards1230/claude-plugin-actions/.github/workflows/check-plugin-versions.yml@v0
+    secrets: inherit
