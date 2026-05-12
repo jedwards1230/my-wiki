@@ -14,14 +14,19 @@
 
   // -------------------------- theme bootstrap --------------------------
   // Persist key matches Alpine's $persist binding so initial paint sees
-  // the user's preferred theme without a flash.
+  // the user's preferred theme without a flash. The persisted value is
+  // "light", "dark", or "auto" — only the first two map to a data-theme
+  // attribute; "auto" (and any unknown value) leaves the attribute unset
+  // so prefers-color-scheme drives the CSS fallback.
   try {
-    const stored = localStorage.getItem("_x_darkmode");
-    const theme = stored
-      ? JSON.parse(stored)
-      : (window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light");
+    let stored = localStorage.getItem("_x_darkmode");
+    if (stored) stored = JSON.parse(stored);
+    let theme = stored;
+    if (theme !== "light" && theme !== "dark") {
+      theme = window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+    }
     document.documentElement.setAttribute("data-theme", theme);
   } catch (_) {
     /* private mode / quota — fall back to OS preference at CSS time */
@@ -78,19 +83,49 @@
       btn.className = "code-copy";
       btn.textContent = "Copy";
       btn.addEventListener("click", function () {
-        navigator.clipboard.writeText(code.textContent || "").then(function () {
-          btn.textContent = "Copied";
-          setTimeout(function () {
-            btn.textContent = "Copy";
-          }, 1500);
-        });
+        const text = code.textContent || "";
+        const restore = function () {
+          setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+        };
+        const onOk = function () { btn.textContent = "Copied"; restore(); };
+        const onErr = function () { btn.textContent = "Failed"; restore(); };
+        // navigator.clipboard requires a secure context; fall back to the
+        // legacy execCommand path so the button works on http:// LAN
+        // deployments and older browsers without throwing.
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(onOk, onErr);
+          return;
+        }
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "absolute";
+          ta.style.left = "-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand && document.execCommand("copy");
+          document.body.removeChild(ta);
+          ok ? onOk() : onErr();
+        } catch (_) {
+          onErr();
+        }
       });
       pre.insertBefore(btn, code);
     });
   }
 
   // -------------------------- TOC scroll spy --------------------------
+  // Module-level observer so successive htmx swaps don't pile up
+  // IntersectionObservers and double-fire scrollspy callbacks across the
+  // session. bindTOCScrollSpy disconnects the prior observer before
+  // wiring a new one against the freshly-swapped headings.
+  let tocObserver = null;
   function bindTOCScrollSpy() {
+    if (tocObserver) {
+      tocObserver.disconnect();
+      tocObserver = null;
+    }
     const tocLinks = document.querySelectorAll(".toc a[href^='#']");
     if (!tocLinks.length || !("IntersectionObserver" in window)) return;
     const byId = new Map();
@@ -100,7 +135,7 @@
       if (target) byId.set(target, a);
     });
     if (!byId.size) return;
-    const io = new IntersectionObserver(
+    tocObserver = new IntersectionObserver(
       function (entries) {
         entries.forEach(function (entry) {
           const link = byId.get(entry.target);
@@ -113,7 +148,7 @@
       },
       { rootMargin: "0px 0px -70% 0px", threshold: 0 }
     );
-    byId.forEach(function (_, heading) { io.observe(heading); });
+    byId.forEach(function (_, heading) { tocObserver.observe(heading); });
   }
 
   // Initial pass on first paint.

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -182,9 +183,11 @@ func TestFragmentShim_HXRequest(t *testing.T) {
 	if !foundVary {
 		t.Errorf("expected Vary to include HX-Request, got %v", resp.Header.Values("Vary"))
 	}
-	buf := make([]byte, 64)
-	n, _ := resp.Body.Read(buf)
-	if string(buf[:n]) != "<article>fragment</article>" {
-		t.Errorf("got body %q, want fragment", string(buf[:n]))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != "<article>fragment</article>" {
+		t.Errorf("got body %q, want fragment", string(body))
 	}
 }

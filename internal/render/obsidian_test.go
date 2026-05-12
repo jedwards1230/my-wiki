@@ -161,6 +161,20 @@ func TestWikilinkResolution(t *testing.T) {
 	}
 }
 
+// Wikilinks to the home page must resolve to "/" (not "/index/") so the
+// site has a single canonical home URL that agrees with RenderPage and
+// the server's index.html mount point.
+func TestWikilinkHomePage(t *testing.T) {
+	slugs := map[string]string{"index": "index"}
+	out := renderMD(t, "Back to [[index]].", slugs)
+	if !strings.Contains(out, `href="/"`) {
+		t.Errorf("expected wikilink to home to render as href=\"/\" in %q", out)
+	}
+	if strings.Contains(out, `href="/index/"`) {
+		t.Errorf("home wikilink should not use /index/ in %q", out)
+	}
+}
+
 func TestEmbedImage(t *testing.T) {
 	slugs := map[string]string{}
 	out := renderMD(t, "![[fixtures/photo.png]]", slugs)
@@ -177,6 +191,42 @@ func TestBlockRef(t *testing.T) {
 	}
 	if strings.Contains(out, "^my-anchor") {
 		t.Errorf("block ref marker not stripped from output: %q", out)
+	}
+}
+
+// RenderPage must normalize frontmatter tags to the Page.Tags contract:
+// lowercase + sorted + deduplicated. Also asserts the home-page URL
+// override.
+func TestRenderPageTagsAndHomeURL(t *testing.T) {
+	r, err := NewRenderer(nil)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	src := []byte("---\ntitle: Home\ntags: [Zeta, alpha, Beta, alpha]\n---\nbody\n")
+	p, err := r.RenderPage("index.md", src, time.Time{})
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	wantTags := []string{"alpha", "beta", "zeta"}
+	if len(p.Tags) != len(wantTags) {
+		t.Fatalf("tags = %v, want %v", p.Tags, wantTags)
+	}
+	for i, w := range wantTags {
+		if p.Tags[i] != w {
+			t.Errorf("tags[%d] = %q, want %q (full: %v)", i, p.Tags[i], w, p.Tags)
+		}
+	}
+	if p.RelativeURL != "/" {
+		t.Errorf("home page RelativeURL = %q, want \"/\"", p.RelativeURL)
+	}
+
+	// Non-home page should keep the /{slug}/ form.
+	q, err := r.RenderPage("notes/foo.md", []byte("# foo\n"), time.Time{})
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	if q.RelativeURL != "/notes/foo/" {
+		t.Errorf("nested page RelativeURL = %q, want \"/notes/foo/\"", q.RelativeURL)
 	}
 }
 

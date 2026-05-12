@@ -28,7 +28,10 @@ type Page struct {
 
 	// RelativeURL is the URL the user navigates to: `/{Slug}/`. Always has
 	// a leading slash and trailing slash for content pages so the breadcrumb
-	// + canonical link templates can concatenate without surgery.
+	// + canonical link templates can concatenate without surgery. The home
+	// page (Slug=="index") is the one exception: its RelativeURL is "/" so
+	// the canonical URL, sitemap, and wikilinks all agree with how the
+	// server actually serves index.html.
 	RelativeURL string
 
 	// ContentHTML is the goldmark-rendered body. Templates emit it via

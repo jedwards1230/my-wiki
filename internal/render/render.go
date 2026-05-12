@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io/fs"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -304,8 +305,30 @@ func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*P
 		}
 	}
 
+	// Normalize tags per the Page.Tags contract: lowercased above, here
+	// sort + dedupe so output is deterministic and downstream consumers
+	// (sitemap, tag pages, search index) can rely on stable ordering.
+	if len(p.Tags) > 1 {
+		sort.Strings(p.Tags)
+		dedup := p.Tags[:1]
+		for _, t := range p.Tags[1:] {
+			if t != dedup[len(dedup)-1] {
+				dedup = append(dedup, t)
+			}
+		}
+		p.Tags = dedup
+	}
+
 	p.Slug = slug
-	p.RelativeURL = "/" + slug + "/"
+	// "index" is the home page — keep its canonical URL as "/" so the
+	// sitemap, RSS feed, and wikilink resolver agree with how the HTTP
+	// server actually serves it (index.html at /). Other pages keep the
+	// "/{slug}/" form.
+	if slug == "index" {
+		p.RelativeURL = "/"
+	} else {
+		p.RelativeURL = "/" + slug + "/"
+	}
 	if p.Title == "" {
 		p.Title = firstHeadingText(doc, source)
 	}

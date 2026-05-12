@@ -67,7 +67,15 @@ func (r *SlugResolver) ResolveWikilink(n *wikilink.Node) ([]byte, error) {
 		// Quartz does for broken links.
 		return nil, nil
 	}
-	url := "/" + canonical + "/"
+	// "index" is the home page — emit "/" instead of "/index/" so wikilink
+	// hrefs match the canonical URL set by RenderPage and the server's
+	// index.html mount point.
+	var url string
+	if canonical == "index" {
+		url = "/"
+	} else {
+		url = "/" + canonical + "/"
+	}
 	if frag != "" {
 		url += "#" + slugifyHeading(frag)
 	}
