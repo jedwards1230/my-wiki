@@ -12,6 +12,25 @@
 <link rel="stylesheet" href="/_/static/vendor/katex/katex.min.css">
 {{- end }}
 <link rel="canonical" href="{{ .RelativeURL }}">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%23284b63%22/%3E%3Ctext x=%2216%22 y=%2222%22 font-family=%22ui-sans-serif,system-ui,sans-serif%22 font-size=%2220%22 font-weight=%22700%22 text-anchor=%22middle%22 fill=%22white%22%3EW%3C/text%3E%3C/svg%3E">
+<link rel="alternate" type="application/rss+xml" title="{{ .SiteTitle }} RSS feed" href="{{ if .BaseURL }}{{ .BaseURL }}{{ end }}/index.xml">
+
+{{/* Open Graph + Twitter Card — drives social link previews. */}}
+<meta property="og:site_name" content="{{ .SiteTitle }}">
+<meta property="og:title" content="{{ .Title }}">
+<meta property="og:type" content="article">
+{{- if .Description }}
+<meta property="og:description" content="{{ .Description }}">
+{{- end }}
+{{- if .BaseURL }}
+<meta property="og:url" content="{{ .BaseURL }}{{ .RelativeURL }}">
+{{- end }}
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{{ .Title }}">
+{{- if .Description }}
+<meta name="twitter:description" content="{{ .Description }}">
+{{- end }}
+
 <meta name="generator" content="my-wiki native renderer">
 </head>
 <body hx-ext="morph" data-active-path="{{ .ActivePath }}">

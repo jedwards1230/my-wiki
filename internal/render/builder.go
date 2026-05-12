@@ -3,6 +3,7 @@ package render
 import (
 	"context"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -102,7 +103,7 @@ func (b *Builder) RenderFragment(urlPath string) ([]byte, bool) {
 	if r == nil || p == nil {
 		return nil, false
 	}
-	td := TemplateData{Page: p, SiteTitle: b.cfg.SiteTitle, ActivePath: p.RelativeURL, Version: version.Value}
+	td := TemplateData{Page: p, SiteTitle: b.cfg.SiteTitle, ActivePath: p.RelativeURL, Version: version.Value, BaseURL: b.cfg.BaseURL}
 	buf, err := r.RenderFragment(p, td)
 	if err != nil {
 		return nil, false
@@ -274,6 +275,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 			ActivePath: p.RelativeURL,
 			BuildDate:  now.Format("2006-01-02"),
 			Version:    version.Value,
+			BaseURL:    b.cfg.BaseURL,
 		}
 		buf, err := r.RenderToBytes(p, td)
 		if err != nil {
@@ -293,7 +295,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 	for tag, ps := range tagPages {
 		listSlug := "tags/" + tag
 		page := &Page{
-			Title:           "#" + tag,
+			Title:           "Tag: " + tag,
 			Slug:            listSlug,
 			RelativeURL:     "/" + listSlug + "/",
 			BreadcrumbItems: BuildBreadcrumb(listSlug),
@@ -301,7 +303,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 			IsListPage:      true,
 			ListEntries:     pagesToEntries(ps),
 		}
-		td := TemplateData{Page: page, SiteTitle: b.cfg.SiteTitle, ActivePath: page.RelativeURL, Version: version.Value}
+		td := TemplateData{Page: page, SiteTitle: b.cfg.SiteTitle, ActivePath: page.RelativeURL, Version: version.Value, BaseURL: b.cfg.BaseURL}
 		buf, err := r.RenderList(page, td)
 		if err != nil {
 			return nil, fmt.Errorf("render tag %s: %w", tag, err)
@@ -327,11 +329,19 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		b.logger.Warn("rss render failed", "error", err)
 	}
 
-	// 9. 404 page.
+	// 9. 404 page. Same chrome as a regular page so the user has a
+	// sidebar/footer to navigate away from the dead URL.
 	notFoundData := TemplateData{
-		Page:      &Page{Title: "Not found", Slug: "404", RelativeURL: "/404/"},
+		Page: &Page{
+			Title:       "Not found",
+			Slug:        "404",
+			RelativeURL: "/404/",
+			Description: "That page isn't here.",
+			ContentHTML: template.HTML(`<p>That page isn't here. Try <a href="/">the home page</a> or search above.</p>`),
+		},
 		SiteTitle: b.cfg.SiteTitle,
 		Version:   version.Value,
+		BaseURL:   b.cfg.BaseURL,
 	}
 	if buf, err := r.Render404(notFoundData); err == nil {
 		_ = snap.AddFile("404.html", buf, now)

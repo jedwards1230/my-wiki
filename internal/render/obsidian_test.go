@@ -261,6 +261,23 @@ func TestRenderPageTagsAndHomeURL(t *testing.T) {
 	if q.RelativeURL != "/notes/foo/" {
 		t.Errorf("nested page RelativeURL = %q, want \"/notes/foo/\"", q.RelativeURL)
 	}
+
+	// Folder-index pages (e.g. home/index.md) collapse to /<folder>/ so
+	// the sitemap, breadcrumb, tag-page entries, and resolver agree.
+	f, err := r.RenderPage("home/index.md", []byte("# home\n"), time.Time{})
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	if f.RelativeURL != "/home/" {
+		t.Errorf("folder-index RelativeURL = %q, want \"/home/\"", f.RelativeURL)
+	}
+	deep, err := r.RenderPage("research/aerospace/index.md", []byte("# aerospace\n"), time.Time{})
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	if deep.RelativeURL != "/research/aerospace/" {
+		t.Errorf("deep folder-index RelativeURL = %q, want \"/research/aerospace/\"", deep.RelativeURL)
+	}
 }
 
 func TestSlugifyHeading(t *testing.T) {

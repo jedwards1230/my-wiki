@@ -189,6 +189,10 @@ type TemplateData struct {
 	ActivePath string // for explorer active-state — same as Page.RelativeURL
 	BuildDate  string
 	Version    string
+	// BaseURL is the canonical site origin (no trailing slash), e.g.
+	// "https://wiki.lilbro.cloud". Empty when the deployment doesn't
+	// publish a public origin; templates must tolerate that.
+	BaseURL string
 }
 
 // ParsePage parses a page's source to AST without rendering. Used by
@@ -321,13 +325,17 @@ func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*P
 	}
 
 	p.Slug = slug
-	// "index" is the home page — keep its canonical URL as "/" so the
-	// sitemap, RSS feed, and wikilink resolver agree with how the HTTP
-	// server actually serves it (index.html at /). Other pages keep the
-	// "/{slug}/" form.
-	if slug == "index" {
+	// Folder-index pages (root "index" or any "<dir>/index") collapse
+	// their trailing /index segment so the canonical URL matches how the
+	// HTTP server serves them. Without this, sitemap entries, breadcrumbs,
+	// tag-page links, and the wikilink resolver would disagree on the URL
+	// — e.g. /home/index/ in the sitemap vs /home/ from the resolver.
+	switch {
+	case slug == "index":
 		p.RelativeURL = "/"
-	} else {
+	case strings.HasSuffix(slug, "/index"):
+		p.RelativeURL = "/" + strings.TrimSuffix(slug, "/index") + "/"
+	default:
 		p.RelativeURL = "/" + slug + "/"
 	}
 	if p.Title == "" {
