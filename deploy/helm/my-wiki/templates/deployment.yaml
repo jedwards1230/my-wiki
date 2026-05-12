@@ -122,7 +122,12 @@ spec:
              data persists on the RWX PVC across restarts, so only the very first
              deploy on an empty PVC hits this race. The readiness probe waits for
              public/index.html, and VaultWatcher triggers a Quartz rebuild once
-             sync writes arrive. */}}
+             sync writes arrive.
+
+             setup-quartz is gated on the chart-level `renderer` value — native
+             mode skips Quartz entirely since the Go renderer builds in-memory
+             from the live vault on startup. */}}
+        {{- if eq .Values.renderer "quartz" }}
         - name: setup-quartz
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -165,6 +170,7 @@ spec:
               mountPath: /tmp
           resources:
             {{- toYaml .Values.resources.setupQuartz | nindent 12 }}
+        {{- end }}
 
       containers:
         {{- if not .Values.obsidianSync.standalone }}
@@ -189,7 +195,11 @@ spec:
             {{- toYaml .Values.resources.sync | nindent 12 }}
         {{- end }}
 
-        {{- if not .Values.quartz.serverManaged }}
+        {{- /* The Quartz --watch sidecar runs only in quartz mode and only when
+             quartz.serverManaged is false (i.e. Quartz manages its own builds
+             rather than the Go server triggering them). Native renderer mode
+             does not need it at all. */}}
+        {{- if and (eq .Values.renderer "quartz") (not .Values.quartz.serverManaged) }}
         - name: quartz
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -234,6 +244,11 @@ spec:
           env:
             - name: TZ
               value: {{ .Values.timezone | default "UTC" | quote }}
+            - name: WIKI_RENDERER
+              value: {{ .Values.renderer | quote }}
+            {{- /* WIKI_PUBLIC_DIR is set in both modes — Quartz writes
+                 there; native renderer reads it as a hint but populates
+                 memory directly so the directory can be a stub. */}}
             - name: WIKI_PUBLIC_DIR
               value: "/data/public"
             - name: WIKI_VAULT_DIR
@@ -244,7 +259,7 @@ spec:
             - name: WIKI_IN_MEMORY_HTML
               value: "true"
             {{- end }}
-            {{- if .Values.quartz.serverManaged }}
+            {{- if and (eq .Values.renderer "quartz") .Values.quartz.serverManaged }}
             - name: WIKI_QUARTZ_DIR
               value: "/quartz"
             - name: QUARTZ_BASE_URL
@@ -316,7 +331,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            {{- if .Values.quartz.serverManaged }}
+            {{- if and (eq .Values.renderer "quartz") .Values.quartz.serverManaged }}
             - name: quartz-cache
               mountPath: /quartz/quartz/.quartz-cache
             - name: tmp

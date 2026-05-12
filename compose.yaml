@@ -5,6 +5,9 @@ services:
       args:
         BUILD_VERSION: dev
     environment:
+      # Renderer selection — matches the Helm chart's `renderer` value.
+      # Defaults to "quartz" for local-dev parity with production.
+      WIKI_RENDERER: ${WIKI_RENDERER:-quartz}
       QUARTZ_BASE_URL: localhost:8080
       QUARTZ_REPO_URL: https://github.com/jedwards1230/my-wiki
     ports:

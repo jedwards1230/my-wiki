@@ -19,6 +19,7 @@ The binary doesn't know which shape it's running in — that's all flag/subcomma
 
 ## Design choices
 
+- **Pluggable renderer.** `WIKI_RENDERER` (Helm value `renderer:`) selects between Quartz v4 (Node) and a native Go renderer (`internal/render`). Quartz is the default; the native renderer is opt-in per deployment and trivially reversible. See [RENDERER.md](RENDERER.md).
 - **Obsidian as source of truth.** Markdown files on disk with YAML frontmatter (`title`, `tags`, `date`). The server never owns content — it just renders, indexes, and lints it. This is what makes the home/work split work: Obsidian's own client edits the vault directly, and `wiki-server` is one of several consumers.
 - **MCP is the agent contract.** Every vault operation is exposed as an MCP tool (`read`, `write`, `edit`, `list`, `search`, `lint`, ...). The REST API is a thin re-skinning of the same service layer for browser use. Agents and humans get parity.
 - **Stripping by transport, not by config.** Stdio mode skips watchers, Quartz, auth, and webhooks because the per-session lifetime makes them pointless — not because they're configurable off. (See issue #65 for a planned refactor that makes the stripping config-driven, so stdio can grow features without copy-paste.)
