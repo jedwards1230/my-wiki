@@ -51,21 +51,41 @@
 
 <div class="layout">
 
-  <aside class="sidebar sidebar-left" :class="{ 'is-open': drawer }" aria-label="Navigation" hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top" x-on:click="if ($event.target.tagName === 'A') drawer = false">
+  <aside class="sidebar sidebar-left" :class="{ 'is-open': drawer }" aria-label="Navigation" hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top" x-on:click="if ($event.target.closest('a')) drawer = false">
     <h1 class="page-title"><a href="/">{{ .SiteTitle }}</a></h1>
-    <div class="search" x-data="{ q: '', results: [], open: false, idx: -1 }" x-on:click.outside="open = false">
+    <div class="search" x-data="{
+        q: '', results: [], open: false, idx: -1, seq: 0,
+        urlFor(r) {
+          if (!r) return '#';
+          let p = (r.path || '').replace(/\.md$/, '');
+          if (p === 'index') return '/';
+          if (p.endsWith('/index')) p = p.slice(0, -'/index'.length);
+          return '/' + p + '/';
+        }
+      }" x-on:click.outside="open = false">
       <input type="search" class="search-input" placeholder="Search" autocomplete="off"
              x-model="q"
-             x-on:input.debounce.150ms="if (q.trim().length >= 2) { fetch('/api/search?q=' + encodeURIComponent(q) + '&limit=8').then(r => r.json()).then(j => { results = (j.data && j.data.results) || j.data || []; open = results.length > 0; idx = -1; }).catch(() => { results = []; }); } else { results = []; open = false; }"
+             x-on:input.debounce.150ms="
+               if (q.trim().length < 2) { results = []; open = false; idx = -1; return; }
+               const mySeq = ++seq;
+               fetch('/api/search?q=' + encodeURIComponent(q) + '&limit=8')
+                 .then(r => r.json())
+                 .then(j => {
+                   if (mySeq !== seq) return;
+                   results = (j.data && j.data.results) || [];
+                   open = results.length > 0;
+                   idx = -1;
+                 })
+                 .catch(() => { if (mySeq === seq) { results = []; open = false; } });"
              x-on:keydown.escape="open = false"
-             x-on:keydown.arrow-down.prevent="idx = Math.min(idx + 1, results.length - 1)"
-             x-on:keydown.arrow-up.prevent="idx = Math.max(idx - 1, 0)"
-             x-on:keydown.enter.prevent="if (idx >= 0 && results[idx]) window.location.href = results[idx].url || ('/' + results[idx].slug + '/')"
+             x-on:keydown.arrow-down.prevent="if (results.length) idx = Math.min(idx + 1, results.length - 1)"
+             x-on:keydown.arrow-up.prevent="if (results.length && idx > 0) idx = idx - 1"
+             x-on:keydown.enter.prevent="if (idx >= 0 && results[idx]) window.location.href = urlFor(results[idx])"
              x-on:focus="open = results.length > 0">
       <ul class="search-results" x-show="open" x-transition.opacity>
-        <template x-for="(r, i) in results" :key="r.slug || r.url || i">
+        <template x-for="(r, i) in results" :key="r.path || i">
           <li :class="{ 'is-active': i === idx }">
-            <a :href="r.url || ('/' + r.slug + '/')" x-text="r.title || r.slug"></a>
+            <a :href="urlFor(r)" x-text="r.title || r.path"></a>
           </li>
         </template>
       </ul>

@@ -254,8 +254,15 @@ code, pre, kbd {
   color: var(--dark);
   text-decoration: none;
 }
-.drawer-backdrop {
-  display: none;
+
+/* Above the mobile breakpoint the backdrop must stay hidden, but
+   below it Alpine `x-show` toggles the inline style. Wrapping the
+   global hide in a min-width media query stops it from clobbering
+   the open state when the drawer is supposed to be visible. */
+@media (min-width: 800px) {
+  .drawer-backdrop {
+    display: none !important;
+  }
 }
 @media (max-width: 799px) {
   .mobile-header {
