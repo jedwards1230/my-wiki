@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/jedwards1230/my-wiki/internal/middleware"
+	"github.com/jedwards1230/my-wiki/internal/server/assets"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -16,6 +17,12 @@ type Config struct {
 	PublicDir string
 	VaultDir  string
 	Port      string
+
+	// FragmentRenderer is consulted on HX-Request: true requests. Native
+	// renderer mode wires the Builder; Quartz mode leaves it nil and the
+	// catch-all falls back to full-page HTML (htmx then extracts #main via
+	// hx-select on the client).
+	FragmentRenderer FragmentRenderer
 }
 
 // Server is the wiki HTTP server.
@@ -23,6 +30,14 @@ type Server struct {
 	handler http.Handler
 	ready   atomic.Bool
 	config  Config
+}
+
+// FragmentRenderer renders a content fragment for a given URL path. The
+// native renderer implements this — Quartz mode passes nil and the
+// catch-all returns full HTML for HX-Request swaps (htmx falls back to
+// extracting `#main` from the full body via hx-select).
+type FragmentRenderer interface {
+	RenderFragment(urlPath string) ([]byte, bool)
 }
 
 // Option configures the server.
@@ -50,6 +65,13 @@ func New(cfg Config, publicFS, vaultFS fs.FS, logger *slog.Logger, opts ...Optio
 	}
 
 	mux := http.NewServeMux()
+	// Native-renderer static assets — htmx/Alpine/KaTeX/Mermaid/fonts plus
+	// our wiki.css/wiki.js. Mounted under /_/static/ (leading underscore
+	// guarantees no vault-slug collision). Registered ahead of the catch-all
+	// in both quartz and native modes; in quartz mode the assets are dormant
+	// but cheap to ship.
+	mux.Handle("GET /_/static/", http.StripPrefix("/_/static/", assets.Handler()))
+
 	healthHandler := HealthHandler()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		healthHandler.ServeHTTP(w, r)
@@ -74,11 +96,25 @@ func New(cfg Config, publicFS, vaultFS fs.FS, logger *slog.Logger, opts ...Optio
 		})
 		mux.Handle("GET /raw/", rawHandler)
 	}
-	// Catch-all: route .md to markdown handler, everything else to static
+	// Catch-all: route .md to markdown handler, everything else to static.
+	// HX-Request: true requests get a content-only fragment when a
+	// FragmentRenderer is wired (native mode); otherwise fall through to
+	// full HTML and let htmx hx-select="#main" do the extraction.
 	mux.HandleFunc("GET /{path...}", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ".md") {
 			mdHandler.ServeHTTP(w, r)
 			return
+		}
+		if cfg.FragmentRenderer != nil && r.Header.Get("HX-Request") == "true" {
+			if body, ok := cfg.FragmentRenderer.RenderFragment(r.URL.Path); ok {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				// Add (not Set) so we don't clobber Vary: Accept-Encoding
+				// added by the gzip middleware downstream.
+				w.Header().Add("Vary", "HX-Request")
+				_, _ = w.Write(body)
+				return
+			}
+			// Fall through to full HTML when fragment lookup misses.
 		}
 		staticHandler.ServeHTTP(w, r)
 	})

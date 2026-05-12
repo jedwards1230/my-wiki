@@ -39,9 +39,10 @@ type Builder struct {
 	cfg          BuilderConfig
 	logger       *slog.Logger
 	backlinkIdx  *BacklinkIndex
-	mu           sync.Mutex // guards lastSnapshot / lastPages
+	mu           sync.Mutex // guards lastSnapshot / lastPages / lastRenderer
 	lastSnapshot *memfs.Snapshot
 	lastPages    map[string]*Page
+	lastRenderer *Renderer
 }
 
 // NewBuilder constructs a Builder. BaseURL is normalized; SiteTitle
@@ -79,6 +80,33 @@ func (b *Builder) Snapshot() *memfs.Snapshot {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.lastSnapshot
+}
+
+// RenderFragment re-executes the content template for the page matching
+// urlPath. Returns the rendered bytes and ok=true on hit; ok=false when
+// the path doesn't resolve to a known slug (caller falls back to the
+// static handler).
+//
+// urlPath is the request URL path, e.g. "/meta/schema/". Trailing
+// slashes and the leading slash are stripped to derive the slug.
+func (b *Builder) RenderFragment(urlPath string) ([]byte, bool) {
+	slug := strings.Trim(urlPath, "/")
+	if slug == "" {
+		slug = "index"
+	}
+	b.mu.Lock()
+	r := b.lastRenderer
+	p := b.lastPages[strings.ToLower(slug)]
+	b.mu.Unlock()
+	if r == nil || p == nil {
+		return nil, false
+	}
+	td := TemplateData{Page: p, SiteTitle: b.cfg.SiteTitle, ActivePath: p.RelativeURL}
+	buf, err := r.RenderFragment(p, td)
+	if err != nil {
+		return nil, false
+	}
+	return buf, true
 }
 
 // Build walks the vault, renders every page in parallel, and returns a
@@ -255,10 +283,11 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		_ = snap.AddFile("404.html", buf, now)
 	}
 
-	// 10. Publish the page map for fragment re-exec.
+	// 10. Publish the page map + renderer for fragment re-exec.
 	b.mu.Lock()
 	b.lastSnapshot = snap
 	b.lastPages = pageMap
+	b.lastRenderer = r
 	b.mu.Unlock()
 
 	b.logger.Info("native renderer build complete",

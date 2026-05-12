@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,8 +18,10 @@ import (
 	"github.com/jedwards1230/my-wiki/internal/api"
 	"github.com/jedwards1230/my-wiki/internal/dispatch"
 	"github.com/jedwards1230/my-wiki/internal/mcpserver"
+	"github.com/jedwards1230/my-wiki/internal/memfs"
 	"github.com/jedwards1230/my-wiki/internal/middleware"
 	"github.com/jedwards1230/my-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/render"
 	"github.com/jedwards1230/my-wiki/internal/search"
 	"github.com/jedwards1230/my-wiki/internal/server"
 	"github.com/jedwards1230/my-wiki/internal/service"
@@ -46,6 +49,7 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: "+EnvMCPPort+")")
 	cmd.Flags().String("quartz-dir", envOr(EnvQuartzDir, ""), "path to Quartz project directory; enables Quartz build triggering (env: "+EnvQuartzDir+")")
 	cmd.Flags().Bool("watch", envOrBool(EnvWatch, true), "watch vault directory for filesystem changes (env: "+EnvWatch+")")
+	cmd.Flags().String("renderer", envOr(EnvRenderer, "quartz"), "HTML renderer: 'quartz' (default) or 'native' (env: "+EnvRenderer+")")
 
 	return cmd
 }
@@ -62,6 +66,7 @@ func newServeHTTPCmd() *cobra.Command {
 	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: "+EnvMCPPort+")")
 	cmd.Flags().String("quartz-dir", envOr(EnvQuartzDir, ""), "path to Quartz project directory; enables Quartz build triggering (env: "+EnvQuartzDir+")")
 	cmd.Flags().Bool("watch", envOrBool(EnvWatch, true), "watch vault directory for filesystem changes (env: "+EnvWatch+")")
+	cmd.Flags().String("renderer", envOr(EnvRenderer, "quartz"), "HTML renderer: 'quartz' (default) or 'native' (env: "+EnvRenderer+")")
 
 	return cmd
 }
@@ -212,6 +217,15 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	mcpPort, _ := cmd.Flags().GetInt("mcp-port")
 	quartzDir, _ := cmd.Flags().GetString("quartz-dir")
 	watchEnabled, _ := cmd.Flags().GetBool("watch")
+	rendererName, _ := cmd.Flags().GetString("renderer")
+	rendererName = strings.ToLower(strings.TrimSpace(rendererName))
+	if rendererName == "" {
+		rendererName = "quartz"
+	}
+	if rendererName != "quartz" && rendererName != "native" {
+		return fmt.Errorf("invalid --renderer %q (must be 'quartz' or 'native')", rendererName)
+	}
+	useNative := rendererName == "native"
 
 	// Support env var for mcp-port when flag is at default
 	if mcpPort == 0 {
@@ -244,17 +258,39 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		Port:      port,
 	}
 
-	publicFS, closePublicFS, err := buildPublicFS(publicDir, logger)
-	if err != nil {
-		return fmt.Errorf("public fs setup: %w", err)
+	// Vault instance used by both renderer wiring and the API handler.
+	v := vault.New(vaultDir)
+
+	// publicFS is the source of HTML for the static + markdown handlers.
+	// In quartz mode it points at the on-disk public dir (optionally via
+	// memfs when WIKI_IN_MEMORY_HTML is on); in native mode it's a memfs
+	// the renderer populates directly with the rendered site tree.
+	var (
+		publicFS      fs.FS
+		closePublicFS func() error
+		nativeBuilder *render.Builder
+	)
+	if useNative {
+		pfs, closer, builder, err := buildNativePublicFS(v, logger)
+		if err != nil {
+			return fmt.Errorf("native renderer setup: %w", err)
+		}
+		publicFS = pfs
+		closePublicFS = closer
+		nativeBuilder = builder
+		cfg.FragmentRenderer = builder
+	} else {
+		pfs, closer, err := buildPublicFS(publicDir, logger)
+		if err != nil {
+			return fmt.Errorf("public fs setup: %w", err)
+		}
+		publicFS = pfs
+		closePublicFS = closer
 	}
 	if closePublicFS != nil {
 		defer func() { _ = closePublicFS() }()
 	}
 	vaultFS := os.DirFS(vaultDir)
-
-	// Build API handler with search engines
-	v := vault.New(vaultDir)
 
 	sub := search.NewSubstringSearcher(v)
 	engines := []search.Searcher{sub}
@@ -271,22 +307,39 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// Build services needed by the rebuild notifier
 	directorySvc := service.NewDirectoryService(v)
 
-	// Create Quartz builder if quartz-dir is configured. This replaces
-	// Quartz's built-in --watch mode: the Go server triggers one-shot
-	// builds after debounced filesystem changes.
+	// Create Quartz builder if quartz-dir is configured (Quartz mode only).
+	// This replaces Quartz's built-in --watch mode: the Go server triggers
+	// one-shot builds after debounced filesystem changes.
 	var quartzBuilder *notify.QuartzBuilder
-	if quartzDir != "" {
+	if !useNative && quartzDir != "" {
 		quartzBuilder = notify.NewQuartzBuilder(quartzDir, vaultDir, publicDir, logger)
 	}
 
-	// Debounced post-mutation hook: regenerate computed pages and trigger
-	// a Quartz build when the quartz builder is configured.
+	// nativeRebuildFS is the *memfs.FS the native builder writes new
+	// snapshots into. Captured here from publicFS so the rebuild callback
+	// can swap snapshots atomically.
+	var nativeRebuildFS *memfs.FS
+	if useNative {
+		nativeRebuildFS, _ = publicFS.(*memfs.FS)
+	}
+
+	// Debounced post-mutation hook: regenerate computed pages and either
+	// run a Quartz build (quartz mode) or re-render via the native builder
+	// (native mode). The two paths are mutually exclusive.
 	notifier := notify.New(2*time.Second, func(paths []string) {
 		if _, _, err := directorySvc.Generate(); err != nil {
 			logger.Warn("rebuild notifier: directory generate failed", "error", err)
 		}
-		if quartzBuilder != nil {
+		switch {
+		case quartzBuilder != nil:
 			quartzBuilder.Build()
+		case nativeBuilder != nil && nativeRebuildFS != nil:
+			snap, err := nativeBuilder.Build(context.Background())
+			if err != nil {
+				logger.Warn("native rebuild failed", "error", err)
+				return
+			}
+			nativeRebuildFS.Store(snap)
 		}
 		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
 	})
@@ -359,6 +412,15 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	}
 	apiOpts = append(apiOpts, api.WithRebuildNotifier(notifier))
 	apiOpts = append(apiOpts, api.WithPageService(pageSvc))
+	if nativeBuilder != nil {
+		// Adapt the renderer surface to the small interfaces the API
+		// package declares so we don't drag internal/render into
+		// internal/api (preserves the api → service → vault layering).
+		apiOpts = append(apiOpts, api.WithRenderEndpoints(
+			nativeRendererPages{b: nativeBuilder},
+			nativeRendererBacklinks{b: nativeBuilder},
+		))
+	}
 	apiHandler := api.NewHandler(v, searchSvc, apiOpts...)
 
 	srv := server.New(cfg, publicFS, vaultFS, logger,
@@ -374,24 +436,37 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		idx.StartAutoRebuild(ctx, 5*time.Minute)
 	}
 
-	// Poll for readiness with cancellation
-	go func() {
-		indexPath := publicDir + "/index.html"
-		ticker := time.NewTicker(500 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if _, err := os.Stat(indexPath); err == nil {
-					srv.SetReady()
-					logger.Info("server ready", "publicDir", publicDir)
+	// Readiness gate. Quartz mode waits for the on-disk index.html to
+	// appear (Quartz writes it at the end of its build); native mode runs
+	// an initial Build() synchronously here and flips ready as soon as it
+	// returns.
+	if useNative {
+		snap, err := nativeBuilder.Build(ctx)
+		if err != nil {
+			return fmt.Errorf("native renderer initial build: %w", err)
+		}
+		nativeRebuildFS.Store(snap)
+		srv.SetReady()
+		logger.Info("native renderer ready", "pages", snap.Files(), "bytes", snap.Bytes())
+	} else {
+		go func() {
+			indexPath := publicDir + "/index.html"
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
 					return
+				case <-ticker.C:
+					if _, err := os.Stat(indexPath); err == nil {
+						srv.SetReady()
+						logger.Info("server ready", "publicDir", publicDir)
+						return
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 
 	httpSrv := &http.Server{
 		Addr:              ":" + port,
@@ -472,4 +547,31 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	return firstErr
+}
+
+// nativeRendererPages adapts *render.Builder to api.RenderPage so the
+// internal/api package does not need to import internal/render.
+type nativeRendererPages struct{ b *render.Builder }
+
+func (a nativeRendererPages) PageBySlug(slug string) (title, description string, ok bool) {
+	p := a.b.PageBySlug(slug)
+	if p == nil {
+		return "", "", false
+	}
+	return p.Title, p.Description, true
+}
+
+// nativeRendererBacklinks adapts *render.Builder to api.RenderBacklinks.
+type nativeRendererBacklinks struct{ b *render.Builder }
+
+func (a nativeRendererBacklinks) Lookup(slug string) []api.RenderBacklinkEntry {
+	src := a.b.BacklinkIndex().Lookup(slug)
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]api.RenderBacklinkEntry, len(src))
+	for i, e := range src {
+		out[i] = api.RenderBacklinkEntry{Title: e.Title, URL: e.URL}
+	}
+	return out
 }
