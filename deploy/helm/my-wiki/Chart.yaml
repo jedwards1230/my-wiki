@@ -2,7 +2,7 @@ apiVersion: v2
 name: my-wiki
 description: Obsidian-backed knowledge base — sync, build, and serve
 type: application
-version: 0.1.0
-appVersion: "0.0.8"
+version: 0.4.9
+appVersion: "0.4.9"
 # fsGroupChangePolicy (Pod securityContext) is GA in Kubernetes 1.23+.
 kubeVersion: ">=1.23.0-0"
