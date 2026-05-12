@@ -216,6 +216,50 @@ func TestEmbedImage(t *testing.T) {
 	}
 }
 
+func TestInlineTag(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string // expected substring in output
+		miss string // must NOT appear
+	}{
+		// Basic single-word tag
+		{"basic", "See #homelab notes.", `<a class="internal tag-link" href="/tags/homelab/">homelab</a>`, ""},
+		// Hierarchical tag with slash
+		{"slash", "Under #homelab/service here.", `href="/tags/homelab/service/"`, ""},
+		// Deep hierarchy
+		{"deep", "Tag #a/b/c end.", `href="/tags/a/b/c/"`, ""},
+		// Hyphen in tag
+		{"hyphen", "See #ai-tools.", `href="/tags/ai-tools/"`, ""},
+		// Tag at start of line
+		{"at-start", "#meta is first.", `href="/tags/meta/"`, ""},
+		// False positive: # heading (becomes block element, not inline)
+		// Goldmark consumes ATX headings before inline parsers run.
+		{"heading", "# A Heading\n", "", `href="/tags/`},
+		// False positive: URL fragment inside markdown link [text](#anchor)
+		{"link-fragment", "[link](#my-anchor)", "", `href="/tags/my-anchor"`},
+		// False positive: #1234 numeric (doesn't start with lowercase letter)
+		{"numeric", "Issue #1234.", "", `href="/tags/`},
+		// False positive: preceded by word char (commit-#abc)
+		{"word-prefix", "commit-#abc end.", "", `href="/tags/`},
+		// Inline code: #tag inside backticks must not become a link
+		{"inline-code", "See `#homelab` text.", "", `href="/tags/homelab"`},
+		// Tag followed by punctuation
+		{"punct", "#meta.", `href="/tags/meta/"`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := renderMD(t, c.in, nil)
+			if c.want != "" && !strings.Contains(out, c.want) {
+				t.Errorf("inline tag %q: expected %q in %q", c.in, c.want, out)
+			}
+			if c.miss != "" && strings.Contains(out, c.miss) {
+				t.Errorf("inline tag %q: unexpected %q in %q", c.in, c.miss, out)
+			}
+		})
+	}
+}
+
 func TestBlockRef(t *testing.T) {
 	src := "Para text. ^my-anchor\n"
 	out := renderMD(t, src, nil)

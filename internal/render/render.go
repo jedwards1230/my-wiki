@@ -177,7 +177,68 @@ func templateFuncs() template.FuncMap {
 			return fmt.Sprintf("%d min read", mins)
 		},
 		"isMD": func(s string) bool { return strings.HasSuffix(s, ".md") },
+		// renderExplorer recursively renders the explorer tree to HTML.
+		// Go templates cannot call themselves recursively, so the rendering
+		// is done in Go and returned as template.HTML.
+		"renderExplorer": func(nodes []*ExplorerNode) template.HTML {
+			var buf strings.Builder
+			renderExplorerNodes(&buf, nodes)
+			return template.HTML(buf.String())
+		},
 	}
+}
+
+// renderExplorerNodes recursively writes the explorer tree HTML into buf.
+// Each folder becomes a <details>/<summary> pair; leaves are plain <a> tags.
+func renderExplorerNodes(buf *strings.Builder, nodes []*ExplorerNode) {
+	if len(nodes) == 0 {
+		return
+	}
+	buf.WriteString(`<ul class="explorer-ul">`)
+	for _, n := range nodes {
+		if n.IsFolder {
+			buf.WriteString(`<li class="explorer-folder">`)
+			openAttr := ""
+			if n.IsOpen {
+				openAttr = " open"
+			}
+			buf.WriteString(`<details` + openAttr + `>`)
+			buf.WriteString(`<summary class="explorer-folder-title`)
+			if n.IsActive {
+				buf.WriteString(` is-active`)
+			}
+			buf.WriteString(`">`)
+			buf.WriteString(`<svg class="folder-icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="5 8 14 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>`)
+			if n.URL != "" {
+				buf.WriteString(`<a href="` + template.HTMLEscapeString(n.URL) + `" class="folder-link">`)
+				buf.WriteString(template.HTMLEscapeString(n.Name))
+				buf.WriteString(`</a>`)
+			} else {
+				buf.WriteString(`<span class="folder-name">`)
+				buf.WriteString(template.HTMLEscapeString(n.Name))
+				buf.WriteString(`</span>`)
+			}
+			buf.WriteString(`</summary>`)
+			renderExplorerNodes(buf, n.Children)
+			buf.WriteString(`</details>`)
+			buf.WriteString(`</li>`)
+		} else {
+			buf.WriteString(`<li class="explorer-file">`)
+			classes := "explorer-link"
+			if n.IsActive {
+				classes += " is-active"
+			}
+			buf.WriteString(`<a href="` + template.HTMLEscapeString(n.URL) + `" class="` + classes + `"`)
+			if n.IsActive {
+				buf.WriteString(` aria-current="page"`)
+			}
+			buf.WriteString(`>`)
+			buf.WriteString(template.HTMLEscapeString(n.Name))
+			buf.WriteString(`</a>`)
+			buf.WriteString(`</li>`)
+		}
+	}
+	buf.WriteString(`</ul>`)
 }
 
 // TemplateData is the top-level data passed to templates. Embedding *Page
@@ -193,6 +254,10 @@ type TemplateData struct {
 	// "https://wiki.lilbro.cloud". Empty when the deployment doesn't
 	// publish a public origin; templates must tolerate that.
 	BaseURL string
+	// Explorer is the site's folder tree for the left-sidebar. Built once
+	// per Build() and carried through TemplateData so partial templates can
+	// render it without a separate data fetch.
+	Explorer []*ExplorerNode
 }
 
 // ParsePage parses a page's source to AST without rendering. Used by
