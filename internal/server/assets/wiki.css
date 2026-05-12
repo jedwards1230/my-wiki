@@ -199,9 +199,67 @@ code, pre, kbd {
 @media (max-width: 799px) {
   .layout {
     grid-template-columns: 1fr;
+    padding: 0.5rem 1rem 2rem;
   }
+  /* Sidebar becomes a slide-in drawer triggered by the mobile header
+     hamburger; default hidden, .is-open slides into view. */
   .sidebar-left {
-    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(280px, 80vw);
+    z-index: 50;
+    background: var(--light);
+    box-shadow: var(--shadow-md);
+    padding: 1rem;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+  .sidebar-left.is-open {
+    transform: translateX(0);
+  }
+  .drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 40;
+  }
+}
+
+/* Mobile header — hidden above 800px; visible only when the
+   sidebar collapses into a drawer. */
+.mobile-header {
+  display: none;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--lightgray);
+  background: var(--light);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.mobile-header .sidebar-toggle {
+  background: transparent;
+  border: 0;
+  padding: 0.25rem;
+  cursor: pointer;
+  color: var(--dark);
+}
+.mobile-header .mobile-title {
+  font-family: var(--font-header);
+  font-weight: 700;
+  color: var(--dark);
+  text-decoration: none;
+}
+.drawer-backdrop {
+  display: none;
+}
+@media (max-width: 799px) {
+  .mobile-header {
+    display: flex;
   }
 }
 
@@ -234,6 +292,55 @@ code, pre, kbd {
   color: var(--dark);
 }
 
+.search {
+  position: relative;
+  margin-bottom: 0.75rem;
+}
+.search-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--lightgray);
+  background: var(--light);
+  border-radius: var(--radius);
+  color: var(--dark);
+  font-size: 0.9rem;
+}
+.search-input:focus {
+  outline: 2px solid var(--secondary);
+  outline-offset: 1px;
+}
+.search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  list-style: none;
+  padding: 0.25rem 0;
+  margin: 0;
+  background: var(--light);
+  border: 1px solid var(--lightgray);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  max-height: 60vh;
+  overflow-y: auto;
+  z-index: 30;
+}
+.search-results li {
+  margin: 0;
+}
+.search-results a {
+  display: block;
+  padding: 0.4rem 0.75rem;
+  color: var(--dark);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+.search-results li.is-active a,
+.search-results a:hover {
+  background: var(--highlight);
+}
+
+/* Legacy search-button kept for non-JS fallback. */
 .search-button {
   width: 100%;
   padding: 0.5rem 0.75rem;
