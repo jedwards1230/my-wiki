@@ -33,17 +33,62 @@
 
 <meta name="generator" content="my-wiki native renderer">
 </head>
-<body hx-ext="morph" data-active-path="{{ .ActivePath }}">
+<body hx-ext="morph" data-active-path="{{ .ActivePath }}" x-data="{ drawer: false }">
 
 <a class="skip-link" href="#main">Skip to content</a>
 <div id="a11y-announcer" class="sr-only" role="status" aria-live="polite"></div>
 
+{{/* Mobile header — visible only at narrow viewports. Hamburger
+     opens the left sidebar as a slide-in drawer; title links home. */}}
+<header class="mobile-header">
+  <button type="button" class="sidebar-toggle" :aria-expanded="drawer.toString()" aria-label="Toggle navigation" x-on:click="drawer = !drawer">
+    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
+  <a class="mobile-title" href="/">{{ .SiteTitle }}</a>
+</header>
+
+<div class="drawer-backdrop" x-show="drawer" x-transition.opacity x-on:click="drawer = false" aria-hidden="true"></div>
+
 <div class="layout">
 
-  <aside class="sidebar sidebar-left" aria-label="Navigation" hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top">
+  <aside class="sidebar sidebar-left" :class="{ 'is-open': drawer }" aria-label="Navigation" hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top" x-on:click="if ($event.target.closest('a')) drawer = false">
     <h1 class="page-title"><a href="/">{{ .SiteTitle }}</a></h1>
-    <div class="search">
-      <button type="button" class="search-button" aria-label="Search">Search</button>
+    <div class="search" x-data="{
+        q: '', results: [], open: false, idx: -1, seq: 0,
+        urlFor(r) {
+          if (!r) return '#';
+          let p = (r.path || '').replace(/\.md$/, '');
+          if (p === 'index') return '/';
+          if (p.endsWith('/index')) p = p.slice(0, -'/index'.length);
+          return '/' + p + '/';
+        }
+      }" x-on:click.outside="open = false">
+      <input type="search" class="search-input" placeholder="Search" autocomplete="off"
+             x-model="q"
+             x-on:input.debounce.150ms="
+               if (q.trim().length < 2) { results = []; open = false; idx = -1; return; }
+               const mySeq = ++seq;
+               fetch('/api/search?q=' + encodeURIComponent(q) + '&limit=8')
+                 .then(r => r.json())
+                 .then(j => {
+                   if (mySeq !== seq) return;
+                   results = (j.data && j.data.results) || [];
+                   open = results.length > 0;
+                   idx = -1;
+                 })
+                 .catch(() => { if (mySeq === seq) { results = []; open = false; } });"
+             x-on:keydown.escape="open = false"
+             x-on:keydown.arrow-down.prevent="if (results.length) idx = Math.min(idx + 1, results.length - 1)"
+             x-on:keydown.arrow-up.prevent="if (results.length && idx > 0) idx = idx - 1"
+             x-on:keydown.enter.prevent="if (idx >= 0 && results[idx]) window.location.href = urlFor(results[idx])"
+             x-on:focus="open = results.length > 0">
+      <ul class="search-results" x-show="open" x-transition.opacity>
+        <template x-for="(r, i) in results" :key="r.path || i">
+          <li :class="{ 'is-active': i === idx }">
+            <a :href="urlFor(r)" x-text="r.title || r.path"></a>
+          </li>
+        </template>
+      </ul>
     </div>
     <div class="darkmode" x-data="{ mode: $persist('auto').as('darkmode') }">
       <button type="button" x-on:click="mode = (mode === 'dark' ? 'light' : 'dark'); document.documentElement.setAttribute('data-theme', mode)" :aria-label="'Toggle theme: ' + mode">
