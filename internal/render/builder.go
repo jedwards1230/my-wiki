@@ -144,21 +144,28 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		return nil, fmt.Errorf("find wiki pages: %w", err)
 	}
 
-	// 4. Render every page in parallel, capped at GOMAXPROCS so a vault
-	// rebuild on a 32-core machine doesn't open 5000 simultaneous fs.Open.
-	type rendered struct {
-		page    *Page
+	// 4. PASS 1 — parse every page to AST. Transclusion needs every
+	// target's AST available before any page's render runs, so we do a
+	// full parse pass first and then a render pass. Both passes run in
+	// parallel; the cache published between them is the join point.
+	//
+	// Per-page state (raw source + ModTime + relpath) is collected here
+	// so pass 2 doesn't have to re-read the filesystem.
+	type parsedInfo struct {
 		relPath string
+		source  []byte
+		modTime time.Time
+		parsed  *ParsedPage
 		links   []string
 	}
-	results := make([]rendered, len(pages))
+	parseResults := make([]parsedInfo, len(pages))
 
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(runtime.GOMAXPROCS(0))
+	pg, pgCtx := errgroup.WithContext(ctx)
+	pg.SetLimit(runtime.GOMAXPROCS(0))
 	for i, page := range pages {
 		i, page := i, page
-		g.Go(func() error {
-			if err := gctx.Err(); err != nil {
+		pg.Go(func() error {
+			if err := pgCtx.Err(); err != nil {
 				return err
 			}
 			rel, err := filepath.Rel(v.Dir, page)
@@ -174,15 +181,59 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 			if err != nil {
 				return fmt.Errorf("stat %s: %w", rel, err)
 			}
-			p, err := r.RenderPage(rel, data, info.ModTime())
-			if err != nil {
-				return fmt.Errorf("render %s: %w", rel, err)
-			}
-			// Wikilinks pulled from the raw source so the backlink index
-			// covers every link including ones inside callouts and code
-			// blocks the renderer might skip.
+			pp, _, _ := r.ParsePage(rel, data)
 			links, _ := vault.ExtractWikilinks(page)
-			results[i] = rendered{page: p, relPath: rel, links: links}
+			parseResults[i] = parsedInfo{
+				relPath: rel,
+				source:  data,
+				modTime: info.ModTime(),
+				parsed:  pp,
+				links:   links,
+			}
+			return nil
+		})
+	}
+	if err := pg.Wait(); err != nil {
+		return nil, fmt.Errorf("parse pass: %w", err)
+	}
+
+	// Publish the AST cache + slug titles so the render pass can resolve
+	// transclusions.
+	transcludeCache := make(map[string]*ParsedPage, len(parseResults))
+	slugTitles := make(map[string]string, len(parseResults))
+	for _, pi := range parseResults {
+		if pi.parsed == nil {
+			continue
+		}
+		key := strings.ToLower(pi.parsed.Slug)
+		transcludeCache[key] = pi.parsed
+		slugTitles[key] = pi.parsed.Title
+	}
+	r.WithTransclusion(transcludeCache, slugTitles)
+
+	// 5. PASS 2 — render every page in parallel, capped at GOMAXPROCS.
+	// Each render uses a per-page goldmark configured with a scoped
+	// TranscludeSource so the visited set + depth are page-local.
+	type rendered struct {
+		page    *Page
+		relPath string
+		links   []string
+	}
+	results := make([]rendered, len(parseResults))
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(runtime.GOMAXPROCS(0))
+	for i, pi := range parseResults {
+		i, pi := i, pi
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			p, err := r.RenderPage(pi.relPath, pi.source, pi.modTime)
+			if err != nil {
+				return fmt.Errorf("render %s: %w", pi.relPath, err)
+			}
+			results[i] = rendered{page: p, relPath: pi.relPath, links: pi.links}
 			return nil
 		})
 	}

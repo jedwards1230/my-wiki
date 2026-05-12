@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -597,8 +598,418 @@ func (e *obsidianExtension) Extend(m goldmark.Markdown) {
 	)
 }
 
-// newWikilinkExtender wires the abhg wikilink extension with our slug-aware
-// resolver.
-func newWikilinkExtender(slugs map[string]string) goldmark.Extender {
-	return &wikilink.Extender{Resolver: &SlugResolver{Slugs: slugs}}
+// newWikilinkExtender wires the abhg wikilink *parser* with a custom
+// renderer that handles both plain wikilinks and full transclusion
+// (![[page]], ![[page#heading]], ![[page#^block-id]]).
+//
+// The custom renderer replaces abhg's Renderer at the same priority — it
+// installs after the abhg parser so the parse layer is identical, but the
+// rendering side delegates to transcludeRenderer for embeds that target
+// other vault pages (not image files).
+func newWikilinkExtender(slugs map[string]string, transcludes *TranscludeSource) goldmark.Extender {
+	return &customWikilinkExtender{
+		resolver:    &SlugResolver{Slugs: slugs},
+		transcludes: transcludes,
+	}
+}
+
+// customWikilinkExtender installs abhg's wikilink parser and our custom
+// renderer. Mirrors wikilink.Extender's parser priority (199) so the "["
+// trigger still wins over goldmark's built-in link parser (priority 200).
+type customWikilinkExtender struct {
+	resolver    *SlugResolver
+	transcludes *TranscludeSource
+}
+
+func (e *customWikilinkExtender) Extend(m goldmark.Markdown) {
+	m.Parser().AddOptions(
+		parser.WithInlineParsers(
+			util.Prioritized(&wikilink.Parser{}, 199),
+		),
+	)
+	m.Renderer().AddOptions(
+		renderer.WithNodeRenderers(
+			util.Prioritized(&transcludeRenderer{
+				resolver:    e.resolver,
+				transcludes: e.transcludes,
+			}, 199),
+		),
+	)
+}
+
+// =============================================================================
+// Transclusion
+// =============================================================================
+
+// MaxTranscludeDepth bounds recursive transclusion. Beyond this depth the
+// renderer emits a `transclude-overflow` marker instead of descending
+// further. Three is enough for "page A includes B includes C includes D"
+// patterns without runaway recursion.
+const MaxTranscludeDepth = 3
+
+// TranscludeSource gives the wikilink renderer the data it needs to
+// resolve a transclusion: the parsed AST of every other page in the
+// vault, the same goldmark.Markdown that produced those ASTs (so we can
+// render subtrees back to HTML), and the current page's slug + visited
+// set for cycle detection.
+//
+// One TranscludeSource is constructed per page render. The Builder owns
+// the immutable bits (Cache, MD) and clones the source with a fresh
+// visited set and current slug for each RenderPage call.
+type TranscludeSource struct {
+	// Cache maps lowercase slug → the parsed source for that page. nil
+	// when transclusion is disabled (e.g. in unit tests that don't
+	// pre-parse — broken targets simply render as broken links).
+	Cache map[string]*ParsedPage
+
+	// MD is the goldmark instance used to render transcluded subtrees.
+	// MUST be the same instance that produced the cached ASTs.
+	MD goldmark.Markdown
+
+	// SlugTitles maps lowercase slug → display title for the "From: X"
+	// source link in the transclusion wrapper.
+	SlugTitles map[string]string
+
+	// CurrentSlug is the slug of the page currently being rendered.
+	// Seeded into the visited set so a page can't transclude itself.
+	CurrentSlug string
+
+	// Visited tracks slugs already on the transclusion stack. Lookups
+	// use strings.ToLower(slug). The map is per-page; do not share
+	// across goroutines.
+	Visited map[string]struct{}
+
+	// Depth is the current nesting depth. Starts at 0 for top-level
+	// rendering; each recursive transclusion increments it.
+	Depth int
+}
+
+// child returns a TranscludeSource one level deeper, with `target` added
+// to the visited set. The returned struct is safe to mutate — the
+// visited map is cloned so the caller's state is unaffected.
+func (t *TranscludeSource) child(target string) *TranscludeSource {
+	visited := make(map[string]struct{}, len(t.Visited)+1)
+	for k := range t.Visited {
+		visited[k] = struct{}{}
+	}
+	visited[strings.ToLower(target)] = struct{}{}
+	return &TranscludeSource{
+		Cache:       t.Cache,
+		MD:          t.MD,
+		SlugTitles:  t.SlugTitles,
+		CurrentSlug: target,
+		Visited:     visited,
+		Depth:       t.Depth + 1,
+	}
+}
+
+// ParsedPage is one entry in the AST cache: the parsed root document
+// plus the source bytes needed to render its subtrees.
+type ParsedPage struct {
+	Slug   string
+	Title  string
+	Source []byte
+	Doc    ast.Node
+}
+
+// transcludeRenderer renders wikilink.Node nodes. For non-Embed links
+// and for image embeds, it mirrors abhg's renderer output. For non-image
+// embeds it triggers the transclusion path.
+type transcludeRenderer struct {
+	resolver    *SlugResolver
+	transcludes *TranscludeSource
+}
+
+func (r *transcludeRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(wikilink.Kind, r.render)
+}
+
+// hasDest tracks whether we wrote an opening <a> for a given node so the
+// exit pass knows whether to close it. Keyed by *wikilink.Node pointer.
+var hasDestKeys sync.Map // *wikilink.Node → struct{}
+
+func (r *transcludeRenderer) render(w util.BufWriter, src []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	n, ok := node.(*wikilink.Node)
+	if !ok {
+		return ast.WalkStop, nil
+	}
+
+	if !entering {
+		if _, ok := hasDestKeys.LoadAndDelete(n); ok {
+			_, _ = w.WriteString("</a>")
+		}
+		return ast.WalkContinue, nil
+	}
+
+	target := string(n.Target)
+	frag := string(n.Fragment)
+
+	// Image embed — mirror abhg's <img> emission so [[foo.png]] still works.
+	if n.Embed && isImageExtension(target) {
+		dest, err := r.resolver.ResolveWikilink(n)
+		if err != nil || len(dest) == 0 {
+			return ast.WalkContinue, nil
+		}
+		_, _ = w.WriteString(`<img src="`)
+		_, _ = w.Write(util.URLEscape(dest, true))
+		// Alt text — match abhg's policy: use the label when explicitly
+		// set (i.e. node has children whose text differs from the target).
+		if n.ChildCount() == 1 {
+			label := nodeText(src, n.FirstChild())
+			if !bytes.Equal(label, n.Target) {
+				_, _ = w.WriteString(`" alt="`)
+				_, _ = w.Write(util.EscapeHTML(label))
+			}
+		}
+		_, _ = w.WriteString(`">`)
+		return ast.WalkSkipChildren, nil
+	}
+
+	// Non-image embed → transclusion of another vault page.
+	if n.Embed && target != "" {
+		return r.renderTransclude(w, target, frag)
+	}
+
+	// Plain link — same shape abhg emits.
+	dest, err := r.resolver.ResolveWikilink(n)
+	if err != nil {
+		return ast.WalkStop, err
+	}
+	if len(dest) == 0 {
+		// Broken link — render contents only (abhg behavior).
+		return ast.WalkContinue, nil
+	}
+	hasDestKeys.Store(n, struct{}{})
+	_, _ = w.WriteString(`<a href="`)
+	_, _ = w.Write(util.URLEscape(dest, true))
+	_, _ = w.WriteString(`">`)
+	return ast.WalkContinue, nil
+}
+
+// renderTransclude emits the transclusion wrapper for `target`. Handles
+// cycle / depth / missing-target cases inline; otherwise extracts the
+// requested subtree from the target's cached AST and renders it.
+func (r *transcludeRenderer) renderTransclude(w util.BufWriter, target, frag string) (ast.WalkStatus, error) {
+	if r.transcludes == nil || r.transcludes.Cache == nil {
+		// No cache available (e.g. in unit tests using renderMD directly).
+		// Render as a styled link so missing transclusion is visible.
+		writeBrokenTransclude(w, target, frag)
+		return ast.WalkSkipChildren, nil
+	}
+	key := strings.ToLower(target)
+
+	// Depth limit — emit the marker without descending.
+	if r.transcludes.Depth >= MaxTranscludeDepth {
+		writeOverflowTransclude(w, target, frag)
+		return ast.WalkSkipChildren, nil
+	}
+
+	// Cycle — emit the marker and stop.
+	if _, cycling := r.transcludes.Visited[key]; cycling {
+		writeCycleTransclude(w, target, frag)
+		return ast.WalkSkipChildren, nil
+	}
+
+	parsed, ok := r.transcludes.Cache[key]
+	if !ok {
+		writeBrokenTransclude(w, target, frag)
+		return ast.WalkSkipChildren, nil
+	}
+
+	// Resolve subset: full page, section, or block.
+	nodes, ok := selectSubtree(parsed.Doc, parsed.Source, frag)
+	if !ok || len(nodes) == 0 {
+		// Frag specified but not found in target — broken link.
+		writeBrokenTransclude(w, target, frag)
+		return ast.WalkSkipChildren, nil
+	}
+
+	// Recursive render: build a fresh source with a child Visited set so
+	// nested ![[...]] inside the transcluded section can still resolve.
+	childCtx := r.transcludes.child(target)
+	// Swap our state for the duration of the child render. transcludeRenderer
+	// instances are short-lived (one per top-level RenderPage), so we
+	// stack-save and restore.
+	savedTranscludes := r.transcludes
+	r.transcludes = childCtx
+	defer func() { r.transcludes = savedTranscludes }()
+
+	title := parsed.Title
+	if title == "" {
+		title = parsed.Slug
+	}
+	canonicalURL := "/" + parsed.Slug + "/"
+
+	_, _ = w.WriteString(`<div class="transclude" data-source="`)
+	_, _ = w.Write(util.EscapeHTML([]byte(parsed.Slug)))
+	_, _ = w.WriteString(`"><a class="transclude-source-link" href="`)
+	_, _ = w.Write(util.EscapeHTML([]byte(canonicalURL)))
+	_, _ = w.WriteString(`" hx-boost="false">From: `)
+	_, _ = w.Write(util.EscapeHTML([]byte(title)))
+	_, _ = w.WriteString(`</a><div class="transclude-body">`)
+
+	for _, node := range nodes {
+		if err := r.transcludes.MD.Renderer().Render(w, parsed.Source, node); err != nil {
+			return ast.WalkStop, err
+		}
+	}
+	_, _ = w.WriteString(`</div></div>`)
+
+	return ast.WalkSkipChildren, nil
+}
+
+// isImageExtension matches the same set abhg's renderer treats as images.
+// Kept here so we can switch from "is this a file" to "is this an image"
+// without duplicating logic across the two embed branches.
+func isImageExtension(s string) bool {
+	idx := strings.LastIndexByte(s, '.')
+	if idx < 0 || idx == len(s)-1 {
+		return false
+	}
+	switch strings.ToLower(s[idx:]) {
+	case ".apng", ".avif", ".gif", ".jpg", ".jpeg", ".jfif", ".pjpeg", ".pjp", ".png", ".svg", ".webp":
+		return true
+	}
+	return false
+}
+
+// nodeText extracts plain text from a wikilink Node's children. Used for
+// alt-text generation on image embeds.
+func nodeText(src []byte, n ast.Node) []byte {
+	var buf bytes.Buffer
+	writeNodeText(src, &buf, n)
+	return buf.Bytes()
+}
+
+func writeNodeText(src []byte, dst *bytes.Buffer, n ast.Node) {
+	switch n := n.(type) {
+	case *ast.Text:
+		_, _ = dst.Write(n.Segment.Value(src))
+	case *ast.String:
+		_, _ = dst.Write(n.Value)
+	default:
+		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+			writeNodeText(src, dst, c)
+		}
+	}
+}
+
+// writeBrokenTransclude / writeCycleTransclude / writeOverflowTransclude
+// emit the three error states. Each is a self-contained inline-block so
+// templates and CSS can style them uniformly.
+
+func writeBrokenTransclude(w util.BufWriter, target, frag string) {
+	_, _ = w.WriteString(`<a class="internal broken transclude-missing">[[`)
+	_, _ = w.Write(util.EscapeHTML([]byte(target)))
+	if frag != "" {
+		_, _ = w.WriteString(`#`)
+		_, _ = w.Write(util.EscapeHTML([]byte(frag)))
+	}
+	_, _ = w.WriteString(`]]</a>`)
+}
+
+func writeCycleTransclude(w util.BufWriter, target, frag string) {
+	_, _ = w.WriteString(`<div class="transclude transclude-cycle">circular: [[`)
+	_, _ = w.Write(util.EscapeHTML([]byte(target)))
+	if frag != "" {
+		_, _ = w.WriteString(`#`)
+		_, _ = w.Write(util.EscapeHTML([]byte(frag)))
+	}
+	_, _ = w.WriteString(`]]</div>`)
+}
+
+func writeOverflowTransclude(w util.BufWriter, target, frag string) {
+	_, _ = w.WriteString(`<div class="transclude transclude-overflow">depth limit: [[`)
+	_, _ = w.Write(util.EscapeHTML([]byte(target)))
+	if frag != "" {
+		_, _ = w.WriteString(`#`)
+		_, _ = w.Write(util.EscapeHTML([]byte(frag)))
+	}
+	_, _ = w.WriteString(`]]</div>`)
+}
+
+// =============================================================================
+// Subtree selection for transclusion
+// =============================================================================
+
+// selectSubtree returns the nodes the renderer should emit for a given
+// fragment spec.
+//
+//   - frag == "":          the entire page body (all top-level children of doc)
+//   - frag == "Some Heading": a section — the matching heading and every
+//     following sibling up to (but not including) the next heading of
+//     equal-or-lower depth.
+//   - frag == "^block-id": the single block (paragraph, callout, list,
+//     blockquote, fenced code, etc.) whose id attribute matches.
+//
+// Returns ok=false when a non-empty frag is specified but no match is
+// found, so the caller can emit a broken-target marker instead of an
+// empty transclusion.
+func selectSubtree(doc ast.Node, source []byte, frag string) ([]ast.Node, bool) {
+	if frag == "" {
+		var out []ast.Node
+		for c := doc.FirstChild(); c != nil; c = c.NextSibling() {
+			out = append(out, c)
+		}
+		return out, true
+	}
+	if strings.HasPrefix(frag, "^") {
+		return selectBlock(doc, frag[1:])
+	}
+	return selectSection(doc, source, frag)
+}
+
+// selectSection finds the heading whose slugified text matches the
+// fragment, then returns it plus subsequent siblings up to the next
+// heading of equal-or-lower depth (or end of document).
+func selectSection(doc ast.Node, source []byte, frag string) ([]ast.Node, bool) {
+	want := slugifyHeading(frag)
+	var start *ast.Heading
+	for c := doc.FirstChild(); c != nil; c = c.NextSibling() {
+		h, ok := c.(*ast.Heading)
+		if !ok {
+			continue
+		}
+		// Prefer the auto-id attribute (set by parser.WithAutoHeadingID)
+		// for consistency with anchor links.
+		var anchor string
+		if v, ok := h.AttributeString("id"); ok {
+			anchor = string(v.([]byte))
+		} else {
+			anchor = slugifyHeading(string(h.Text(source))) //nolint:staticcheck
+		}
+		if anchor == want {
+			start = h
+			break
+		}
+	}
+	if start == nil {
+		return nil, false
+	}
+	out := []ast.Node{start}
+	for c := start.NextSibling(); c != nil; c = c.NextSibling() {
+		if h, ok := c.(*ast.Heading); ok && h.Level <= start.Level {
+			break
+		}
+		out = append(out, c)
+	}
+	return out, true
+}
+
+// selectBlock finds the top-level block carrying the given id (set by
+// blockRefTransformer). Returns just that single block.
+func selectBlock(doc ast.Node, blockID string) ([]ast.Node, bool) {
+	for c := doc.FirstChild(); c != nil; c = c.NextSibling() {
+		if v, ok := c.AttributeString("id"); ok {
+			if string(v.([]byte)) == blockID {
+				return []ast.Node{c}, true
+			}
+		}
+		// Block refs also attach to headings (see blockRefTransformer) —
+		// those are covered by the top-level walk above. Anything nested
+		// (inside a list item, for instance) is intentionally not
+		// matched: a "block" in transclusion semantics is a top-level
+		// content unit.
+	}
+	return nil, false
 }

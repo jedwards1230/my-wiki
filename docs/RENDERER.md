@@ -103,6 +103,39 @@ Pinned versions and sha256 hashes live in
 `internal/server/assets/MANIFEST.txt`. Regenerate with
 `scripts/vendor-assets.sh` after a version bump.
 
+### Transclusion
+
+The native renderer supports full Obsidian-style markdown transclusion
+through three `![[…]]` forms:
+
+| Form | Meaning |
+|------|---------|
+| `![[page]]` | Embed the entire body of `page`. |
+| `![[page#Some Heading]]` | Embed only the section starting at `## Some Heading`, ending at the next heading of equal-or-lower depth (or end of file). |
+| `![[page#^block-id]]` | Embed only the top-level block (paragraph, callout, list, blockquote, fenced code) bearing `^block-id`. |
+| `![[image.png]]` | Image embed — unchanged, served from `/raw/`. |
+
+Rendered output:
+
+```html
+<div class="transclude" data-source="{slug}">
+  <a class="transclude-source-link" href="/{slug}/" hx-boost="false">From: {Title}</a>
+  <div class="transclude-body">…rendered HTML…</div>
+</div>
+```
+
+Error states are intentionally visible to readers:
+
+- **Missing target** — `<a class="internal broken transclude-missing">[[target]]</a>`
+- **Circular** (A transcludes B, B transcludes A) — `<div class="transclude transclude-cycle">circular: [[A]]</div>`
+- **Depth limit** (default `MaxTranscludeDepth = 3`) — `<div class="transclude transclude-overflow">depth limit: [[X]]</div>`
+
+The cache is built in `Builder.Build` as a pre-render pass over every
+page (parse → AST cache → render), so transclusion targets always
+resolve against the current vault snapshot — no stale state across
+rebuilds. CSS lives in `internal/server/assets/wiki.css` under the
+`/* ----------- Transclusion */` section.
+
 ## Rollback
 
 Single value flip — `renderer: quartz` and `helm upgrade`. ArgoCD reverts
@@ -120,9 +153,6 @@ These are intentionally cut from this PR to keep the diff reviewable. See
 [#73] for the full follow-up list.
 
 - **Graph view + `/api/graph` + cytoscape** — deferred. Follow-up PR #1.
-- **Markdown transclusion `![[page]]`** — currently rendered as a styled
-  link (`<a class="transclude">`) with a TODO comment in `obsidian.go`.
-  Real transclusion is follow-up PR #4.
 - **Delete Quartz entirely** — follow-up PR #2. Drops Node from the image
   (~700 MB → ~50 MB) and removes the `setup-quartz` / `quartz` containers.
 - **Extract obsidian-headless to its own Deployment** — follow-up PR #3.

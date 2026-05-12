@@ -350,6 +350,51 @@ mark {
 .callout-abstract { border-color: #4a8bbf; }
 .callout-quote    { border-color: var(--gray); }
 
+/* ----------- Transclusion */
+
+/* Visual weight tuned to feel native alongside callouts: same left border
+   + radius, slightly more muted background, top-right source link so the
+   reader can always trace where the content originated. */
+.transclude {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-left: 4px solid var(--tertiary);
+  background: var(--highlight);
+  border-radius: var(--radius);
+  position: relative;
+}
+.transclude-source-link {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--gray);
+  text-decoration: none;
+}
+.transclude-source-link:hover {
+  color: var(--secondary);
+  text-decoration: underline;
+}
+.transclude-body > :first-child { margin-top: 0; }
+.transclude-body > :last-child  { margin-bottom: 0; }
+
+/* Error states — visible to readers so they know transclusion didn't
+   resolve. transclude-missing reuses the broken-link styling; cycle and
+   overflow get their own muted boxes. */
+.transclude-missing {
+  color: var(--gray);
+  border-bottom: 1px dotted var(--gray);
+}
+.transclude-cycle,
+.transclude-overflow {
+  border-left-color: var(--gray);
+  background: transparent;
+  color: var(--gray);
+  font-style: italic;
+  font-size: 0.9rem;
+  padding: 0.4rem 0.75rem;
+}
+
 /* ----------- Code */
 
 pre {

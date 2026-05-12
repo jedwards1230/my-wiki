@@ -3,8 +3,10 @@ package render
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jedwards1230/my-wiki/internal/memfs"
 	"github.com/jedwards1230/my-wiki/internal/vault"
@@ -23,7 +25,7 @@ func renderMD(t *testing.T, src string, slugs map[string]string) string {
 		goldmark.WithExtensions(
 			extension.GFM,
 			&obsidianExtension{},
-			newWikilinkExtender(slugs),
+			newWikilinkExtender(slugs, nil),
 		),
 		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
 		goldmark.WithRendererOptions(html.WithUnsafe()),
@@ -238,5 +240,226 @@ func TestBuildEndToEnd(t *testing.T) {
 		t.Errorf("PageBySlug returned nil for notes/alpha")
 	} else if p.Title != "Alpha Note" {
 		t.Errorf("title = %q, want %q", p.Title, "Alpha Note")
+	}
+
+	// Transclusion (added to fixture vault): index.md has ![[notes/alpha]]
+	// which should expand into the alpha body inside a transclude wrapper.
+	f, err := fs.Open("index.html")
+	if err != nil {
+		t.Fatalf("missing index.html: %v", err)
+	}
+	indexBody, err := io.ReadAll(f)
+	_ = f.Close()
+	if err != nil {
+		t.Errorf("read index.html: %v", err)
+	}
+	body := string(indexBody)
+	if !strings.Contains(body, `class="transclude"`) {
+		t.Errorf("expected transclude wrapper in home page, got:\n%s", body)
+	}
+	if !strings.Contains(body, `data-source="notes/alpha"`) {
+		t.Errorf("expected data-source=notes/alpha attribute, got:\n%s", body)
+	}
+	// alpha body contains "==highlighted==" — should appear inside
+	// the transclude wrapper after recursive render.
+	if !strings.Contains(body, "<mark>highlighted</mark>") {
+		t.Errorf("expected transcluded alpha body content in home page")
+	}
+}
+
+// --- Transclusion-specific table tests ---------------------------------------
+
+// buildTranscludeRenderer returns a Renderer with a 2-page AST cache
+// suitable for exercising transclusion paths. host is the page whose
+// body holds the ![[…]] under test; target is the page being included.
+//
+// Returns the renderer plus a function that runs `host` through the
+// render pipeline and returns the rendered HTML body so each test can
+// pattern-match without re-implementing the parse+render dance.
+func buildTranscludeRenderer(t *testing.T, host string, targets map[string]string) (*Renderer, func() string) {
+	t.Helper()
+	slugs := map[string]string{}
+	for slug := range targets {
+		slugs[strings.ToLower(slug)] = slug
+	}
+	slugs["host"] = "host"
+	r, err := NewRenderer(slugs)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	cache := map[string]*ParsedPage{}
+	titles := map[string]string{}
+	for slug, src := range targets {
+		pp, _, _ := r.ParsePage(slug+".md", []byte(src))
+		key := strings.ToLower(slug)
+		cache[key] = pp
+		titles[key] = pp.Title
+	}
+	// host page parsed too — needed for cycle tests that include the
+	// host's own slug in transclusions.
+	hostParsed, _, _ := r.ParsePage("host.md", []byte(host))
+	cache["host"] = hostParsed
+	titles["host"] = hostParsed.Title
+	r.WithTransclusion(cache, titles)
+	return r, func() string {
+		page, err := r.RenderPage("host.md", []byte(host), time.Time{})
+		if err != nil {
+			t.Fatalf("RenderPage host: %v", err)
+		}
+		return string(page.ContentHTML)
+	}
+}
+
+func TestTransclude_FullPage(t *testing.T) {
+	host := "Intro: ![[other]] tail."
+	_, run := buildTranscludeRenderer(t, host, map[string]string{
+		"other": "---\ntitle: Other Page\n---\n\nFull body with ==mark==.\n",
+	})
+	out := run()
+	if !strings.Contains(out, `class="transclude"`) {
+		t.Errorf("missing transclude wrapper: %s", out)
+	}
+	if !strings.Contains(out, `data-source="other"`) {
+		t.Errorf("missing data-source: %s", out)
+	}
+	if !strings.Contains(out, "<mark>mark</mark>") {
+		t.Errorf("missing transcluded body: %s", out)
+	}
+	if !strings.Contains(out, `From: Other Page`) {
+		t.Errorf("missing source link label: %s", out)
+	}
+}
+
+func TestTransclude_Section(t *testing.T) {
+	host := "![[other#Second]]"
+	target := `---
+title: Other
+---
+
+## First
+
+first body.
+
+## Second
+
+second body with ==mark==.
+
+## Third
+
+third body.
+`
+	_, run := buildTranscludeRenderer(t, host, map[string]string{"other": target})
+	out := run()
+	if !strings.Contains(out, "second body") {
+		t.Errorf("section transclusion missed target section: %s", out)
+	}
+	if strings.Contains(out, "first body") {
+		t.Errorf("section transclusion leaked prior section into output: %s", out)
+	}
+	if strings.Contains(out, "third body") {
+		t.Errorf("section transclusion leaked following section into output: %s", out)
+	}
+	// Heading depth-preservation: the Second heading is at level 2,
+	// rendered as <h2>; we don't assert exact level (Quartz parity is
+	// "leave heading levels alone") but the word should appear in some
+	// heading tag.
+	if !strings.Contains(out, "Second") {
+		t.Errorf("section heading text missing: %s", out)
+	}
+}
+
+func TestTransclude_Block(t *testing.T) {
+	host := "![[other#^my-block]]"
+	target := `---
+title: Other
+---
+
+unrelated paragraph.
+
+paragraph with the right id. ^my-block
+
+another unrelated paragraph.
+`
+	_, run := buildTranscludeRenderer(t, host, map[string]string{"other": target})
+	out := run()
+	if !strings.Contains(out, "paragraph with the right id") {
+		t.Errorf("block transclusion missed target block: %s", out)
+	}
+	if strings.Contains(out, "unrelated paragraph") || strings.Contains(out, "another unrelated paragraph") {
+		t.Errorf("block transclusion leaked siblings: %s", out)
+	}
+}
+
+func TestTransclude_MissingTarget(t *testing.T) {
+	host := "![[does-not-exist]]"
+	_, run := buildTranscludeRenderer(t, host, nil)
+	out := run()
+	if !strings.Contains(out, "transclude-missing") {
+		t.Errorf("expected transclude-missing marker for unknown target: %s", out)
+	}
+}
+
+func TestTransclude_Cycle(t *testing.T) {
+	// A.md includes B; B includes A. When B is rendered for inclusion
+	// inside A, B's nested ![[A]] should hit the visited set and emit
+	// the cycle marker.
+	hostA := "A intro. ![[b]] A tail."
+	bSource := "B body. ![[a]] B tail."
+	r, err := NewRenderer(map[string]string{"a": "a", "b": "b"})
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	cache := map[string]*ParsedPage{}
+	titles := map[string]string{}
+	for slug, src := range map[string]string{"a": hostA, "b": bSource} {
+		pp, _, _ := r.ParsePage(slug+".md", []byte(src))
+		cache[slug] = pp
+		titles[slug] = pp.Title
+	}
+	r.WithTransclusion(cache, titles)
+	page, err := r.RenderPage("a.md", []byte(hostA), time.Time{})
+	if err != nil {
+		t.Fatalf("render A: %v", err)
+	}
+	body := string(page.ContentHTML)
+	if !strings.Contains(body, "transclude-cycle") {
+		t.Errorf("expected cycle marker rendering A → B → A: %s", body)
+	}
+}
+
+func TestTransclude_DepthLimit(t *testing.T) {
+	// Chain: A → B → C → D → E. Default MaxTranscludeDepth=3, so when
+	// rendering A, D's ![[E]] should hit the depth limit (A=0, B=1,
+	// C=2, D=3 → child render at depth 3 emits overflow marker).
+	r, err := NewRenderer(map[string]string{"a": "a", "b": "b", "c": "c", "d": "d", "e": "e"})
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	sources := map[string]string{
+		"a": "A. ![[b]]",
+		"b": "B. ![[c]]",
+		"c": "C. ![[d]]",
+		"d": "D. ![[e]]",
+		"e": "E leaf.",
+	}
+	cache := map[string]*ParsedPage{}
+	titles := map[string]string{}
+	for slug, src := range sources {
+		pp, _, _ := r.ParsePage(slug+".md", []byte(src))
+		cache[slug] = pp
+		titles[slug] = pp.Title
+	}
+	r.WithTransclusion(cache, titles)
+	page, err := r.RenderPage("a.md", []byte(sources["a"]), time.Time{})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := string(page.ContentHTML)
+	if !strings.Contains(body, "transclude-overflow") {
+		t.Errorf("expected depth-limit marker, got:\n%s", body)
+	}
+	// E's body should NOT appear — depth limit cut off at D's inclusion of E.
+	if strings.Contains(body, "E leaf") {
+		t.Errorf("depth limit did not stop descent: %s", body)
 	}
 }

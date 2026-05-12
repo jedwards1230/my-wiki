@@ -23,10 +23,28 @@ import (
 
 // Renderer is the compiled goldmark instance + parsed templates. One per
 // process — Build() calls share the renderer across goroutines.
+//
+// The renderer holds three goldmark instances:
+//   - parseMD: used for the parse-only pass that populates the AST cache
+//     (one shared instance, called concurrently).
+//   - md: the default render-pipeline instance for callers that don't
+//     supply per-page transclusion state (e.g. unit tests via renderMD).
+//     This instance is also what Renderer.RenderPage uses when no
+//     TranscludeCache is configured.
+//   - per-page: when transclusion is wired, Builder.Build builds a fresh
+//     goldmark per render via newMarkdown so the transcludeRenderer's
+//     visited set and current-slug are page-scoped.
 type Renderer struct {
+	parseMD   goldmark.Markdown
 	md        goldmark.Markdown
 	templates *template.Template
 	slugs     map[string]string
+
+	// transcludeCache + slugTitles are populated when the Renderer is
+	// being driven by a Builder that pre-parsed the vault. nil when
+	// transclusion isn't available (unit tests, single-doc renders).
+	transcludeCache map[string]*ParsedPage
+	slugTitles      map[string]string
 }
 
 // NewRenderer compiles a Renderer with the wikilink slug index. Returns
@@ -36,19 +54,56 @@ type Renderer struct {
 // across Build()s; the slug map is rebuilt and the renderer recreated only
 // when wikilink targets change.
 func NewRenderer(slugs map[string]string) (*Renderer, error) {
+	parseMD := newMarkdown(slugs, nil)
+	defaultMD := newMarkdown(slugs, nil)
+
+	tmpl, err := loadTemplates()
+	if err != nil {
+		return nil, fmt.Errorf("load templates: %w", err)
+	}
+	return &Renderer{
+		parseMD:   parseMD,
+		md:        defaultMD,
+		templates: tmpl,
+		slugs:     slugs,
+	}, nil
+}
+
+// WithTransclusion attaches a parsed-page cache and slug → title map so
+// subsequent RenderPage calls can resolve full transclusions. Called by
+// Builder.Build between pass 1 (parse) and pass 2 (render).
+func (r *Renderer) WithTransclusion(cache map[string]*ParsedPage, titles map[string]string) {
+	r.transcludeCache = cache
+	r.slugTitles = titles
+}
+
+// newMarkdown returns a goldmark.Markdown configured with every extension
+// the renderer needs. If transcludes is non-nil, the wikilink renderer
+// is the transcluding variant; otherwise it falls back to plain wikilink
+// rendering with no transclusion behavior.
+//
+// The transcludeRenderer's MD pointer is set to the returned instance
+// after construction so it can render subtrees of cached ASTs back to
+// HTML using the same configuration that produced them.
+func newMarkdown(slugs map[string]string, transcludes *TranscludeSource) goldmark.Markdown {
 	md := goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM,
 			meta.New(meta.WithStoresInDocument()),
 			extension.Footnote,
 			extension.DefinitionList,
-			extension.Typographer,
+			// NOTE: extension.Typographer is intentionally NOT enabled
+			// because its `-` trigger splits inline text segments, which
+			// breaks blockRefTransformer's ^block-id detection (the
+			// trailing `-foo` segment loses the `^` prefix to a
+			// preceding sibling). The visual loss (em-dashes etc) is
+			// minor; block refs are load-bearing for transclusion.
 			emoji.Emoji,
 			highlighting.NewHighlighting(
 				highlighting.WithStyle("github"),
 			),
 			&obsidianExtension{},
-			newWikilinkExtender(slugs),
+			newWikilinkExtender(slugs, transcludes),
 			// Mermaid: client-side passthrough — ```mermaid``` blocks are
 			// emitted as <pre class="mermaid"> for mermaid.min.js to pick
 			// up at runtime. NoScript=true keeps the extension from
@@ -64,12 +119,10 @@ func NewRenderer(slugs map[string]string) (*Renderer, error) {
 			html.WithUnsafe(),
 		),
 	)
-
-	tmpl, err := loadTemplates()
-	if err != nil {
-		return nil, fmt.Errorf("load templates: %w", err)
+	if transcludes != nil {
+		transcludes.MD = md
 	}
-	return &Renderer{md: md, templates: tmpl, slugs: slugs}, nil
+	return md
 }
 
 // loadTemplates parses the embedded template tree into a single template
@@ -136,21 +189,81 @@ type TemplateData struct {
 	BuildDate  string
 }
 
+// ParsePage parses a page's source to AST without rendering. Used by
+// Builder.Build's pass 1 to populate the transclusion cache.
+//
+// Pulled out from RenderPage because transclusion needs every page's AST
+// before any page is rendered — a page can transclude another page that
+// hasn't been visited yet in the render pass.
+func (r *Renderer) ParsePage(path string, source []byte) (*ParsedPage, parser.Context, ast.Node) {
+	ctx := parser.NewContext()
+	reader := text.NewReader(source)
+	doc := r.parseMD.Parser().Parse(reader, parser.WithContext(ctx))
+
+	slug := slugFromPath(path)
+	title := ""
+	if metaMap := meta.Get(ctx); metaMap != nil {
+		if v, ok := metaMap["title"].(string); ok {
+			title = v
+		}
+	}
+	if title == "" {
+		title = firstHeadingText(doc, source)
+	}
+	if title == "" {
+		title = humanizeSegment(filepath.Base(slug))
+	}
+	return &ParsedPage{
+		Slug:   slug,
+		Title:  title,
+		Source: source,
+		Doc:    doc,
+	}, ctx, doc
+}
+
 // RenderPage runs goldmark over the page's raw markdown bytes, populates
 // every metadata field on *Page, and stores the rendered HTML.
 //
 // `path` is the relative path inside the vault (e.g. `meta/schema.md`).
 // `source` is the raw file content. `modTime` is the file's mtime —
 // surfaces in the "Modified" footer.
+//
+// When the Renderer has a transclude cache attached (via WithTransclusion)
+// each RenderPage call constructs a per-page goldmark with a fresh
+// TranscludeSource so the visited-set + depth are page-scoped. Without
+// the cache, the shared default goldmark is used.
 func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*Page, error) {
 	p := &Page{Modified: modTime}
 
-	ctx := parser.NewContext()
-	reader := text.NewReader(source)
-	doc := r.md.Parser().Parse(reader, parser.WithContext(ctx))
+	slug := slugFromPath(path)
+
+	var (
+		md  goldmark.Markdown
+		ctx parser.Context
+		doc ast.Node
+	)
+	if r.transcludeCache != nil {
+		// Per-page goldmark so the transcludeRenderer's visited set is
+		// scoped to this render. Seed Visited with the current slug so a
+		// page can't ![[transclude itself]].
+		ts := &TranscludeSource{
+			Cache:       r.transcludeCache,
+			SlugTitles:  r.slugTitles,
+			CurrentSlug: slug,
+			Visited:     map[string]struct{}{strings.ToLower(slug): {}},
+			Depth:       0,
+		}
+		md = newMarkdown(r.slugs, ts)
+		ctx = parser.NewContext()
+		doc = md.Parser().Parse(text.NewReader(source), parser.WithContext(ctx))
+	} else {
+		md = r.md
+		ctx = parser.NewContext()
+		doc = md.Parser().Parse(text.NewReader(source), parser.WithContext(ctx))
+	}
 
 	var buf bytes.Buffer
-	if err := r.md.Renderer().Render(&buf, source, doc); err != nil {
+	if err := md.Renderer().Render(&buf, source, doc); err != nil {
 		return nil, fmt.Errorf("render markdown: %w", err)
 	}
 
@@ -191,7 +304,6 @@ func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*P
 		}
 	}
 
-	slug := slugFromPath(path)
 	p.Slug = slug
 	p.RelativeURL = "/" + slug + "/"
 	if p.Title == "" {
