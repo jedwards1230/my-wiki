@@ -313,12 +313,21 @@ var slugExcludedDirs = map[string]bool{
 	"private":   true,
 }
 
-// BuildSlugIndex builds a set of lowercase slugs for all pages in the vault
-// (excluding .obsidian/ and private/). Both the basename and full relative path
-// (without .md) are included. Note: raw/ is intentionally included because raw
-// files can be wikilink targets.
-func (v *Vault) BuildSlugIndex() (map[string]bool, error) {
-	slugs := make(map[string]bool)
+// BuildSlugIndex builds a map of lowercase slug → canonical relative path
+// (forward-slash, without .md) for every page in the vault. Both the
+// basename and the full relative path (without .md) are inserted as keys
+// so wikilinks can be resolved by short name or by full path.
+//
+// Excludes .obsidian/ and private/. Note: raw/ is intentionally included
+// because raw files can be wikilink targets.
+//
+// The value is the canonical relative path (no extension) so the native
+// renderer can build URLs without a second pass. Callers that only need
+// set semantics should use `_, ok := slugs[key]` to test presence;
+// `slugs[key]` alone returns the empty string for missing keys, which
+// is indistinguishable from a present-but-empty value.
+func (v *Vault) BuildSlugIndex() (map[string]string, error) {
+	slugs := make(map[string]string)
 	err := v.Storage.WalkDir("", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -334,8 +343,17 @@ func (v *Vault) BuildSlugIndex() (map[string]bool, error) {
 		}
 		base := strings.TrimSuffix(filepath.Base(rel), ".md")
 		relNoExt := strings.TrimSuffix(rel, ".md")
-		slugs[strings.ToLower(base)] = true
-		slugs[strings.ToLower(relNoExt)] = true
+		relNoExtSlash := filepath.ToSlash(relNoExt)
+		// Always populate the full-path key; it's unambiguous.
+		slugs[strings.ToLower(relNoExtSlash)] = relNoExtSlash
+		// Populate the basename key only if it isn't already taken — when
+		// two pages share a basename the full-path key wins; the bare
+		// basename links to whichever page was discovered first. This
+		// matches Quartz's "shortest match" link resolution.
+		baseKey := strings.ToLower(base)
+		if _, exists := slugs[baseKey]; !exists {
+			slugs[baseKey] = relNoExtSlash
+		}
 		return nil
 	})
 	if err != nil {

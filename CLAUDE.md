@@ -63,6 +63,7 @@ gofmt -w .
 
 For a high-level architecture overview see [docs/OVERVIEW.md](docs/OVERVIEW.md).
 For the per-mode feature matrix see [docs/SERVER-MODES.md](docs/SERVER-MODES.md).
+For the renderer flag (`WIKI_RENDERER=quartz|native`) operator runbook, see [docs/RENDERER.md](docs/RENDERER.md).
 
 ## Architecture
 

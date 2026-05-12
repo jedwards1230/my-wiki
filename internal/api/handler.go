@@ -49,16 +49,18 @@ func WithPageService(ps *service.PageService) HandlerOption {
 
 // Handler holds all API services and registers routes.
 type Handler struct {
-	vaultDir  string
-	lint      *service.LintService
-	directory *service.DirectoryService
-	activity  *service.ActivityService
-	pages     *service.PageService
-	tags      *service.TagService
-	search    *service.SearchService
-	authMW    func(http.Handler) http.Handler
-	authReads bool
-	notifier  *notify.RebuildNotifier
+	vaultDir        string
+	lint            *service.LintService
+	directory       *service.DirectoryService
+	activity        *service.ActivityService
+	pages           *service.PageService
+	tags            *service.TagService
+	search          *service.SearchService
+	authMW          func(http.Handler) http.Handler
+	authReads       bool
+	notifier        *notify.RebuildNotifier
+	renderPages     RenderPage
+	renderBacklinks RenderBacklinks
 }
 
 // NewHandler creates an API handler with services built from the given vault.
@@ -101,6 +103,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("PUT /api/pages/{path...}", h.wrapMutating(http.HandlerFunc(h.handlePageWrite)))
 	mux.Handle("DELETE /api/pages/{path...}", h.wrapMutating(http.HandlerFunc(h.handlePageDelete)))
 	mux.Handle("PATCH /api/pages/{path...}", h.wrapMutating(http.HandlerFunc(h.handlePagePatch)))
+
+	// Renderer fragment endpoints (popover + backlinks). Wired only when
+	// WithRenderEndpoints was applied — i.e. native renderer mode.
+	h.registerRenderRoutes(mux)
 }
 
 // wrapMutating wraps a handler with the auth middleware when configured.

@@ -64,6 +64,20 @@ const EnvQuartzDir = "WIKI_QUARTZ_DIR"
 // Default: false (serve directly from disk via os.DirFS).
 const EnvInMemoryHTML = "WIKI_IN_MEMORY_HTML"
 
+// EnvRenderer selects the HTML renderer used for the served wiki:
+//
+//   - "quartz" (default): Quartz v4 produces static HTML on disk under
+//     EnvPublicDir; the Go server serves those files unchanged. This is
+//     the production-stable path.
+//   - "native": the in-process Go renderer (internal/render) compiles the
+//     vault into an in-memory snapshot on startup and after each debounced
+//     vault change. EnvPublicDir is unused (memory-only).
+//
+// Surfaced as --renderer on `serve` and `serve http`. The Helm chart
+// drives this via .Values.renderer; flipping the value is the documented
+// rollback for the native renderer. See docs/RENDERER.md.
+const EnvRenderer = "WIKI_RENDERER"
+
 // ---------------------------------------------------------------------------
 // Filesystem watcher
 // ---------------------------------------------------------------------------

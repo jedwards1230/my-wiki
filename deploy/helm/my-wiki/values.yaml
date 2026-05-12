@@ -1,5 +1,18 @@
 replicaCount: 1
 
+# HTML renderer selection.
+#   quartz (default): Quartz v4 builds static HTML on disk; the Go server
+#     serves those files. The setup-quartz init container and the quartz
+#     --watch sidecar are both enabled.
+#   native: the in-process Go renderer compiles the vault to memory.
+#     The setup-quartz init and quartz sidecar are disabled; the Node
+#     pieces of the image are unused but ship anyway (image size is
+#     identical — the second-image follow-up is a separate PR).
+#
+# Rollback: change `renderer: native` back to `quartz` and helm upgrade.
+# ArgoCD typically reverts in ~60-90s.
+renderer: quartz
+
 image:
   repository: ghcr.io/jedwards1230/my-wiki
   tag: ""  # defaults to appVersion

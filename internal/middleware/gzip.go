@@ -25,6 +25,21 @@ var gzipWriterPool = sync.Pool{
 	},
 }
 
+// addVary appends value to the Vary header without duplicating an existing
+// token. Lets multiple middleware/handlers contribute independently
+// without overwriting each other's contributions.
+func addVary(h http.Header, value string) {
+	for _, existing := range h.Values("Vary") {
+		// Comma-split existing values to catch combined headers.
+		for _, tok := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(tok), value) {
+				return
+			}
+		}
+	}
+	h.Add("Vary", value)
+}
+
 // Gzip wraps a handler to compress responses for supported content types
 // when the response body is at least 1000 bytes.
 func Gzip(next http.Handler) http.Handler {
@@ -104,7 +119,9 @@ func (w *gzipResponseWriter) commit() {
 		// Compress
 		w.compressed = true
 		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("Vary", "Accept-Encoding")
+		// Add (not Set) so handler-supplied Vary values (e.g. HX-Request
+		// from the fragment shim) survive the gzip pass.
+		addVary(w.Header(), "Accept-Encoding")
 		w.Header().Del("Content-Length")
 		w.ResponseWriter.WriteHeader(w.statusCode)
 
@@ -115,7 +132,7 @@ func (w *gzipResponseWriter) commit() {
 		_, _ = w.gw.Write(w.buf)
 	} else {
 		// Pass through
-		w.Header().Set("Vary", "Accept-Encoding")
+		addVary(w.Header(), "Accept-Encoding")
 		w.ResponseWriter.WriteHeader(w.statusCode)
 		_, _ = w.ResponseWriter.Write(w.buf)
 	}

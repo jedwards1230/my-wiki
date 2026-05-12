@@ -556,8 +556,7 @@ func TestCustomExcludedDirs(t *testing.T) {
 	}
 	wantSlug := func(key string) {
 		t.Helper()
-		// slug keys use OS-native separators via filepath.Rel
-		if !slugs[filepath.FromSlash(key)] {
+		if _, ok := slugs[filepath.ToSlash(key)]; !ok {
 			t.Errorf("BuildSlugIndex: expected %q slug", key)
 		}
 	}
@@ -566,7 +565,7 @@ func TestCustomExcludedDirs(t *testing.T) {
 	wantSlug("drafts/wip")
 	wantSlug("notes/note")
 	// .obsidian is always excluded from slug index
-	if slugs["conf"] {
+	if _, ok := slugs["conf"]; ok {
 		t.Error("BuildSlugIndex: .obsidian/conf.md should be excluded from slug index")
 	}
 }
@@ -580,24 +579,31 @@ func TestBuildSlugIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should include basenames and full paths
-	for _, slug := range []string{
-		"index",
-		"schema",
-		"meta/schema",
-		"alpha",
-		"project/alpha",
-		"source1",
-		"raw/source1",
-	} {
-		if !slugs[slug] {
+	// Should include basenames and full paths, each mapping to the canonical
+	// (forward-slash) relative path without .md.
+	cases := map[string]string{
+		"index":         "index",
+		"schema":        "meta/schema",
+		"meta/schema":   "meta/schema",
+		"alpha":         "project/alpha",
+		"project/alpha": "project/alpha",
+		"source1":       "raw/source1",
+		"raw/source1":   "raw/source1",
+	}
+	for slug, wantPath := range cases {
+		got, ok := slugs[slug]
+		if !ok {
 			t.Errorf("missing slug %q", slug)
+			continue
+		}
+		if got != wantPath {
+			t.Errorf("slug %q = %q, want %q", slug, got, wantPath)
 		}
 	}
 
 	// Should NOT include private or .obsidian
 	for _, slug := range []string{"secret", "config"} {
-		if slugs[slug] {
+		if _, ok := slugs[slug]; ok {
 			t.Errorf("unexpected slug %q (should be excluded)", slug)
 		}
 	}
@@ -644,12 +650,12 @@ func TestWithStorage_MemStorage(t *testing.T) {
 		}
 
 		for _, slug := range []string{"index", "hello", "notes/hello", "source", "raw/source"} {
-			if !slugs[slug] {
+			if _, ok := slugs[slug]; !ok {
 				t.Errorf("missing slug %q", slug)
 			}
 		}
 		// private and .obsidian should be excluded
-		if slugs["secret"] {
+		if _, ok := slugs["secret"]; ok {
 			t.Error("unexpected slug 'secret' (should be excluded)")
 		}
 	})

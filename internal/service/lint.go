@@ -254,7 +254,7 @@ func (s *LintService) checkLinks(report *LintReport) {
 		}
 		for _, link := range links {
 			key := strings.ToLower(link)
-			if slugs[key] {
+			if _, ok := slugs[key]; ok {
 				continue
 			}
 			bl, ok := seen[key]
@@ -298,9 +298,13 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 		relPath += ".md"
 	}
 
-	// Compute slugs the deleted page contributed.
-	base := strings.TrimSuffix(filepath.Base(relPath), ".md")
-	relNoExt := strings.TrimSuffix(relPath, ".md")
+	// Compute slugs the deleted page contributed. Normalize relPath to
+	// forward slashes to match BuildSlugIndex's canonical key form — without
+	// this, a Windows-style "foo\\bar.md" would yield a lookup key that the
+	// index doesn't contain, producing false orphaned-link warnings.
+	relSlash := filepath.ToSlash(relPath)
+	base := strings.TrimSuffix(filepath.Base(relSlash), ".md")
+	relNoExt := strings.TrimSuffix(relSlash, ".md")
 	deletedSlugs := map[string]bool{
 		strings.ToLower(base):     true,
 		strings.ToLower(relNoExt): true,
@@ -319,7 +323,7 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 	// no links are broken.
 	anyOrphaned := false
 	for slug := range deletedSlugs {
-		if !slugs[slug] {
+		if _, ok := slugs[slug]; !ok {
 			anyOrphaned = true
 			break
 		}
@@ -346,7 +350,8 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 		}
 		for _, link := range links {
 			target := strings.ToLower(link)
-			if deletedSlugs[target] && !slugs[target] {
+			_, stillExists := slugs[target]
+			if deletedSlugs[target] && !stillExists {
 				issues = append(issues, LintIssue{
 					File: rel, Check: "links", Level: "WARN",
 					Message: fmt.Sprintf("broken link [[%s]] (target was deleted)", link),
@@ -415,7 +420,7 @@ func (s *LintService) lintPageLinks(relPath string) []LintIssue {
 	var issues []LintIssue
 	for _, link := range links {
 		target := strings.ToLower(link)
-		if !slugs[target] {
+		if _, ok := slugs[target]; !ok {
 			issues = append(issues, LintIssue{
 				File: relPath, Check: "links", Level: "WARN",
 				Message: fmt.Sprintf("broken link [[%s]]", link),

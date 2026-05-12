@@ -17,7 +17,8 @@
 
 | Feature | (1) `serve` | (2) `serve --mcp-port` | (3) `serve mcp http` | (4) `serve mcp stdio` |
 |---|---|---|---|---|
-| HTTP listener (Quartz HTML) | ✅ | ✅ | ❌ | ❌ |
+| HTTP listener (rendered HTML) | ✅ | ✅ | ❌ | ❌ |
+| Renderer (`--renderer`) | `quartz`/`native` | `quartz`/`native` | n/a | n/a |
 | REST API (`/api/*`) | ✅ | ✅ | ❌ | ❌ |
 | Raw file serving (`/raw/*`) | ✅ | ✅ | ❌ | ❌ |
 | MCP transport | ❌ | streamable-http | streamable-http | stdio |
@@ -48,6 +49,7 @@ Stdio routes logs to stderr because stdout is reserved for the MCP JSON-RPC fram
 | `--mcp-port` (embed MCP) | ✅ | ✅ | ❌ | ❌ |
 | `--port` (MCP-only HTTP) | ❌ | ❌ | ✅ | ❌ |
 | `--watch` (fsnotify) | ✅ | ✅ | ✅ | ❌ |
+| `--renderer` (`quartz`/`native`) | ✅ | ✅ | ❌ | ❌ |
 
 `--instance-name` is honored by every MCP surface. It surfaces as `instance_name` in the `whoami` MCP tool response, letting agents distinguish my-wiki from work-wiki when both are connected.
 

@@ -1,0 +1,446 @@
+/*
+ * wiki.css — hand-authored stylesheet for the native renderer.
+ *
+ * Layered top-down: tokens → resets → layout → sidebar → article → callouts →
+ * code → utility. Light + dark themes share tokens; theme switches via the
+ * [data-theme] attribute on <html>, set by wiki.js based on localStorage +
+ * prefers-color-scheme.
+ *
+ * Color tokens are ported 1:1 from quartz/quartz.config.ts so the visual
+ * diff against Quartz output is minimal.
+ */
+
+/* ----------- Webfont declarations (self-hosted woff2 under /_/static/fonts) */
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-weight: 400;
+  src: url("/_/static/fonts/schibsted-grotesk-regular.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-weight: 700;
+  src: url("/_/static/fonts/schibsted-grotesk-bold.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Source Sans 3";
+  font-style: normal;
+  font-weight: 400;
+  src: url("/_/static/fonts/source-sans-3-regular.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Source Sans 3";
+  font-style: normal;
+  font-weight: 700;
+  src: url("/_/static/fonts/source-sans-3-bold.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  src: url("/_/static/fonts/ibm-plex-mono-regular.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 700;
+  src: url("/_/static/fonts/ibm-plex-mono-bold.woff2") format("woff2");
+  font-display: swap;
+}
+
+/* ----------- Color tokens (light + dark, mirror Quartz's palette) */
+
+:root {
+  --light: #faf8f8;
+  --lightgray: #e5e5e5;
+  --gray: #b8b8b8;
+  --darkgray: #4e4e4e;
+  --dark: #2b2b2b;
+  --secondary: #284b63;
+  --tertiary: #84a59d;
+  --highlight: rgba(143, 159, 169, 0.15);
+  --textHighlight: #fff23688;
+
+  --content-max: 70ch;
+  --gap: 1.25rem;
+  --radius: 8px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+
+  --font-header: "Schibsted Grotesk", system-ui, sans-serif;
+  --font-body: "Source Sans 3", system-ui, sans-serif;
+  --font-code: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+html[data-theme="dark"] {
+  --light: #161618;
+  --lightgray: #393639;
+  --gray: #646464;
+  --darkgray: #d4d4d4;
+  --dark: #ebebec;
+  --secondary: #7b97aa;
+  --tertiary: #84a59d;
+  --highlight: rgba(143, 159, 169, 0.15);
+  --textHighlight: #fff23688;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) {
+    --light: #161618;
+    --lightgray: #393639;
+    --gray: #646464;
+    --darkgray: #d4d4d4;
+    --dark: #ebebec;
+    --secondary: #7b97aa;
+  }
+}
+
+/* ----------- Resets + base */
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--light);
+  color: var(--dark);
+  font-family: var(--font-body);
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+a {
+  color: var(--secondary);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+a.broken {
+  color: var(--gray);
+  border-bottom: 1px dotted var(--gray);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-header);
+  font-weight: 700;
+  margin: 1.5rem 0 0.5rem;
+  color: var(--dark);
+}
+
+code, pre, kbd {
+  font-family: var(--font-code);
+  font-size: 0.9em;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: -1000px;
+  top: 0;
+  padding: 0.5rem 1rem;
+  background: var(--dark);
+  color: var(--light);
+  z-index: 1000;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+/* ----------- Layout grid */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 18rem) minmax(0, 1fr) minmax(220px, 18rem);
+  gap: var(--gap);
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+@media (max-width: 1199px) {
+  .layout {
+    grid-template-columns: minmax(220px, 18rem) minmax(0, 1fr);
+  }
+  .sidebar-right {
+    display: none;
+  }
+}
+
+@media (max-width: 799px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .sidebar-left {
+    display: none;
+  }
+}
+
+/* ----------- Sidebars */
+
+.sidebar {
+  font-size: 0.9rem;
+}
+.sidebar h2 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--darkgray);
+}
+.sidebar ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.5rem 0;
+}
+.sidebar li {
+  margin: 0.25rem 0;
+}
+
+.page-title {
+  font-family: var(--font-header);
+  font-size: 1.4rem;
+  margin: 0 0 1rem;
+}
+.page-title a {
+  color: var(--dark);
+}
+
+.search-button {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--lightgray);
+  background: transparent;
+  border-radius: var(--radius);
+  color: var(--darkgray);
+  text-align: left;
+  cursor: pointer;
+}
+.darkmode {
+  margin: 0.5rem 0;
+}
+.darkmode button {
+  background: none;
+  border: 1px solid var(--lightgray);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+  color: var(--darkgray);
+}
+
+.toc ul {
+  font-size: 0.85rem;
+}
+.toc-depth-2 { padding-left: 0; }
+.toc-depth-3 { padding-left: 1rem; }
+.toc-depth-4 { padding-left: 2rem; }
+.toc-depth-5 { padding-left: 3rem; }
+.toc-depth-6 { padding-left: 4rem; }
+
+.backlinks h2 {
+  margin-top: 1.5rem;
+}
+.backlink-snippet {
+  color: var(--gray);
+  font-size: 0.85rem;
+}
+
+/* ----------- Article */
+
+.article-header {
+  margin-bottom: 1.5rem;
+}
+.article-title {
+  font-size: 2.25rem;
+  margin: 0;
+}
+.article-meta {
+  color: var(--darkgray);
+  font-size: 0.9rem;
+}
+.raw-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--gray);
+}
+.breadcrumbs ol {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--gray);
+  margin: 0 0 1rem;
+}
+.breadcrumbs li:not(:last-child)::after {
+  content: " / ";
+  padding-left: 0.4rem;
+  color: var(--gray);
+}
+
+.article-body {
+  max-width: var(--content-max);
+}
+.article-body p {
+  margin: 0.75rem 0;
+}
+.article-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+mark {
+  background: var(--textHighlight);
+  color: inherit;
+  padding: 0 0.15em;
+  border-radius: 2px;
+}
+
+/* ----------- Callouts */
+
+.callout {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-left: 4px solid var(--secondary);
+  background: var(--highlight);
+  border-radius: var(--radius);
+}
+.callout-title {
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.callout-content > :first-child { margin-top: 0; }
+.callout-content > :last-child  { margin-bottom: 0; }
+
+.callout.is-collapsible.is-collapsed .callout-content { display: none; }
+
+.callout-note     { border-color: #4a8bbf; }
+.callout-info     { border-color: #4a8bbf; }
+.callout-tip      { border-color: #2dbfa0; }
+.callout-warning  { border-color: #cc8a17; }
+.callout-danger   { border-color: #c94c4c; }
+.callout-failure  { border-color: #c94c4c; }
+.callout-bug      { border-color: #c94c4c; }
+.callout-success  { border-color: #2dbfa0; }
+.callout-question { border-color: #b675c3; }
+.callout-example  { border-color: #b675c3; }
+.callout-todo     { border-color: #4a8bbf; }
+.callout-abstract { border-color: #4a8bbf; }
+.callout-quote    { border-color: var(--gray); }
+
+/* ----------- Transclusion */
+
+/* Visual weight tuned to feel native alongside callouts: same left border
+   + radius, slightly more muted background, top-right source link so the
+   reader can always trace where the content originated. */
+.transclude {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-left: 4px solid var(--tertiary);
+  background: var(--highlight);
+  border-radius: var(--radius);
+  position: relative;
+}
+.transclude-source-link {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--gray);
+  text-decoration: none;
+}
+.transclude-source-link:hover {
+  color: var(--secondary);
+  text-decoration: underline;
+}
+.transclude-body > :first-child { margin-top: 0; }
+.transclude-body > :last-child  { margin-bottom: 0; }
+
+/* Error states — visible to readers so they know transclusion didn't
+   resolve. transclude-missing reuses the broken-link styling; cycle and
+   overflow get their own muted boxes. */
+.transclude-missing {
+  color: var(--gray);
+  border-bottom: 1px dotted var(--gray);
+}
+.transclude-cycle,
+.transclude-overflow {
+  border-left-color: var(--gray);
+  background: transparent;
+  color: var(--gray);
+  font-style: italic;
+  font-size: 0.9rem;
+  padding: 0.4rem 0.75rem;
+}
+
+/* ----------- Code */
+
+pre {
+  background: var(--lightgray);
+  padding: 1rem;
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+p code, li code {
+  background: var(--lightgray);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+.code-copy {
+  float: right;
+  background: transparent;
+  border: 1px solid var(--gray);
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+/* ----------- Math */
+
+.math-inline { font-family: var(--font-code); }
+.math-display { overflow-x: auto; margin: 1rem 0; }
+
+/* ----------- 404 */
+
+.not-found {
+  max-width: 40ch;
+  margin: 4rem auto;
+  text-align: center;
+}
+.not-found h1 {
+  font-size: 5rem;
+  margin: 0;
+}
+
+/* ----------- Reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001s !important;
+    transition-duration: 0.001s !important;
+  }
+  html { scroll-behavior: auto; }
+}
