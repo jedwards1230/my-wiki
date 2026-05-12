@@ -25,12 +25,36 @@ var Embedded embed.FS
 // vendor/htmx.min.js in the FS.
 //
 // We use http.FileServer + http.FS so byte-range requests + Last-Modified
-// work without additional plumbing. Caching headers are applied by the
-// outer middleware chain.
+// work without additional plumbing. Directory paths return 404 — we never
+// want operators discovering the asset tree via auto-generated index
+// listings. Caching headers are applied by the outer middleware chain.
 func Handler() http.Handler {
-	return http.FileServer(http.FS(Embedded))
+	return http.FileServer(noDirFS{inner: http.FS(Embedded)})
 }
 
 // SubFS returns the embedded filesystem as fs.FS. Useful for tests that
 // want to enumerate the bundle without HTTP plumbing.
 func SubFS() fs.FS { return Embedded }
+
+// noDirFS wraps an http.FileSystem and rejects directory opens, so
+// http.FileServer cannot serve auto-generated directory listings.
+// Returning fs.ErrNotExist makes FileServer respond 404, matching how it
+// behaves for paths that don't exist at all.
+type noDirFS struct{ inner http.FileSystem }
+
+func (n noDirFS) Open(name string) (http.File, error) {
+	f, err := n.inner.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	info, statErr := f.Stat()
+	if statErr != nil {
+		_ = f.Close()
+		return nil, statErr
+	}
+	if info.IsDir() {
+		_ = f.Close()
+		return nil, fs.ErrNotExist
+	}
+	return f, nil
+}

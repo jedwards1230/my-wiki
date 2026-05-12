@@ -298,9 +298,13 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 		relPath += ".md"
 	}
 
-	// Compute slugs the deleted page contributed.
-	base := strings.TrimSuffix(filepath.Base(relPath), ".md")
-	relNoExt := strings.TrimSuffix(relPath, ".md")
+	// Compute slugs the deleted page contributed. Normalize relPath to
+	// forward slashes to match BuildSlugIndex's canonical key form — without
+	// this, a Windows-style "foo\\bar.md" would yield a lookup key that the
+	// index doesn't contain, producing false orphaned-link warnings.
+	relSlash := filepath.ToSlash(relPath)
+	base := strings.TrimSuffix(filepath.Base(relSlash), ".md")
+	relNoExt := strings.TrimSuffix(relSlash, ".md")
 	deletedSlugs := map[string]bool{
 		strings.ToLower(base):     true,
 		strings.ToLower(relNoExt): true,

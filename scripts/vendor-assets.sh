@@ -10,6 +10,45 @@
 
 set -euo pipefail
 
+# --- CLI -------------------------------------------------------------------
+# Default: download everything and regenerate MANIFEST.txt.
+# --check:  re-hash the existing bundle and compare against MANIFEST.txt.
+#           Exits non-zero on drift. No network access in this mode.
+CHECK_MODE=false
+case "${1:-}" in
+    --check) CHECK_MODE=true ;;
+    -h | --help)
+        cat <<'USAGE'
+Usage: vendor-assets.sh [--check]
+
+  (no args)   Download all pinned third-party frontend assets and
+              regenerate MANIFEST.txt under internal/server/assets/.
+  --check     Recompute hashes for the existing bundle and verify they
+              match MANIFEST.txt. Exits non-zero on any drift.
+USAGE
+        exit 0
+        ;;
+    "") ;;
+    *)
+        echo "vendor-assets.sh: unknown argument: $1" >&2
+        echo "Try --help for usage." >&2
+        exit 2
+        ;;
+esac
+
+# Pick the available SHA-256 tool. sha256sum is the GNU coreutils standard
+# and exists on every Linux distro (incl. Alpine via busybox). shasum is the
+# Perl-based macOS default. Storing the command as an array lets later
+# expansions preserve word boundaries cleanly.
+if command -v sha256sum >/dev/null 2>&1; then
+    SHA256=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+    SHA256=(shasum -a 256)
+else
+    echo "vendor-assets.sh: need sha256sum or shasum on PATH" >&2
+    exit 1
+fi
+
 # Locate the project root from the script path so the script works regardless
 # of where it's invoked from (repo root, ./scripts, CI runner, etc.).
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +57,25 @@ ASSETS_DIR="${REPO_ROOT}/internal/server/assets"
 VENDOR_DIR="${ASSETS_DIR}/vendor"
 FONTS_DIR="${ASSETS_DIR}/fonts"
 KATEX_DIR="${VENDOR_DIR}/katex"
+
+if [[ "${CHECK_MODE}" == "true" ]]; then
+    if [[ ! -f "${ASSETS_DIR}/MANIFEST.txt" ]]; then
+        echo "vendor-assets.sh --check: MANIFEST.txt not found at ${ASSETS_DIR}" >&2
+        exit 1
+    fi
+    echo "==> Verifying MANIFEST.txt against ${ASSETS_DIR}"
+    # Strip comment + blank lines before piping to the checker; both
+    # sha256sum -c and shasum -a 256 -c accept the standard
+    # "<hash><space><space><path>" line format on stdin.
+    if ! ( cd "${ASSETS_DIR}" \
+            && grep -v -e '^#' -e '^$' MANIFEST.txt \
+            | "${SHA256[@]}" -c - ); then
+        echo "vendor-assets.sh --check: drift detected — re-run without --check to refresh." >&2
+        exit 1
+    fi
+    echo "Done. MANIFEST.txt is clean."
+    exit 0
+fi
 
 # --- Pinned versions -------------------------------------------------------
 HTMX_VERSION="2.0.4"
@@ -130,7 +188,7 @@ echo "==> Regenerating MANIFEST.txt"
         echo ""
         find vendor fonts -type f \( -name '*.js' -o -name '*.css' -o -name '*.woff2' \) -print0 \
             | sort -z \
-            | xargs -0 shasum -a 256
+            | xargs -0 "${SHA256[@]}"
     } > MANIFEST.txt
 )
 

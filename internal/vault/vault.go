@@ -323,7 +323,9 @@ var slugExcludedDirs = map[string]bool{
 //
 // The value is the canonical relative path (no extension) so the native
 // renderer can build URLs without a second pass. Callers that only need
-// set semantics can `_ = slugs[key]`-style probe by key presence.
+// set semantics should use `_, ok := slugs[key]` to test presence;
+// `slugs[key]` alone returns the empty string for missing keys, which
+// is indistinguishable from a present-but-empty value.
 func (v *Vault) BuildSlugIndex() (map[string]string, error) {
 	slugs := make(map[string]string)
 	err := v.Storage.WalkDir("", func(rel string, d fs.DirEntry, err error) error {
