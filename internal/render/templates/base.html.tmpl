@@ -37,11 +37,13 @@
       x-data="{
         drawer: false,
         rightCollapsed: $persist(false).as('rightRailCollapsed'),
+        appearanceOpen: $persist(false).as('appearancePanelOpen'),
         textSize: $persist('standard').as('readingTextSize'),
         widthMode: $persist('standard').as('readingWidth'),
         colorMode: $persist('auto').as('darkmode')
       }"
       :class="{ 'right-rail-collapsed': rightCollapsed }"
+      :data-appearance-open="appearanceOpen.toString()"
       x-init="
         $watch('textSize',  v => document.documentElement.setAttribute('data-text-size', v));
         $watch('widthMode', v => document.body.setAttribute('data-reading-width', v));
@@ -129,39 +131,12 @@
   {{- if not .IsListPage }}
   <aside class="sidebar sidebar-right" aria-label="Page tools">
     <button type="button" class="right-rail-toggle"
-            :title="rightCollapsed ? 'Appearance' : 'Hide page tools'"
-            :aria-label="rightCollapsed ? 'Open appearance and page tools' : 'Hide page tools'"
+            :title="rightCollapsed ? 'Show page tools' : 'Hide page tools'"
+            :aria-label="rightCollapsed ? 'Show page tools' : 'Hide page tools'"
             :aria-expanded="(!rightCollapsed).toString()"
             x-on:click="rightCollapsed = !rightCollapsed">
-      <svg x-show="rightCollapsed" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l5-14 5 14"/><path d="M5.5 16h7"/><circle cx="18.5" cy="17.5" r="3.5"/></svg>
-      <span x-show="!rightCollapsed" aria-hidden="true">»</span>
+      <span aria-hidden="true" x-text="rightCollapsed ? '«' : '»'"></span>
     </button>
-    <section class="appearance" aria-label="Appearance">
-      <h2>Appearance</h2>
-      <fieldset class="appearance-group">
-        <legend>Text</legend>
-        <div class="appearance-options" role="radiogroup">
-          <button type="button" role="radio" :aria-checked="(textSize === 'small').toString()" :class="{ 'is-active': textSize === 'small' }" x-on:click="textSize = 'small'">Small</button>
-          <button type="button" role="radio" :aria-checked="(textSize === 'standard').toString()" :class="{ 'is-active': textSize === 'standard' }" x-on:click="textSize = 'standard'">Standard</button>
-          <button type="button" role="radio" :aria-checked="(textSize === 'large').toString()" :class="{ 'is-active': textSize === 'large' }" x-on:click="textSize = 'large'">Large</button>
-        </div>
-      </fieldset>
-      <fieldset class="appearance-group">
-        <legend>Width</legend>
-        <div class="appearance-options" role="radiogroup">
-          <button type="button" role="radio" :aria-checked="(widthMode === 'standard').toString()" :class="{ 'is-active': widthMode === 'standard' }" x-on:click="widthMode = 'standard'">Standard</button>
-          <button type="button" role="radio" :aria-checked="(widthMode === 'wide').toString()" :class="{ 'is-active': widthMode === 'wide' }" x-on:click="widthMode = 'wide'">Wide</button>
-        </div>
-      </fieldset>
-      <fieldset class="appearance-group">
-        <legend>Color</legend>
-        <div class="appearance-options" role="radiogroup">
-          <button type="button" role="radio" :aria-checked="(colorMode === 'auto').toString()" :class="{ 'is-active': colorMode === 'auto' }" x-on:click="colorMode = 'auto'">Automatic</button>
-          <button type="button" role="radio" :aria-checked="(colorMode === 'light').toString()" :class="{ 'is-active': colorMode === 'light' }" x-on:click="colorMode = 'light'">Light</button>
-          <button type="button" role="radio" :aria-checked="(colorMode === 'dark').toString()" :class="{ 'is-active': colorMode === 'dark' }" x-on:click="colorMode = 'dark'">Dark</button>
-        </div>
-      </fieldset>
-    </section>
     {{- if .Slug }}
     <section class="graph" aria-label="Graph view">
       <h2>Graph View</h2>
@@ -188,6 +163,49 @@
       </ul>
     </section>
     {{- end }}
+    {{/* Appearance sits at the bottom of the rail and collapses
+         independently from the whole-rail toggle. Default is closed —
+         most reading sessions never need to open it. The icon button
+         is always present so the entry point is obvious; clicking it
+         expands the panel inline above. The wrapper class drives both
+         the collapsed-vs-open layout and the bootstrap pre-paint hide
+         (see body[data-appearance-open]). */}}
+    <section class="appearance" :class="{ 'is-open': appearanceOpen }" aria-label="Appearance">
+      <div class="appearance-panel" x-show="appearanceOpen">
+        <h2>Appearance</h2>
+        <fieldset class="appearance-group">
+          <legend>Text</legend>
+          <div class="appearance-options" role="radiogroup">
+            <button type="button" role="radio" :aria-checked="(textSize === 'small').toString()" :class="{ 'is-active': textSize === 'small' }" x-on:click="textSize = 'small'">Small</button>
+            <button type="button" role="radio" :aria-checked="(textSize === 'standard').toString()" :class="{ 'is-active': textSize === 'standard' }" x-on:click="textSize = 'standard'">Standard</button>
+            <button type="button" role="radio" :aria-checked="(textSize === 'large').toString()" :class="{ 'is-active': textSize === 'large' }" x-on:click="textSize = 'large'">Large</button>
+          </div>
+        </fieldset>
+        <fieldset class="appearance-group">
+          <legend>Width</legend>
+          <div class="appearance-options" role="radiogroup">
+            <button type="button" role="radio" :aria-checked="(widthMode === 'standard').toString()" :class="{ 'is-active': widthMode === 'standard' }" x-on:click="widthMode = 'standard'">Standard</button>
+            <button type="button" role="radio" :aria-checked="(widthMode === 'wide').toString()" :class="{ 'is-active': widthMode === 'wide' }" x-on:click="widthMode = 'wide'">Wide</button>
+          </div>
+        </fieldset>
+        <fieldset class="appearance-group">
+          <legend>Color</legend>
+          <div class="appearance-options" role="radiogroup">
+            <button type="button" role="radio" :aria-checked="(colorMode === 'auto').toString()" :class="{ 'is-active': colorMode === 'auto' }" x-on:click="colorMode = 'auto'">Automatic</button>
+            <button type="button" role="radio" :aria-checked="(colorMode === 'light').toString()" :class="{ 'is-active': colorMode === 'light' }" x-on:click="colorMode = 'light'">Light</button>
+            <button type="button" role="radio" :aria-checked="(colorMode === 'dark').toString()" :class="{ 'is-active': colorMode === 'dark' }" x-on:click="colorMode = 'dark'">Dark</button>
+          </div>
+        </fieldset>
+      </div>
+      <button type="button" class="appearance-toggle"
+              :title="appearanceOpen ? 'Hide appearance' : 'Appearance'"
+              :aria-label="appearanceOpen ? 'Hide appearance panel' : 'Open appearance panel'"
+              :aria-expanded="appearanceOpen.toString()"
+              x-on:click="appearanceOpen = !appearanceOpen">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l5-14 5 14"/><path d="M5.5 16h7"/><circle cx="18.5" cy="17.5" r="3.5"/></svg>
+        <span class="appearance-toggle-label">Appearance</span>
+      </button>
+    </section>
   </aside>
   {{- end }}
 

@@ -17,9 +17,10 @@
   // width, color theme) before Alpine hydrates so the first paint doesn't
   // flash the defaults. Keys match the bare `.as(...)` names from the
   // `$persist` bindings on <body>:
-  //   darkmode         → "light" | "dark" | "auto"        (Color)
-  //   readingTextSize  → "small" | "standard" | "large"   (Text)
-  //   readingWidth     → "standard" | "wide"              (Width)
+  //   darkmode             → "light" | "dark" | "auto"        (Color)
+  //   readingTextSize      → "small" | "standard" | "large"   (Text)
+  //   readingWidth         → "standard" | "wide"              (Width)
+  //   appearancePanelOpen  → bool                             (panel visible)
   function readPersist(key) {
     try {
       const raw = localStorage.getItem(key);
@@ -51,6 +52,15 @@
       document.body.setAttribute(
         "data-reading-width",
         width === "wide" ? "wide" : "standard",
+      );
+      // Pre-apply appearance-open so the panel doesn't briefly render
+      // for returning users with it open (the CSS rule keyed on this
+      // attribute hides the panel until Alpine hydrates and the
+      // x-show binding takes over).
+      const open = readPersist("appearancePanelOpen");
+      document.body.setAttribute(
+        "data-appearance-open",
+        open === true ? "true" : "false",
       );
     }
   } catch (_) {

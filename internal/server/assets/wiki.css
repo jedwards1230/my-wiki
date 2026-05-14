@@ -266,9 +266,6 @@ body.right-rail-collapsed[data-reading-width="wide"] .sidebar-right {
   line-height: 1;
   padding: 0;
 }
-.right-rail-toggle svg {
-  display: block;
-}
 .right-rail-toggle:hover {
   color: var(--dark);
   border-color: var(--gray);
@@ -277,26 +274,17 @@ body.right-rail-collapsed[data-reading-width="wide"] .sidebar-right {
   outline: 2px solid var(--secondary);
   outline-offset: 2px;
 }
-/* When the rail is collapsed the toggle floats at the top-right of the
-   viewport as a Wikipedia-style "Appearance" entry point — wider than
-   the inline chevron so the icon reads at a glance, and anchored to
-   the right edge so it doesn't drift when the user scrolls. */
+/* When the rail is collapsed the toggle floats at the right viewport
+   edge so it's always reachable. Chevron-only — the Appearance panel
+   has its own dedicated toggle at the bottom of the rail. */
 body.right-rail-collapsed .right-rail-toggle {
   position: fixed;
   left: auto;
-  right: 0.5rem;
-  top: 4.5rem;
-  width: 40px;
-  height: 36px;
-  border-radius: 4px;
-  background: var(--light);
-  color: var(--dark);
-  box-shadow: var(--shadow-sm);
-  opacity: 0.95;
-}
-body.right-rail-collapsed .right-rail-toggle:hover {
-  opacity: 1;
-  box-shadow: var(--shadow-md);
+  right: 0;
+  top: 5rem;
+  border-radius: 4px 0 0 4px;
+  border-right: none;
+  opacity: 0.85;
 }
 
 @media (max-width: 1199px) {
@@ -1130,14 +1118,77 @@ pre.mermaid.mermaid-zoomable:focus-visible {
   margin: 0;
 }
 
-/* ----------- Appearance panel (right-rail widget) */
+/* ----------- Appearance panel (right-rail widget)
+ *
+ * Lives at the bottom of the right rail and toggles independently from
+ * the whole-rail collapse. Default state: panel collapsed, only the
+ * small `.appearance-toggle` button visible — most reading sessions
+ * never need to open it. Click the button to expand the panel inline
+ * above; click again to collapse.
+ *
+ * Bootstrap pre-paint hide: body[data-appearance-open="false"] hides
+ * the panel before Alpine hydrates so a returning user with the panel
+ * open doesn't see a flash of closed-then-open. After hydration the
+ * Alpine `x-show` binding owns visibility.
+ */
 
 .appearance {
-  margin: 0 0 1.5rem 0;
+  /* Top margin pushes the section to the visual bottom of the rail
+     (after backlinks). No bottom margin — this is the last widget. */
+  margin: 1.5rem 0 0 0;
+}
+body[data-appearance-open="false"] .appearance .appearance-panel {
+  display: none;
 }
 .appearance h2 {
   font-size: 1rem;
   margin: 0 0 0.5rem 0;
+}
+.appearance-panel {
+  margin-bottom: 0.6rem;
+}
+.appearance-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--light);
+  border: 1px solid var(--lightgray);
+  border-radius: 5px;
+  color: var(--darkgray);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.6rem;
+  line-height: 1;
+  box-shadow: var(--shadow-sm);
+}
+.appearance-toggle svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+.appearance-toggle:hover {
+  color: var(--dark);
+  border-color: var(--gray);
+  background: var(--highlight);
+}
+.appearance-toggle:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+}
+/* When the panel is open the button doubles as the close affordance,
+   so render it tinted to match the panel's active radio styling. */
+.appearance.is-open .appearance-toggle {
+  background: var(--secondary);
+  color: var(--light);
+  border-color: var(--secondary);
+}
+.appearance.is-open .appearance-toggle:hover {
+  background: var(--secondary);
+}
+.appearance-toggle-label {
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
 }
 .appearance-group {
   border: 0;
