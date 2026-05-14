@@ -7,7 +7,7 @@
 {{- if .Description }}
 <meta name="description" content="{{ .Description }}">
 {{- end }}
-<link rel="stylesheet" href="/_/static/wiki.css">
+<link rel="stylesheet" href="/_/static/wiki.css?v={{ .Version }}">
 {{- if .HasMath }}
 <link rel="stylesheet" href="/_/static/vendor/katex/katex.min.css">
 {{- end }}
@@ -42,14 +42,16 @@
         colorMode: $persist('auto').as('darkmode')
       }"
       :class="{ 'right-rail-collapsed': rightCollapsed }"
-      :data-text-size="textSize"
-      :data-reading-width="widthMode"
-      x-effect="
-        if (colorMode === 'light' || colorMode === 'dark') {
-          document.documentElement.setAttribute('data-theme', colorMode);
-        } else {
-          document.documentElement.removeAttribute('data-theme');
-        }
+      x-init="
+        $watch('textSize',  v => document.body.setAttribute('data-text-size', v));
+        $watch('widthMode', v => document.body.setAttribute('data-reading-width', v));
+        $watch('colorMode', v => {
+          if (v === 'light' || v === 'dark') {
+            document.documentElement.setAttribute('data-theme', v);
+          } else {
+            document.documentElement.removeAttribute('data-theme');
+          }
+        });
       ">
 
 <a class="skip-link" href="#main">Skip to content</a>
@@ -203,7 +205,7 @@
 <script src="/_/static/vendor/htmx-idiomorph-ext.min.js" defer></script>
 <script src="/_/static/vendor/alpine-persist.min.js" defer></script>
 <script src="/_/static/vendor/alpine.min.js" defer></script>
-<script src="/_/static/wiki.js" defer></script>
+<script src="/_/static/wiki.js?v={{ .Version }}" defer></script>
 {{- /*
   KaTeX and Mermaid loaders live in wiki.js (see ensureKatex /
   ensureMermaid) so they fire both on initial DOMContentLoaded and
