@@ -225,6 +225,12 @@ body.right-rail-collapsed .sidebar-right {
 
 .sidebar-right {
   position: relative;
+  /* Leave clearance so the absolutely-positioned .right-rail-toggle
+     (left: -16px, width: 28px) doesn't overlap the rail's first
+     heading. Without padding-left, the leftmost ~12px of "GRAPH VIEW"
+     sat behind the toggle. The collapsed-state rule below zeros all
+     padding so this doesn't leak into the collapsed layout. */
+  padding-left: 1rem;
 }
 .right-rail-toggle {
   position: absolute;
