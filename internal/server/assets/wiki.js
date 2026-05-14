@@ -53,8 +53,83 @@
   });
 
   // -------------------------- dynamic asset init --------------------------
-  function initDynamicAssets() {
+  // KaTeX and Mermaid are lazy-loaded from here so they work on both
+  // the initial paint AND after htmx hx-boost swaps. A conditional
+  // <script> tag in the body footer would only run on hard navigations
+  // because htmx swaps the <main> fragment only — the footer scripts
+  // from the destination page are discarded. See base.html.tmpl.
+
+  function loadScriptOnce(src, marker) {
+    return new Promise(function (resolve, reject) {
+      const existing = document.querySelector('script[data-wiki-asset="' + marker + '"]');
+      if (existing) {
+        if (existing.getAttribute("data-wiki-loaded") === "1") {
+          resolve();
+          return;
+        }
+        existing.addEventListener("load", function () { resolve(); }, { once: true });
+        existing.addEventListener("error", function () { reject(new Error("load failed: " + src)); }, { once: true });
+        return;
+      }
+      const s = document.createElement("script");
+      s.src = src;
+      s.defer = true;
+      s.setAttribute("data-wiki-asset", marker);
+      s.addEventListener("load", function () {
+        s.setAttribute("data-wiki-loaded", "1");
+        resolve();
+      }, { once: true });
+      s.addEventListener("error", function () { reject(new Error("load failed: " + src)); }, { once: true });
+      document.head.appendChild(s);
+    });
+  }
+
+  let mermaidReady = null;
+  function ensureMermaid() {
+    if (window.mermaid && typeof window.mermaid.run === "function") {
+      return Promise.resolve(window.mermaid);
+    }
+    if (!mermaidReady) {
+      mermaidReady = loadScriptOnce("/_/static/vendor/mermaid.min.js", "mermaid").then(function () {
+        if (window.mermaid && typeof window.mermaid.initialize === "function") {
+          try {
+            window.mermaid.initialize({ startOnLoad: false, theme: "neutral" });
+          } catch (_) { /* already initialized — fine */ }
+        }
+        return window.mermaid;
+      }).catch(function (err) {
+        mermaidReady = null; // allow retry on next swap
+        throw err;
+      });
+    }
+    return mermaidReady;
+  }
+
+  let katexReady = null;
+  function ensureKatex() {
     if (window.renderMathInElement) {
+      return Promise.resolve();
+    }
+    if (!katexReady) {
+      katexReady = loadScriptOnce("/_/static/vendor/katex/katex.min.js", "katex-core")
+        .then(function () { return loadScriptOnce("/_/static/vendor/katex/auto-render.min.js", "katex-autorender"); })
+        .catch(function (err) { katexReady = null; throw err; });
+    }
+    return katexReady;
+  }
+
+  function runMermaid() {
+    if (!window.mermaid || typeof window.mermaid.run !== "function") return;
+    try {
+      window.mermaid.run({ querySelector: "pre.mermaid:not([data-processed='true']), .mermaid:not([data-processed='true'])" });
+    } catch (_) {
+      /* mermaid throws on stale nodes / parse errors; safe to ignore */
+    }
+  }
+
+  function runKatex() {
+    if (!window.renderMathInElement) return;
+    try {
       window.renderMathInElement(document.body, {
         delimiters: [
           { left: "$$", right: "$$", display: true },
@@ -62,13 +137,15 @@
         ],
         throwOnError: false,
       });
+    } catch (_) { /* ignore */ }
+  }
+
+  function initDynamicAssets() {
+    if (document.querySelector("pre.mermaid, .mermaid")) {
+      ensureMermaid().then(runMermaid).catch(function () { /* logged via Network panel */ });
     }
-    if (window.mermaid && typeof window.mermaid.run === "function") {
-      try {
-        window.mermaid.run({ querySelector: "pre.mermaid, .mermaid" });
-      } catch (_) {
-        /* mermaid throws on stale nodes after swap; safe to ignore */
-      }
+    if (document.querySelector(".math-inline, .math-display")) {
+      ensureKatex().then(runKatex).catch(function () { /* logged via Network panel */ });
     }
   }
 

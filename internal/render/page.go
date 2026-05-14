@@ -59,12 +59,15 @@ type Page struct {
 	Created  time.Time
 	Modified time.Time
 
-	// HasMath is set when the body contains $…$ or $$…$$. Templates use it
-	// to gate the KaTeX <script> tag — no math, no load.
+	// HasMath is set when the body contains $…$ or $$…$$. Diagnostic only:
+	// wiki.js now detects .math-inline / .math-display in the DOM and
+	// lazy-loads KaTeX itself, so this field no longer gates anything in
+	// the templates.
 	HasMath bool
 
-	// HasMermaid is set when the body contains a ```mermaid``` fence. Same
-	// gating as HasMath for mermaid.min.js.
+	// HasMermaid is set when the body contains a ```mermaid``` fence.
+	// Diagnostic only — wiki.js detects pre.mermaid in the DOM and
+	// lazy-loads mermaid.min.js itself.
 	HasMermaid bool
 
 	// Description is either the frontmatter `description:` or the first

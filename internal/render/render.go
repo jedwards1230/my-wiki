@@ -108,8 +108,10 @@ func newMarkdown(slugs map[string]string, transcludes *TranscludeSource) goldmar
 			// Mermaid: client-side passthrough — ```mermaid``` blocks are
 			// emitted as <pre class="mermaid"> for mermaid.min.js to pick
 			// up at runtime. NoScript=true keeps the extension from
-			// injecting its own <script> tag (we control loading via
-			// wiki.js based on Page.HasMermaid).
+			// injecting its own <script> tag; wiki.js detects pre.mermaid
+			// in the DOM and lazy-loads mermaid.min.js on both the initial
+			// paint and after every htmx swap (Page.HasMermaid is no longer
+			// gating script delivery — see base.html.tmpl).
 			&mermaid.Extender{RenderMode: mermaid.RenderModeClient, NoScript: true},
 		),
 		goldmark.WithParserOptions(

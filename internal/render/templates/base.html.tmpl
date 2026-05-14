@@ -161,21 +161,13 @@
 <script src="/_/static/vendor/alpine-persist.min.js" defer></script>
 <script src="/_/static/vendor/alpine.min.js" defer></script>
 <script src="/_/static/wiki.js" defer></script>
-{{- if .HasMath }}
-<script src="/_/static/vendor/katex/katex.min.js" defer></script>
-<script src="/_/static/vendor/katex/auto-render.min.js" defer></script>
-{{- end }}
-{{- if .HasMermaid }}
-<script src="/_/static/vendor/mermaid.min.js" defer></script>
-<script defer>
-  document.addEventListener("DOMContentLoaded", function() {
-    if (typeof mermaid !== "undefined") {
-      mermaid.initialize({ startOnLoad: false, theme: "neutral" });
-      mermaid.run({ querySelector: "pre.mermaid" });
-    }
-  });
-</script>
-{{- end }}
+{{- /*
+  KaTeX and Mermaid loaders live in wiki.js (see ensureKatex /
+  ensureMermaid) so they fire both on initial DOMContentLoaded and
+  after every htmx swap. Conditional <script> tags here would not
+  survive a #main fragment swap, causing pages reached via hx-boost
+  to display raw markdown until a hard refresh.
+*/ -}}
 
 </body>
 </html>
