@@ -142,10 +142,12 @@
   function bindMermaidZoom() {
     const blocks = document.querySelectorAll("pre.mermaid:not([data-zoom-bound]), .mermaid:not([data-zoom-bound])");
     blocks.forEach(function (block) {
-      // Mermaid sets data-processed="true" once it has rendered the SVG.
-      // Skip blocks that haven't been processed yet — they'll be picked
-      // up on the next runMermaid pass.
-      if (block.getAttribute("data-processed") !== "true") return;
+      // Gate on the actual <svg> being present, not just data-processed
+      // — mermaid sets data-processed="true" before the async render
+      // resolves, and failed diagrams leave the attribute set without
+      // ever producing an SVG. Without an SVG there's nothing to zoom,
+      // so the block stays non-interactive until the next mermaid pass.
+      if (!block.querySelector("svg")) return;
       block.setAttribute("data-zoom-bound", "1");
       block.classList.add("mermaid-zoomable");
       block.setAttribute("role", "button");
@@ -199,8 +201,27 @@
         lastFocus.focus({ preventScroll: true });
       }
     }
+    // Tab focus loop — keeps keyboard focus inside the modal so the
+    // aria-modal="true" semantics match the actual behavior. The
+    // overlay has a single focusable control (close button), so any
+    // Tab / Shift+Tab cycles back to it.
     function onKey(e) {
-      if (e.key === "Escape") { e.preventDefault(); close(); }
+      if (e.key === "Escape") { e.preventDefault(); close(); return; }
+      if (e.key !== "Tab") return;
+      const focusables = overlay.querySelectorAll(
+        'button, [href], [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !overlay.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !overlay.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     }
     overlay.addEventListener("click", function (e) {
       // Close on backdrop click; ignore clicks inside the inner viewport
