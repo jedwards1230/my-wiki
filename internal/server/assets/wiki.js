@@ -12,24 +12,45 @@
 (function () {
   "use strict";
 
-  // -------------------------- theme bootstrap --------------------------
-  // Persist key matches Alpine's $persist binding so initial paint sees
-  // the user's preferred theme without a flash. The persisted value is
-  // "light", "dark", or "auto" — only the first two map to a data-theme
-  // attribute; "auto" (and any unknown value) leaves the attribute unset
-  // so prefers-color-scheme drives the CSS fallback.
-  try {
-    let stored = localStorage.getItem("_x_darkmode");
-    if (stored) stored = JSON.parse(stored);
-    let theme = stored;
-    if (theme !== "light" && theme !== "dark") {
-      theme = window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light";
+  // -------------------------- appearance bootstrap --------------------------
+  // Pre-apply the user's saved reading preferences (text size, content
+  // width, color theme) before Alpine hydrates so the first paint doesn't
+  // flash the defaults. Keys match the bare `.as(...)` names from the
+  // `$persist` bindings on <body>:
+  //   darkmode         → "light" | "dark" | "auto"        (Color)
+  //   readingTextSize  → "small" | "standard" | "large"   (Text)
+  //   readingWidth     → "standard" | "wide"              (Width)
+  function readPersist(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
     }
-    document.documentElement.setAttribute("data-theme", theme);
+  }
+  try {
+    const theme = readPersist("darkmode");
+    if (theme !== "light" && theme !== "dark") {
+      // "auto" or unknown — leave [data-theme] unset so the
+      // prefers-color-scheme media query drives the palette.
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", theme);
+    }
+    if (document.body) {
+      const size = readPersist("readingTextSize");
+      document.body.setAttribute(
+        "data-text-size",
+        size === "small" || size === "large" ? size : "standard",
+      );
+      const width = readPersist("readingWidth");
+      document.body.setAttribute(
+        "data-reading-width",
+        width === "wide" ? "wide" : "standard",
+      );
+    }
   } catch (_) {
-    /* private mode / quota — fall back to OS preference at CSS time */
+    /* private mode / quota — fall back to CSS defaults */
   }
 
   // -------------------------- htmx config --------------------------

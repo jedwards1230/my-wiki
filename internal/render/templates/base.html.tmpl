@@ -7,7 +7,7 @@
 {{- if .Description }}
 <meta name="description" content="{{ .Description }}">
 {{- end }}
-<link rel="stylesheet" href="/_/static/wiki.css">
+<link rel="stylesheet" href="/_/static/wiki.css?v={{ .Version }}">
 {{- if .HasMath }}
 <link rel="stylesheet" href="/_/static/vendor/katex/katex.min.css">
 {{- end }}
@@ -33,7 +33,26 @@
 
 <meta name="generator" content="my-wiki native renderer">
 </head>
-<body hx-ext="morph" data-active-path="{{ .ActivePath }}" x-data="{ drawer: false, rightCollapsed: $persist(false).as('rightRailCollapsed') }" :class="{ 'right-rail-collapsed': rightCollapsed }">
+<body hx-ext="morph" data-active-path="{{ .ActivePath }}"
+      x-data="{
+        drawer: false,
+        rightCollapsed: $persist(false).as('rightRailCollapsed'),
+        textSize: $persist('standard').as('readingTextSize'),
+        widthMode: $persist('standard').as('readingWidth'),
+        colorMode: $persist('auto').as('darkmode')
+      }"
+      :class="{ 'right-rail-collapsed': rightCollapsed }"
+      x-init="
+        $watch('textSize',  v => document.body.setAttribute('data-text-size', v));
+        $watch('widthMode', v => document.body.setAttribute('data-reading-width', v));
+        $watch('colorMode', v => {
+          if (v === 'light' || v === 'dark') {
+            document.documentElement.setAttribute('data-theme', v);
+          } else {
+            document.documentElement.removeAttribute('data-theme');
+          }
+        });
+      ">
 
 <a class="skip-link" href="#main">Skip to content</a>
 <div id="a11y-announcer" class="sr-only" role="status" aria-live="polite"></div>
@@ -90,10 +109,10 @@
         </template>
       </ul>
     </div>
-    <div class="darkmode" x-data="{ mode: $persist('auto').as('darkmode') }">
-      <button type="button" x-on:click="mode = (mode === 'dark' ? 'light' : 'dark'); document.documentElement.setAttribute('data-theme', mode)" :aria-label="'Toggle theme: ' + mode">
-        <svg x-show="mode === 'dark'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-        <svg x-show="mode !== 'dark'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    <div class="darkmode">
+      <button type="button" x-on:click="colorMode = (colorMode === 'dark' ? 'light' : 'dark')" :aria-label="'Toggle theme: ' + colorMode">
+        <svg x-show="colorMode === 'dark'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        <svg x-show="colorMode !== 'dark'" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       </button>
     </div>
     {{- if .Explorer }}
@@ -121,6 +140,32 @@
             x-on:click="rightCollapsed = !rightCollapsed">
       <span aria-hidden="true" x-text="rightCollapsed ? '«' : '»'"></span>
     </button>
+    <section class="appearance" aria-label="Appearance">
+      <h2>Appearance</h2>
+      <fieldset class="appearance-group">
+        <legend>Text</legend>
+        <div class="appearance-options" role="radiogroup">
+          <button type="button" role="radio" :aria-checked="(textSize === 'small').toString()" :class="{ 'is-active': textSize === 'small' }" x-on:click="textSize = 'small'">Small</button>
+          <button type="button" role="radio" :aria-checked="(textSize === 'standard').toString()" :class="{ 'is-active': textSize === 'standard' }" x-on:click="textSize = 'standard'">Standard</button>
+          <button type="button" role="radio" :aria-checked="(textSize === 'large').toString()" :class="{ 'is-active': textSize === 'large' }" x-on:click="textSize = 'large'">Large</button>
+        </div>
+      </fieldset>
+      <fieldset class="appearance-group">
+        <legend>Width</legend>
+        <div class="appearance-options" role="radiogroup">
+          <button type="button" role="radio" :aria-checked="(widthMode === 'standard').toString()" :class="{ 'is-active': widthMode === 'standard' }" x-on:click="widthMode = 'standard'">Standard</button>
+          <button type="button" role="radio" :aria-checked="(widthMode === 'wide').toString()" :class="{ 'is-active': widthMode === 'wide' }" x-on:click="widthMode = 'wide'">Wide</button>
+        </div>
+      </fieldset>
+      <fieldset class="appearance-group">
+        <legend>Color</legend>
+        <div class="appearance-options" role="radiogroup">
+          <button type="button" role="radio" :aria-checked="(colorMode === 'auto').toString()" :class="{ 'is-active': colorMode === 'auto' }" x-on:click="colorMode = 'auto'">Automatic</button>
+          <button type="button" role="radio" :aria-checked="(colorMode === 'light').toString()" :class="{ 'is-active': colorMode === 'light' }" x-on:click="colorMode = 'light'">Light</button>
+          <button type="button" role="radio" :aria-checked="(colorMode === 'dark').toString()" :class="{ 'is-active': colorMode === 'dark' }" x-on:click="colorMode = 'dark'">Dark</button>
+        </div>
+      </fieldset>
+    </section>
     {{- if .Slug }}
     <section class="graph" aria-label="Graph view">
       <h2>Graph View</h2>
@@ -160,7 +205,7 @@
 <script src="/_/static/vendor/htmx-idiomorph-ext.min.js" defer></script>
 <script src="/_/static/vendor/alpine-persist.min.js" defer></script>
 <script src="/_/static/vendor/alpine.min.js" defer></script>
-<script src="/_/static/wiki.js" defer></script>
+<script src="/_/static/wiki.js?v={{ .Version }}" defer></script>
 {{- /*
   KaTeX and Mermaid loaders live in wiki.js (see ensureKatex /
   ensureMermaid) so they fire both on initial DOMContentLoaded and
