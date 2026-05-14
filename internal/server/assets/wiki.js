@@ -37,12 +37,16 @@
     } else {
       document.documentElement.setAttribute("data-theme", theme);
     }
+    // Text size goes on <html> so rem-based sizing cascades to sidebars,
+    // headers, and the article body (everything that uses rem). Width is
+    // a layout grid attribute, so it stays on <body> next to the
+    // right-rail-collapsed toggle class.
+    const size = readPersist("readingTextSize");
+    document.documentElement.setAttribute(
+      "data-text-size",
+      size === "small" || size === "large" ? size : "standard",
+    );
     if (document.body) {
-      const size = readPersist("readingTextSize");
-      document.body.setAttribute(
-        "data-text-size",
-        size === "small" || size === "large" ? size : "standard",
-      );
       const width = readPersist("readingWidth");
       document.body.setAttribute(
         "data-reading-width",

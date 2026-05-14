@@ -68,8 +68,6 @@
   --highlight: rgba(143, 159, 169, 0.15);
   --textHighlight: #fff23688;
 
-  --content-max: 70ch;
-  --reading-font-size: 1rem;
   --gap: 1.25rem;
   --radius: 8px;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -120,6 +118,16 @@ html[data-theme="dark"] {
 * {
   box-sizing: border-box;
 }
+/* Base font-size lives on <html> so the Appearance "Text" control
+   cascades through every rem-based size — sidebars, headers, article
+   body, and any nested widget — by adjusting the root only.
+   Persisted via Alpine $persist; pre-applied by wiki.js bootstrap to
+   avoid a flash of default size on first paint. */
+html { font-size: 16px; }
+html[data-text-size="small"]    { font-size: 14px; }
+html[data-text-size="standard"] { font-size: 16px; }
+html[data-text-size="large"]    { font-size: 18px; }
+
 html,
 body {
   margin: 0;
@@ -127,7 +135,6 @@ body {
   background: var(--light);
   color: var(--dark);
   font-family: var(--font-body);
-  font-size: 16px;
   line-height: 1.55;
 }
 
@@ -206,18 +213,25 @@ code, pre, kbd {
   padding: 1.5rem 1.5rem 2rem;
 }
 
-/* Right-rail collapse — body[.right-rail-collapsed] hides the rail
-   contents and zeros its grid column so main expands into the space.
+/* Right-rail collapse — body[.right-rail-collapsed] always hides the
+   rail's contents, but whether the grid reclaims that column depends
+   on the Appearance "Width" mode:
+   - "standard" (default): keep the 320px column reserved so the main
+     column stays exactly as wide as it was with the rail open. The
+     reader sees a column of empty space on the right plus a small
+     floating button to reopen the panel — matching the Wikipedia
+     pattern where width preference is independent of rail visibility.
+   - "wide": collapse the column to 0 so main expands into the space.
    The toggle button (.right-rail-toggle) sits at the left edge of the
    rail when expanded and anchors to the viewport edge when collapsed
    so it's always reachable. State persisted via Alpine $persist. */
-body.right-rail-collapsed .layout {
-  grid-template-columns: 320px minmax(0, 1fr) 0;
-}
 body.right-rail-collapsed .sidebar-right > *:not(.right-rail-toggle) {
   display: none;
 }
-body.right-rail-collapsed .sidebar-right {
+body.right-rail-collapsed[data-reading-width="wide"] .layout {
+  grid-template-columns: 320px minmax(0, 1fr) 0;
+}
+body.right-rail-collapsed[data-reading-width="wide"] .sidebar-right {
   width: 0;
   min-width: 0;
   padding: 0;
@@ -252,18 +266,37 @@ body.right-rail-collapsed .sidebar-right {
   line-height: 1;
   padding: 0;
 }
+.right-rail-toggle svg {
+  display: block;
+}
 .right-rail-toggle:hover {
   color: var(--dark);
   border-color: var(--gray);
 }
+.right-rail-toggle:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+}
+/* When the rail is collapsed the toggle floats at the top-right of the
+   viewport as a Wikipedia-style "Appearance" entry point — wider than
+   the inline chevron so the icon reads at a glance, and anchored to
+   the right edge so it doesn't drift when the user scrolls. */
 body.right-rail-collapsed .right-rail-toggle {
   position: fixed;
   left: auto;
-  right: 0;
-  top: 5rem;
-  border-radius: 4px 0 0 4px;
-  border-right: none;
-  opacity: 0.85;
+  right: 0.5rem;
+  top: 4.5rem;
+  width: 40px;
+  height: 36px;
+  border-radius: 4px;
+  background: var(--light);
+  color: var(--dark);
+  box-shadow: var(--shadow-sm);
+  opacity: 0.95;
+}
+body.right-rail-collapsed .right-rail-toggle:hover {
+  opacity: 1;
+  box-shadow: var(--shadow-md);
 }
 
 @media (max-width: 1199px) {
@@ -442,27 +475,6 @@ body.right-rail-collapsed .right-rail-toggle {
   text-align: left;
   cursor: pointer;
 }
-.darkmode {
-  margin: 0.25rem 0;
-}
-.darkmode button {
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  color: var(--darkgray);
-  width: 20px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.darkmode button svg {
-  display: block;
-  transition: opacity 0.1s ease;
-}
-
 /* ----------- Explorer tree (left sidebar) */
 
 .explorer {
@@ -717,18 +729,12 @@ a.internal.tag-link::before {
   color: var(--gray);
 }
 
-.article-body {
-  max-width: var(--reading-max, var(--content-max));
-  font-size: var(--reading-font-size);
-}
-
-/* Reader controls (Appearance panel). Body-level data attributes drive
-   font-size and content width so the choice applies to the whole
-   article block at once. Persisted via Alpine $persist on <body>. */
-body[data-text-size="small"]    { --reading-font-size: 0.9rem; }
-body[data-text-size="standard"] { --reading-font-size: 1rem; }
-body[data-text-size="large"]    { --reading-font-size: 1.15rem; }
-body[data-reading-width="wide"] { --reading-max: 100%; }
+/* Article width and font-size now flow from the Appearance panel via
+   <html data-text-size> (root font-size) and the layout grid (the
+   right-rail column reservation governed by <body data-reading-width>
+   in the right-rail-collapse rules above). No explicit max-width or
+   font-size on .article-body — the column it lives in already caps
+   the visual line length, and width:wide+rail-closed expands it. */
 .article-body p {
   margin: 0 0 1rem;
   line-height: 1.6rem;
