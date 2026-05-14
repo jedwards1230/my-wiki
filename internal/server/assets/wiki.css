@@ -988,6 +988,96 @@ code {
   border-radius: 4px;
 }
 
+/* ----------- Mermaid diagrams */
+
+/* Mermaid renders its SVG at the diagram's intrinsic size, which on
+ * complex graphs is often narrower than the article column. Force the
+ * <pre.mermaid> wrapper to fill the column and the SVG inside to scale
+ * with it, so dense diagrams have more room to breathe before the user
+ * even thinks about zooming. */
+pre.mermaid {
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: center;
+  width: 100%;
+  max-height: 70vh;
+  overflow: auto;
+}
+pre.mermaid > svg {
+  max-width: 100%;
+  height: auto;
+  max-height: 70vh;
+}
+pre.mermaid.mermaid-zoomable {
+  cursor: zoom-in;
+}
+pre.mermaid.mermaid-zoomable:hover {
+  outline: 1px solid var(--lightgray);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+pre.mermaid.mermaid-zoomable:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+/* Fullscreen modal — native browser pinch / scroll-zoom on the inner
+ * SVG provides pan/zoom without any JS dependency. */
+.mermaid-modal-open { overflow: hidden; }
+.mermaid-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  touch-action: pinch-zoom;
+}
+.mermaid-modal-inner {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background: var(--light);
+  border-radius: 8px;
+  padding: 1rem;
+}
+.mermaid-modal-inner > svg {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+}
+.mermaid-modal-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  border: none;
+  background: var(--light);
+  color: var(--dark);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.mermaid-modal-close:hover { background: var(--lightgray); }
+.mermaid-modal-close:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+}
+
 /* ----------- Footnotes */
 
 .article-body .footnotes {
