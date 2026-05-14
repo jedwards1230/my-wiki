@@ -125,6 +125,93 @@
     } catch (_) {
       /* mermaid throws on stale nodes / parse errors; safe to ignore */
     }
+    // After mermaid has rewritten <pre class="mermaid"> to contain an SVG,
+    // wire each block for click-to-zoom. The processed-vs-pending check is
+    // independent of mermaid.run's idempotency guarantee — we bind on the
+    // mermaid container, not the SVG, so a re-render replacing the SVG
+    // doesn't break the handler.
+    bindMermaidZoom();
+  }
+
+  // -------------------------- mermaid zoom --------------------------
+  // Clicking a rendered mermaid diagram opens a fullscreen overlay
+  // containing the same SVG sized to fit the viewport. Native browser
+  // pinch / scroll-zoom on the overlay gives pan/zoom for free — no
+  // svg-pan-zoom dependency. Close on Esc, click-outside, or the
+  // explicit close button.
+  function bindMermaidZoom() {
+    const blocks = document.querySelectorAll("pre.mermaid:not([data-zoom-bound]), .mermaid:not([data-zoom-bound])");
+    blocks.forEach(function (block) {
+      // Mermaid sets data-processed="true" once it has rendered the SVG.
+      // Skip blocks that haven't been processed yet — they'll be picked
+      // up on the next runMermaid pass.
+      if (block.getAttribute("data-processed") !== "true") return;
+      block.setAttribute("data-zoom-bound", "1");
+      block.classList.add("mermaid-zoomable");
+      block.setAttribute("role", "button");
+      block.setAttribute("tabindex", "0");
+      block.setAttribute("aria-label", "Open diagram in fullscreen viewer");
+      block.addEventListener("click", function () { openMermaidModal(block); });
+      block.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openMermaidModal(block);
+        }
+      });
+    });
+  }
+
+  function openMermaidModal(sourceBlock) {
+    const svg = sourceBlock.querySelector("svg");
+    if (!svg) return;
+    const overlay = document.createElement("div");
+    overlay.className = "mermaid-modal";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Diagram fullscreen viewer");
+    const inner = document.createElement("div");
+    inner.className = "mermaid-modal-inner";
+    const clone = svg.cloneNode(true);
+    // Clear width/height so CSS can size the SVG to fit the viewport
+    // (intrinsic mermaid sizes are usually tiny relative to a full
+    // viewport — letting CSS scale gives us a much bigger canvas).
+    clone.removeAttribute("width");
+    clone.removeAttribute("height");
+    clone.style.maxWidth = "100%";
+    clone.style.maxHeight = "100%";
+    clone.style.width = "100%";
+    clone.style.height = "100%";
+    inner.appendChild(clone);
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "mermaid-modal-close";
+    closeBtn.setAttribute("aria-label", "Close diagram viewer");
+    closeBtn.textContent = "×"; // ×
+    overlay.appendChild(closeBtn);
+    overlay.appendChild(inner);
+
+    const lastFocus = document.activeElement;
+    function close() {
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+      document.body.classList.remove("mermaid-modal-open");
+      if (lastFocus && typeof lastFocus.focus === "function") {
+        lastFocus.focus({ preventScroll: true });
+      }
+    }
+    function onKey(e) {
+      if (e.key === "Escape") { e.preventDefault(); close(); }
+    }
+    overlay.addEventListener("click", function (e) {
+      // Close on backdrop click; ignore clicks inside the inner viewport
+      // so panning/zooming the SVG doesn't dismiss the modal.
+      if (e.target === overlay) close();
+    });
+    closeBtn.addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    document.body.classList.add("mermaid-modal-open");
+    document.body.appendChild(overlay);
+    closeBtn.focus({ preventScroll: true });
   }
 
   function runKatex() {
