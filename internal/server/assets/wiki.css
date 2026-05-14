@@ -69,6 +69,7 @@
   --textHighlight: #fff23688;
 
   --content-max: 70ch;
+  --reading-font-size: 1rem;
   --gap: 1.25rem;
   --radius: 8px;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -717,8 +718,17 @@ a.internal.tag-link::before {
 }
 
 .article-body {
-  max-width: var(--content-max);
+  max-width: var(--reading-max, var(--content-max));
+  font-size: var(--reading-font-size);
 }
+
+/* Reader controls (Appearance panel). Body-level data attributes drive
+   font-size and content width so the choice applies to the whole
+   article block at once. Persisted via Alpine $persist on <body>. */
+body[data-text-size="small"]    { --reading-font-size: 0.9rem; }
+body[data-text-size="standard"] { --reading-font-size: 1rem; }
+body[data-text-size="large"]    { --reading-font-size: 1.15rem; }
+body[data-reading-width="wide"] { --reading-max: 100%; }
 .article-body p {
   margin: 0 0 1rem;
   line-height: 1.6rem;
@@ -1022,6 +1032,67 @@ code {
 }
 .site-footer p {
   margin: 0;
+}
+
+/* ----------- Appearance panel (right-rail widget) */
+
+.appearance {
+  margin: 0 0 1.5rem 0;
+}
+.appearance h2 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem 0;
+}
+.appearance-group {
+  border: 0;
+  padding: 0;
+  margin: 0 0 0.6rem 0;
+}
+.appearance-group legend {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--darkgray);
+  margin-bottom: 0.25rem;
+  padding: 0;
+}
+.appearance-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  border: 1px solid var(--lightgray);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.appearance-options button {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--light);
+  border: 0;
+  border-left: 1px solid var(--lightgray);
+  color: var(--darkgray);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.4rem;
+  line-height: 1.2;
+  text-align: center;
+  transition: background-color 0.1s ease, color 0.1s ease;
+}
+.appearance-options button:first-child {
+  border-left: 0;
+}
+.appearance-options button:hover {
+  color: var(--dark);
+  background: var(--highlight);
+}
+.appearance-options button.is-active {
+  background: var(--secondary);
+  color: var(--light);
+  cursor: default;
+}
+.appearance-options button.is-active:hover {
+  background: var(--secondary);
 }
 
 /* ----------- Graph view (right-rail widget) */
