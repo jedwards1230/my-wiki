@@ -239,14 +239,16 @@ body.right-rail-collapsed[data-reading-width="wide"] .sidebar-right {
 }
 
 .sidebar-right {
-  /* Sticky column so Appearance can sit pinned to the visual bottom of
-     the rail. Without a bounded height "bottom" would just be the
-     content's natural end. `top` matches the .layout top padding so the
-     rail aligns with the article on initial load; max-height accounts
-     for top + bottom layout padding. */
+  /* Sticky column with a definite viewport-bounded height so Appearance
+     pins to the visual bottom of the rail even when the upper sections
+     don't fill the viewport. With only max-height the flex parent would
+     shrink to content size on short pages and Appearance would sit
+     immediately after Backlinks rather than at the rail's bottom edge.
+     `top` matches the .layout top padding; height subtracts top +
+     bottom padding so the rail aligns cleanly with the article column. */
   position: sticky;
   top: 1.5rem;
-  max-height: calc(100vh - 3rem);
+  height: calc(100vh - 3rem);
   display: flex;
   flex-direction: column;
   /* Leave clearance so the absolutely-positioned .right-rail-toggle
