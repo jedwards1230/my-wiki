@@ -239,13 +239,51 @@ body.right-rail-collapsed[data-reading-width="wide"] .sidebar-right {
 }
 
 .sidebar-right {
-  position: relative;
+  /* Sticky column so Appearance can sit pinned to the visual bottom of
+     the rail. Without a bounded height "bottom" would just be the
+     content's natural end. `top` matches the .layout top padding so the
+     rail aligns with the article on initial load; max-height accounts
+     for top + bottom layout padding. */
+  position: sticky;
+  top: 1.5rem;
+  max-height: calc(100vh - 3rem);
+  display: flex;
+  flex-direction: column;
   /* Leave clearance so the absolutely-positioned .right-rail-toggle
      (left: -16px, width: 28px) doesn't overlap the rail's first
      heading. Without padding-left, the leftmost ~12px of "GRAPH VIEW"
      sat behind the toggle. The collapsed-state rule below zeros all
      padding so this doesn't leak into the collapsed layout. */
   padding-left: 1rem;
+}
+
+/* Graph + TOC + Backlinks share this wrapper so they scroll as one
+   unit, leaving the .appearance section pinned to the bottom of the
+   rail. When Appearance opens the wrapper shrinks and overflow
+   scrolls; when closed the wrapper takes the full rail height. */
+.right-rail-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* Hide the scrollbar by default, show on hover/focus so it doesn't
+     visually fight with the graph canvas border. */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.right-rail-main:hover,
+.right-rail-main:focus-within {
+  scrollbar-color: var(--gray) transparent;
+}
+.right-rail-main::-webkit-scrollbar {
+  width: 8px;
+}
+.right-rail-main::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+.right-rail-main:hover::-webkit-scrollbar-thumb,
+.right-rail-main:focus-within::-webkit-scrollbar-thumb {
+  background: var(--gray);
 }
 .right-rail-toggle {
   position: absolute;
@@ -1133,9 +1171,13 @@ pre.mermaid.mermaid-zoomable:focus-visible {
  */
 
 .appearance {
-  /* Top margin pushes the section to the visual bottom of the rail
-     (after backlinks). No bottom margin — this is the last widget. */
-  margin: 1.5rem 0 0 0;
+  /* Sibling block to .right-rail-main; the rail's flex layout pins it
+     to the bottom. flex: 0 0 auto so the panel keeps its natural
+     height and the upper block scrolls to make room when expanded. */
+  flex: 0 0 auto;
+  margin: 0.75rem 0 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--lightgray);
 }
 body[data-appearance-open="false"] .appearance .appearance-panel {
   display: none;

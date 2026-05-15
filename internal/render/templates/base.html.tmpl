@@ -137,32 +137,37 @@
             x-on:click="rightCollapsed = !rightCollapsed">
       <span aria-hidden="true" x-text="rightCollapsed ? '«' : '»'"></span>
     </button>
-    {{- if .Slug }}
-    <section class="graph" aria-label="Graph view">
-      <h2>Graph View</h2>
-      <canvas class="graph-canvas" data-slug="{{ .Slug }}" data-graph-src="/api/graph.json" width="280" height="200"></canvas>
-    </section>
-    {{- end }}
-    {{- if .TOC }}
-    <nav class="toc" aria-label="On this page">
-      <h2>On this page</h2>
-      <ul>
-        {{- range .TOC }}
-        <li class="toc-depth-{{ .Depth }}"><a href="#{{ .Anchor }}">{{ .Text }}</a></li>
-        {{- end }}
-      </ul>
-    </nav>
-    {{- end }}
-    {{- if .Backlinks }}
-    <section class="backlinks">
-      <h2>Backlinks</h2>
-      <ul>
-        {{- range .Backlinks }}
-        <li><a href="{{ .URL }}">{{ .Title }}</a>{{ if .Snippet }} — <span class="backlink-snippet">{{ .Snippet }}</span>{{ end }}</li>
-        {{- end }}
-      </ul>
-    </section>
-    {{- end }}
+    {{/* Graph + TOC + Backlinks form one scrollable block. When the
+         Appearance panel opens below, it claims its own height and the
+         wrapper shrinks — content overflowing the wrapper scrolls. */}}
+    <div class="right-rail-main">
+      {{- if .Slug }}
+      <section class="graph" aria-label="Graph view">
+        <h2>Graph View</h2>
+        <canvas class="graph-canvas" data-slug="{{ .Slug }}" data-graph-src="/api/graph.json" width="280" height="200"></canvas>
+      </section>
+      {{- end }}
+      {{- if .TOC }}
+      <nav class="toc" aria-label="On this page">
+        <h2>On this page</h2>
+        <ul>
+          {{- range .TOC }}
+          <li class="toc-depth-{{ .Depth }}"><a href="#{{ .Anchor }}">{{ .Text }}</a></li>
+          {{- end }}
+        </ul>
+      </nav>
+      {{- end }}
+      {{- if .Backlinks }}
+      <section class="backlinks">
+        <h2>Backlinks</h2>
+        <ul>
+          {{- range .Backlinks }}
+          <li><a href="{{ .URL }}">{{ .Title }}</a>{{ if .Snippet }} — <span class="backlink-snippet">{{ .Snippet }}</span>{{ end }}</li>
+          {{- end }}
+        </ul>
+      </section>
+      {{- end }}
+    </div>
     {{/* Appearance sits at the bottom of the rail and collapses
          independently from the whole-rail toggle. Default is closed —
          most reading sessions never need to open it. The icon button
