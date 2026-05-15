@@ -1178,8 +1178,6 @@ pre.mermaid.mermaid-zoomable:focus-visible {
      height and the upper block scrolls to make room when expanded. */
   flex: 0 0 auto;
   margin: 0.75rem 0 0 0;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--lightgray);
 }
 body[data-appearance-open="false"] .appearance .appearance-panel {
   display: none;
