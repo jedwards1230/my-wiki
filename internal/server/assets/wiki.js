@@ -73,14 +73,9 @@
   });
 
   // After every #main swap, restore focus + announce title for SR users.
-  // The right-rail block (#page-tools — graph, TOC, backlinks) is brought
-  // in alongside #main via hx-select-oob; the OOB swap fires a separate
-  // htmx:afterSwap event whose target is #page-tools, so re-init the
-  // rail-specific widgets when we see that target instead.
   document.body.addEventListener("htmx:afterSwap", function (e) {
-    const targetId = e.detail.target && e.detail.target.id;
-    if (targetId === "main") {
-      const main = document.getElementById("main");
+    const main = document.getElementById("main");
+    if (e.detail.target === main || (e.detail.target && e.detail.target.id === "main")) {
       if (main && typeof main.focus === "function") {
         main.focus({ preventScroll: false });
       }
@@ -88,16 +83,20 @@
       if (announcer) announcer.textContent = document.title;
       initDynamicAssets();
       injectCodeCopy();
-      return;
-    }
-    if (targetId === "page-tools") {
-      // The freshly-swapped #page-tools carries the new page's graph
-      // canvas, TOC entries, and backlinks — wire them up to match the
-      // server-rendered initial-paint behavior.
-      initGraph();
-      bindTOCScrollSpy();
       syncExplorerActive();
     }
+  });
+
+  // The right-rail block (#page-tools — graph, TOC, backlinks) is brought
+  // in alongside #main via hx-swap-oob on the fragment response. htmx
+  // fires a separate htmx:oobAfterSwap event for OOB swaps; the regular
+  // htmx:afterSwap above never sees the page-tools target, so re-init
+  // the rail-specific widgets here against the freshly-swapped DOM.
+  document.body.addEventListener("htmx:oobAfterSwap", function (e) {
+    const targetId = e.detail && e.detail.target && e.detail.target.id;
+    if (targetId !== "page-tools") return;
+    initGraph();
+    bindTOCScrollSpy();
   });
 
   // -------------------------- explorer active state --------------------------
