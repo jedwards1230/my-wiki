@@ -498,7 +498,19 @@
     if (!visited.has(slug)) { visited.add(slug); saveVisited(visited); }
 
     const dpr = window.devicePixelRatio || 1;
-    const W = cv.width, H = cv.height;
+    // The first call captures the canvas's intrinsic CSS pixel size from
+    // its width/height attributes; subsequent calls reuse those cached
+    // values. Reading cv.width directly is unsafe because the previous
+    // assignment (cv.width = W * dpr) also updates the attribute, so a
+    // second init on the same canvas would compound the scaling and
+    // visibly stretch the graph. htmx fires htmx:oobAfterSwap more than
+    // once per page-tools swap, and initGraph also runs on the initial
+    // DOMContentLoaded pass, so this idempotency matters.
+    if (!cv.dataset.cssWidth) {
+      cv.dataset.cssWidth = String(cv.width);
+      cv.dataset.cssHeight = String(cv.height);
+    }
+    const W = Number(cv.dataset.cssWidth), H = Number(cv.dataset.cssHeight);
     cv.width = W * dpr; cv.height = H * dpr;
     cv.style.width = W + "px"; cv.style.height = H + "px";
     ctx.scale(dpr, dpr);
