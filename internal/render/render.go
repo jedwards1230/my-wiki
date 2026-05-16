@@ -449,13 +449,23 @@ func (r *Renderer) RenderToBytes(_ *Page, data TemplateData) ([]byte, error) {
 // response and the new element keeps the hx-boost / hx-target wiring
 // for subsequent navigations. Without the wrapper htmx selects
 // nothing — the main area renders empty until the user refreshes.
+//
+// The fragment also includes the `page-tools` block (graph / TOC /
+// backlinks) carrying `hx-swap-oob="outerHTML"`. htmx pulls that out
+// of the response as an out-of-band swap and replaces the existing
+// #page-tools in the right rail, keeping the rail in sync with the
+// active page — base.html.tmpl renders only the surrounding shell,
+// not this block, on htmx requests.
 func (r *Renderer) RenderFragment(_ *Page, data TemplateData) ([]byte, error) {
 	var buf bytes.Buffer
-	buf.WriteString(`<main id="main" tabindex="-1" hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top">`)
+	buf.WriteString(`<main id="main" tabindex="-1" hx-boost="true" hx-target="#main" hx-select="#main, #page-tools" hx-swap="outerHTML show:window:top">`)
 	if err := r.templates.ExecuteTemplate(&buf, "content", data); err != nil {
 		return nil, err
 	}
 	buf.WriteString(`</main>`)
+	if err := r.templates.ExecuteTemplate(&buf, "page-tools", data); err != nil {
+		return nil, err
+	}
 	return buf.Bytes(), nil
 }
 

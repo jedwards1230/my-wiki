@@ -83,9 +83,20 @@
       if (announcer) announcer.textContent = document.title;
       initDynamicAssets();
       injectCodeCopy();
-      bindTOCScrollSpy();
       syncExplorerActive();
     }
+  });
+
+  // The right-rail block (#page-tools — graph, TOC, backlinks) is brought
+  // in alongside #main via hx-swap-oob on the fragment response. htmx
+  // fires a separate htmx:oobAfterSwap event for OOB swaps; the regular
+  // htmx:afterSwap above never sees the page-tools target, so re-init
+  // the rail-specific widgets here against the freshly-swapped DOM.
+  document.body.addEventListener("htmx:oobAfterSwap", function (e) {
+    const targetId = e.detail && e.detail.target && e.detail.target.id;
+    if (targetId !== "page-tools") return;
+    initGraph();
+    bindTOCScrollSpy();
   });
 
   // -------------------------- explorer active state --------------------------

@@ -72,7 +72,7 @@
 
 <div class="layout">
 
-  <aside class="sidebar sidebar-left" :class="{ 'is-open': drawer }" aria-label="Navigation" hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top" x-on:click="if ($event.target.closest('a')) drawer = false">
+  <aside class="sidebar sidebar-left" :class="{ 'is-open': drawer }" aria-label="Navigation" hx-boost="true" hx-target="#main" hx-select="#main, #page-tools" hx-swap="outerHTML show:window:top" x-on:click="if ($event.target.closest('a')) drawer = false">
     <h1 class="page-title"><a href="/">{{ .SiteTitle }}</a></h1>
     <div class="search" x-data="{
         q: '', results: [], open: false, idx: -1, seq: 0,
@@ -124,11 +124,10 @@
     {{- end }}
   </aside>
 
-  <main id="main" tabindex="-1" hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top">
+  <main id="main" tabindex="-1" hx-boost="true" hx-target="#main" hx-select="#main, #page-tools" hx-swap="outerHTML show:window:top">
     {{ template "content" . }}
   </main>
 
-  {{- if not .IsListPage }}
   <aside class="sidebar sidebar-right" aria-label="Page tools">
     <button type="button" class="right-rail-toggle"
             :title="rightCollapsed ? 'Show page tools' : 'Hide page tools'"
@@ -139,35 +138,16 @@
     </button>
     {{/* Graph + TOC + Backlinks form one scrollable block. When the
          Appearance panel opens below, it claims its own height and the
-         wrapper shrinks — content overflowing the wrapper scrolls. */}}
-    <div class="right-rail-main">
-      {{- if .Slug }}
-      <section class="graph" aria-label="Graph view">
-        <h2>Graph View</h2>
-        <canvas class="graph-canvas" data-slug="{{ .Slug }}" data-graph-src="/api/graph.json" width="280" height="200"></canvas>
-      </section>
-      {{- end }}
-      {{- if .TOC }}
-      <nav class="toc" aria-label="On this page">
-        <h2>On this page</h2>
-        <ul>
-          {{- range .TOC }}
-          <li class="toc-depth-{{ .Depth }}"><a href="#{{ .Anchor }}">{{ .Text }}</a></li>
-          {{- end }}
-        </ul>
-      </nav>
-      {{- end }}
-      {{- if .Backlinks }}
-      <section class="backlinks">
-        <h2>Backlinks</h2>
-        <ul>
-          {{- range .Backlinks }}
-          <li><a href="{{ .URL }}">{{ .Title }}</a>{{ if .Snippet }} — <span class="backlink-snippet">{{ .Snippet }}</span>{{ end }}</li>
-          {{- end }}
-        </ul>
-      </section>
-      {{- end }}
-    </div>
+         wrapper shrinks — content overflowing the wrapper scrolls.
+         The id="page-tools" target lets htmx OOB-swap this block on
+         every SPA nav so the graph, TOC, and backlinks stay synced
+         with the active page (see wiki.js htmx:afterSwap and
+         RenderFragment in internal/render/render.go). Always rendered
+         — empty on list pages — so the OOB target exists even when
+         navigating list → content. The block lives in its own named
+         template so the htmx fragment response can emit the same
+         markup without re-rendering the whole shell. */}}
+    {{ template "page-tools" . }}
     {{/* Appearance sits at the bottom of the rail and collapses
          independently from the whole-rail toggle. Default is closed —
          most reading sessions never need to open it. The icon button
@@ -212,7 +192,6 @@
       </button>
     </section>
   </aside>
-  {{- end }}
 
 </div>
 
@@ -290,4 +269,44 @@
     {{- end }}
   </div>
 </article>
+{{ end }}
+
+{{/* page-tools — graph, TOC, backlinks for the current page. Rendered
+     inline by base.html.tmpl and re-emitted by the htmx fragment
+     response (see internal/render/render.go RenderFragment) so the
+     right-rail stays in sync with #main on every SPA navigation. The
+     hx-swap-oob attribute is what tells htmx to OOB-swap this block on
+     the fragment response; it's a no-op on the initial full-page load
+     since the browser doesn't process hx-* attributes itself. */}}
+{{ define "page-tools" }}
+<div id="page-tools" class="right-rail-main" hx-swap-oob="outerHTML">
+  {{- if not .IsListPage }}
+  {{- if .Slug }}
+  <section class="graph" aria-label="Graph view">
+    <h2>Graph View</h2>
+    <canvas class="graph-canvas" data-slug="{{ .Slug }}" data-graph-src="/api/graph.json" width="280" height="200"></canvas>
+  </section>
+  {{- end }}
+  {{- if .TOC }}
+  <nav class="toc" aria-label="On this page">
+    <h2>On this page</h2>
+    <ul>
+      {{- range .TOC }}
+      <li class="toc-depth-{{ .Depth }}"><a href="#{{ .Anchor }}">{{ .Text }}</a></li>
+      {{- end }}
+    </ul>
+  </nav>
+  {{- end }}
+  {{- if .Backlinks }}
+  <section class="backlinks">
+    <h2>Backlinks</h2>
+    <ul>
+      {{- range .Backlinks }}
+      <li><a href="{{ .URL }}">{{ .Title }}</a>{{ if .Snippet }} — <span class="backlink-snippet">{{ .Snippet }}</span>{{ end }}</li>
+      {{- end }}
+    </ul>
+  </section>
+  {{- end }}
+  {{- end }}
+</div>
 {{ end }}
