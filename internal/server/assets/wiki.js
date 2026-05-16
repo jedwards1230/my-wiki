@@ -103,10 +103,21 @@
 
     // Prefer the freshly-swapped #main's article slug; fall back to the
     // current pathname so the function is also correct on the initial
-    // paint (before any swap has run).
+    // paint (before any swap has run). Slug → URL normalization must
+    // match Page.RelativeURL in internal/render/render.go: bare "index"
+    // is the root, "*/index" collapses to the parent folder URL.
     const article = document.querySelector("#main article.page");
     const slug = article && article.dataset.slug;
-    const activePath = slug ? "/" + slug + "/" : location.pathname;
+    let activePath;
+    if (!slug) {
+      activePath = location.pathname;
+    } else if (slug === "index") {
+      activePath = "/";
+    } else if (slug.endsWith("/index")) {
+      activePath = "/" + slug.slice(0, -"/index".length) + "/";
+    } else {
+      activePath = "/" + slug + "/";
+    }
     document.body.dataset.activePath = activePath;
 
     // Clear stale markers without touching <details> open state — folders
