@@ -84,8 +84,84 @@
       initDynamicAssets();
       injectCodeCopy();
       bindTOCScrollSpy();
+      syncExplorerActive();
     }
   });
+
+  // -------------------------- explorer active state --------------------------
+  // The left-sidebar explorer is rendered once server-side with the active
+  // branch already expanded. htmx swaps only #main, so on every SPA
+  // navigation the explorer's active/open state would be left pointing at
+  // the previously-loaded page. Mirror the server's mark-active-and-open
+  // logic on the client after each swap so the sidebar tracks the user.
+  // We only ever open ancestors of the new active link — folders the user
+  // expanded by hand are left alone, which matches the principle that the
+  // sidebar should "minimally open to display our current page".
+  function syncExplorerActive() {
+    const explorer = document.querySelector(".explorer");
+    if (!explorer) return;
+
+    // Prefer the freshly-swapped #main's article slug; fall back to the
+    // current pathname so the function is also correct on the initial
+    // paint (before any swap has run). Slug → URL normalization must
+    // match Page.RelativeURL in internal/render/render.go: bare "index"
+    // is the root, "*/index" collapses to the parent folder URL.
+    const article = document.querySelector("#main article.page");
+    const slug = article && article.dataset.slug;
+    let activePath;
+    if (!slug) {
+      activePath = location.pathname;
+    } else if (slug === "index") {
+      activePath = "/";
+    } else if (slug.endsWith("/index")) {
+      activePath = "/" + slug.slice(0, -"/index".length) + "/";
+    } else {
+      activePath = "/" + slug + "/";
+    }
+    document.body.dataset.activePath = activePath;
+
+    // Clear stale markers without touching <details> open state — folders
+    // the user opened intentionally should stay open.
+    explorer.querySelectorAll(".is-active").forEach(function (el) {
+      el.classList.remove("is-active");
+      el.removeAttribute("aria-current");
+    });
+
+    // Match either an explorer-link (leaf) or a folder-link (folder index).
+    // Both forms set href to the canonical "/slug/" URL.
+    const target = explorer.querySelector(
+      'a.explorer-link[href="' + cssEscape(activePath) + '"], ' +
+      'a.folder-link[href="' + cssEscape(activePath) + '"]'
+    );
+    if (!target) return;
+
+    if (target.classList.contains("folder-link")) {
+      // Folder index pages: mark the summary so the row highlights, and
+      // open this folder so its children are visible.
+      const summary = target.closest("summary");
+      if (summary) summary.classList.add("is-active");
+      const details = target.closest("details");
+      if (details) details.setAttribute("open", "");
+    } else {
+      target.classList.add("is-active");
+      target.setAttribute("aria-current", "page");
+    }
+
+    // Walk up and open every <details> ancestor so the active link is
+    // visible without further clicks.
+    let p = target.parentElement;
+    while (p && p !== explorer) {
+      if (p.tagName === "DETAILS") p.setAttribute("open", "");
+      p = p.parentElement;
+    }
+  }
+
+  // Minimal CSS.escape polyfill — only the characters that can show up in
+  // our slug-derived hrefs need escaping. Avoids pulling in a full polyfill
+  // just for the attribute selector above.
+  function cssEscape(s) {
+    return String(s).replace(/(["\\])/g, "\\$1");
+  }
 
   // -------------------------- dynamic asset init --------------------------
   // KaTeX and Mermaid are lazy-loaded from here so they work on both
@@ -589,5 +665,6 @@
     injectCodeCopy();
     bindTOCScrollSpy();
     initGraph();
+    syncExplorerActive();
   });
 })();
