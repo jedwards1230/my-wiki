@@ -840,6 +840,30 @@ blockquote {
 .article-body tr:last-child {
   border-bottom: none;
 }
+.article-body th.sortable {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-right: 1.4rem;
+}
+.article-body th.sortable:hover {
+  background: var(--lightgray);
+}
+.article-body th.sortable::after {
+  content: "⇅";
+  position: absolute;
+  right: 0.3rem;
+  opacity: 0.35;
+  font-size: 0.75em;
+}
+.article-body th.sortable[aria-sort="ascending"]::after {
+  content: "↑";
+  opacity: 0.8;
+}
+.article-body th.sortable[aria-sort="descending"]::after {
+  content: "↓";
+  opacity: 0.8;
+}
 
 /* ----------- Callouts */
 
