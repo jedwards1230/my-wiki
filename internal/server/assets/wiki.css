@@ -1217,7 +1217,7 @@ html[data-theme="dark"] .chroma .gl { text-decoration: underline; }
 html[data-theme="dark"] .chroma .w { color: #6e7681; }
 
 @media (prefers-color-scheme: dark) {
-  html:not([data-theme]) .chroma { color: #e6edf3; background-color: #0d1117;; }
+  html:not([data-theme]) .chroma { color: #e6edf3; background-color: #0d1117; }
   html:not([data-theme]) .chroma .err { color: #f85149; }
   html:not([data-theme]) .chroma .hl { background-color: #6e7681; }
   html:not([data-theme]) .chroma .lnt { color: #737679; }
