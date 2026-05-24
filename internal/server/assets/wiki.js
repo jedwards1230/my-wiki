@@ -83,6 +83,7 @@
       if (announcer) announcer.textContent = document.title;
       initDynamicAssets();
       injectCodeCopy();
+      initTableSort();
       syncExplorerActive();
     }
   });
@@ -377,6 +378,85 @@
     if (document.querySelector(".math-inline, .math-display")) {
       ensureKatex().then(runKatex).catch(function () { /* logged via Network panel */ });
     }
+  }
+
+  // -------------------------- sortable tables --------------------------
+  // Click any <th> in an .article-body table to sort by that column.
+  // Repeated clicks toggle ascending → descending. Numeric cells
+  // (including currency/percentages) sort numerically; everything else
+  // sorts lexicographically.
+  function initTableSort() {
+    const tables = document.querySelectorAll(".article-body table:not([data-sort-bound])");
+    tables.forEach(function (table) {
+      table.setAttribute("data-sort-bound", "1");
+      const thead = table.querySelector("thead");
+      const tbody = table.querySelector("tbody");
+      if (!thead || !tbody) return;
+      const headers = thead.querySelectorAll("th");
+      if (!headers.length) return;
+
+      headers.forEach(function (th, colIdx) {
+        th.classList.add("sortable");
+        th.setAttribute("aria-sort", "none");
+        th.setAttribute("tabindex", "0");
+
+        function cycle() {
+          const prev = th.getAttribute("aria-sort");
+          headers.forEach(function (h) {
+            h.setAttribute("aria-sort", "none");
+          });
+
+          if (prev === "none" || prev === "descending") {
+            sortTable(tbody, colIdx, true);
+            th.setAttribute("aria-sort", "ascending");
+          } else if (prev === "ascending") {
+            sortTable(tbody, colIdx, false);
+            th.setAttribute("aria-sort", "descending");
+          }
+        }
+
+        th.addEventListener("click", cycle);
+        th.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            cycle();
+          }
+        });
+      });
+    });
+  }
+
+  const numRe = /^[\s$€£¥#]*[-+]?[\d,]*\.?\d+\s*%?\s*$/;
+  function parseNum(s) {
+    const n = parseFloat(s.replace(/[$€£¥,%\s#]/g, ""));
+    return isNaN(n) ? null : n;
+  }
+
+  function sortTable(tbody, colIdx, asc) {
+    const rows = Array.from(tbody.rows);
+    const allNumeric = rows.every(function (r) {
+      const cell = r.cells[colIdx];
+      if (!cell) return false;
+      const text = (cell.textContent || "").trim();
+      return text === "" || numRe.test(text);
+    });
+
+    rows.sort(function (a, b) {
+      const at = (a.cells[colIdx] ? a.cells[colIdx].textContent : "").trim();
+      const bt = (b.cells[colIdx] ? b.cells[colIdx].textContent : "").trim();
+      if (at === bt) return 0;
+      if (at === "") return 1;
+      if (bt === "") return -1;
+      let cmp;
+      if (allNumeric) {
+        cmp = (parseNum(at) || 0) - (parseNum(bt) || 0);
+      } else {
+        cmp = at.localeCompare(bt, undefined, { sensitivity: "base" });
+      }
+      return asc ? cmp : -cmp;
+    });
+
+    rows.forEach(function (r) { tbody.appendChild(r); });
   }
 
   // -------------------------- code-copy buttons --------------------------
@@ -686,6 +766,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     initDynamicAssets();
     injectCodeCopy();
+    initTableSort();
     bindTOCScrollSpy();
     initGraph();
     syncExplorerActive();
