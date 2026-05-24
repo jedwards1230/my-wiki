@@ -90,6 +90,48 @@ internal/
 - The MCP server and HTTP server can run together (`--mcp-port`) or independently (`serve mcp`)
 - Search has a `Searcher` interface with two backends: substring (file walk) and index (inverted index with TF-IDF, auto-rebuilds every 5 minutes)
 
+## Visual Verification
+
+For changes to CSS, templates, or anything affecting rendered output, verify visually before pushing a PR:
+
+```bash
+# 1. Build the binary
+go build -o wiki-server ./cmd/wiki-server
+
+# 2. Create a test vault (or use an existing one)
+mkdir -p /tmp/wiki-test-vault
+cat > /tmp/wiki-test-vault/test.md << 'EOF'
+---
+title: Test Page
+---
+# Test
+Content exercising the change (code blocks, tables, callouts, etc.)
+EOF
+
+# 3. Run the native renderer locally
+./wiki-server serve --renderer native --vault /tmp/wiki-test-vault --port 9876
+
+# 4. Use Playwright (MCP) to verify
+#    - Navigate to http://localhost:9876/test/
+#    - Take screenshots in both light and dark mode
+#    - Set theme via: document.documentElement.setAttribute('data-theme', 'dark')
+```
+
+Skip this for backend-only changes (API, MCP tools, search, vault logic).
+
+## Native Renderer Frontend
+
+The native renderer (`--renderer native`) uses goldmark for markdown and serves a single-page app with htmx + Alpine.js:
+
+- **CSS**: `internal/server/assets/wiki.css` — all styles, including dark mode via `html[data-theme="dark"]` and `@media (prefers-color-scheme: dark)`
+- **JS**: `internal/server/assets/wiki.js` — theme toggle, search, code-copy, mermaid lazy-loading
+- **Templates**: `internal/render/templates/` — Go html/template files (`base.html.tmpl`, `list.html.tmpl`, `404.html.tmpl`)
+- **Vendor libs**: `internal/server/assets/vendor/` — htmx, Alpine.js, KaTeX, Mermaid (pinned versions in `MANIFEST.txt`)
+- **Fonts**: `internal/server/assets/fonts/` — self-hosted woff2 (Schibsted Grotesk, Source Sans 3, IBM Plex Mono)
+- **Syntax highlighting**: goldmark-highlighting with Chroma, using CSS classes (`WithClasses(true)`) — light theme "github", dark theme "github-dark". Token color CSS is auto-generated in wiki.css.
+
+Assets are embedded via `//go:embed` in `internal/server/assets/assets.go` and served under `/_/static/`.
+
 ## Docker Image
 
 Multi-stage build: Go binary built in `golang:1.25-alpine`, then copied into `node:24-alpine` which has Quartz and obsidian-headless. Custom Quartz config/components in `quartz/` are overlaid at build time.
