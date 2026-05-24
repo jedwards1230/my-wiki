@@ -106,6 +106,7 @@ func TestBuildDispatchPipeline_ValidConfig(t *testing.T) {
 	}
 	if p == nil {
 		t.Fatal("expected non-nil pipeline")
+		return
 	}
 	if p.router == nil || p.dispatcher == nil || p.sink == nil || p.closer == nil {
 		t.Errorf("pipeline missing fields: %+v", p)

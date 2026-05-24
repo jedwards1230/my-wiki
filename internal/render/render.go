@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/yuin/goldmark"
 	emoji "github.com/yuin/goldmark-emoji"
 	highlighting "github.com/yuin/goldmark-highlighting/v2"
@@ -102,6 +103,9 @@ func newMarkdown(slugs map[string]string, transcludes *TranscludeSource) goldmar
 			emoji.Emoji,
 			highlighting.NewHighlighting(
 				highlighting.WithStyle("github"),
+				highlighting.WithFormatOptions(
+					chromahtml.WithClasses(true),
+				),
 			),
 			&obsidianExtension{},
 			newWikilinkExtender(slugs, transcludes),

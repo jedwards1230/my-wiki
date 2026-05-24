@@ -63,8 +63,8 @@ func TestLoadConfig_ValidMinimal(t *testing.T) {
 	}
 	if cfg == nil {
 		t.Fatal("expected non-nil cfg")
+		return
 	}
-
 	// Defaults applied.
 	if cfg.Defaults.Timeout.D != 10*time.Second {
 		t.Errorf("timeout default: got %v, want 10s", cfg.Defaults.Timeout.D)
@@ -420,7 +420,8 @@ events:
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if cfg == nil {
-		t.Fatal("expected cfg")
+		t.Fatal("expected non-nil cfg")
+		return
 	}
 	if cfg.Wiki.BaseURL != "" {
 		t.Errorf("expected empty base_url, got %q", cfg.Wiki.BaseURL)
