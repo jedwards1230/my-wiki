@@ -3,6 +3,7 @@ module github.com/jedwards1230/my-wiki
 go 1.25.6
 
 require (
+	github.com/alecthomas/chroma/v2 v2.24.1
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/mark3labs/mcp-go v0.47.0
@@ -20,7 +21,6 @@ require (
 )
 
 require (
-	github.com/alecthomas/chroma/v2 v2.24.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dlclark/regexp2 v1.12.0 // indirect
