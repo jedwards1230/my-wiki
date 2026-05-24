@@ -102,6 +102,7 @@ func newMarkdown(slugs map[string]string, transcludes *TranscludeSource) goldmar
 			// minor; block refs are load-bearing for transclusion.
 			emoji.Emoji,
 			highlighting.NewHighlighting(
+				highlighting.WithStyle("github"),
 				highlighting.WithFormatOptions(
 					chromahtml.WithClasses(true),
 				),

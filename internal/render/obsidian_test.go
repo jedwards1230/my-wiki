@@ -607,3 +607,22 @@ func TestTransclude_DepthLimit(t *testing.T) {
 		t.Errorf("depth limit did not stop descent: %s", body)
 	}
 }
+
+func TestSyntaxHighlighting_UsesClasses(t *testing.T) {
+	r, err := NewRenderer(nil)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	src := []byte("# Test\n\n```go\nfunc main() {}\n```\n")
+	page, err := r.RenderPage("test.md", src, time.Now())
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	html := string(page.ContentHTML)
+	if !strings.Contains(html, `class="chroma"`) {
+		t.Errorf("expected class-based highlighting (class=\"chroma\"), got:\n%s", html)
+	}
+	if strings.Contains(html, `style="`) {
+		t.Errorf("expected no inline styles in highlighted code, got:\n%s", html)
+	}
+}
