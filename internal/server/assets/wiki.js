@@ -382,41 +382,35 @@
 
   // -------------------------- sortable tables --------------------------
   // Click any <th> in an .article-body table to sort by that column.
-  // Repeated clicks toggle ascending → descending → unsorted. Numeric
-  // cells (including currency/percentages) sort numerically; everything
-  // else sorts lexicographically. The original row order is stashed on
-  // first interaction so "unsorted" restores it exactly.
+  // Repeated clicks toggle ascending → descending. Numeric cells
+  // (including currency/percentages) sort numerically; everything else
+  // sorts lexicographically.
   function initTableSort() {
-    var tables = document.querySelectorAll(".article-body table:not([data-sort-bound])");
+    const tables = document.querySelectorAll(".article-body table:not([data-sort-bound])");
     tables.forEach(function (table) {
       table.setAttribute("data-sort-bound", "1");
-      var thead = table.querySelector("thead");
-      var tbody = table.querySelector("tbody");
+      const thead = table.querySelector("thead");
+      const tbody = table.querySelector("tbody");
       if (!thead || !tbody) return;
-      var headers = thead.querySelectorAll("th");
+      const headers = thead.querySelectorAll("th");
       if (!headers.length) return;
-
-      // Stash original order for the "unsorted" reset.
-      var originalRows = Array.from(tbody.rows);
 
       headers.forEach(function (th, colIdx) {
         th.classList.add("sortable");
-        th.setAttribute("role", "button");
         th.setAttribute("aria-sort", "none");
         th.setAttribute("tabindex", "0");
 
         function cycle() {
-          var prev = th.getAttribute("aria-sort");
-          // Reset all sibling headers.
+          const prev = th.getAttribute("aria-sort");
           headers.forEach(function (h) {
             h.setAttribute("aria-sort", "none");
           });
 
           if (prev === "none" || prev === "descending") {
-            sortTable(tbody, originalRows, colIdx, true);
+            sortTable(tbody, colIdx, true);
             th.setAttribute("aria-sort", "ascending");
           } else if (prev === "ascending") {
-            sortTable(tbody, originalRows, colIdx, false);
+            sortTable(tbody, colIdx, false);
             th.setAttribute("aria-sort", "descending");
           }
         }
@@ -432,30 +426,28 @@
     });
   }
 
-  var numRe = /^[\s$€£¥#]*[-+]?[\d,]*\.?\d+\s*%?\s*$/;
+  const numRe = /^[\s$€£¥#]*[-+]?[\d,]*\.?\d+\s*%?\s*$/;
   function parseNum(s) {
-    var clean = s.replace(/[$€£¥,%\s#]/g, "");
-    var n = parseFloat(clean);
+    const n = parseFloat(s.replace(/[$€£¥,%\s#]/g, ""));
     return isNaN(n) ? null : n;
   }
 
-  function sortTable(tbody, originalRows, colIdx, asc) {
-    var rows = Array.from(tbody.rows);
-    var allNumeric = rows.every(function (r) {
-      var cell = r.cells[colIdx];
+  function sortTable(tbody, colIdx, asc) {
+    const rows = Array.from(tbody.rows);
+    const allNumeric = rows.every(function (r) {
+      const cell = r.cells[colIdx];
       if (!cell) return false;
-      var text = (cell.textContent || "").trim();
+      const text = (cell.textContent || "").trim();
       return text === "" || numRe.test(text);
     });
 
     rows.sort(function (a, b) {
-      var at = (a.cells[colIdx] ? a.cells[colIdx].textContent : "").trim();
-      var bt = (b.cells[colIdx] ? b.cells[colIdx].textContent : "").trim();
+      const at = (a.cells[colIdx] ? a.cells[colIdx].textContent : "").trim();
+      const bt = (b.cells[colIdx] ? b.cells[colIdx].textContent : "").trim();
       if (at === bt) return 0;
-      // Empty cells always sort last.
       if (at === "") return 1;
       if (bt === "") return -1;
-      var cmp;
+      let cmp;
       if (allNumeric) {
         cmp = (parseNum(at) || 0) - (parseNum(bt) || 0);
       } else {
@@ -464,7 +456,6 @@
       return asc ? cmp : -cmp;
     });
 
-    // Re-append in sorted order (moves existing DOM nodes).
     rows.forEach(function (r) { tbody.appendChild(r); });
   }
 
