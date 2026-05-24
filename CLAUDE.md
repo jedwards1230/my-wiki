@@ -31,6 +31,9 @@ go test -v ./internal/search/
 go vet ./...
 golangci-lint run ./...
 
+# Tidy (CI checks this — run after adding/removing imports)
+go mod tidy
+
 # Format
 gofmt -w .
 
