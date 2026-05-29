@@ -1,0 +1,611 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/jedwards1230/my-wiki/internal/api"
+	"github.com/jedwards1230/my-wiki/internal/dispatch"
+	"github.com/jedwards1230/my-wiki/internal/mcpserver"
+	"github.com/jedwards1230/my-wiki/internal/memfs"
+	"github.com/jedwards1230/my-wiki/internal/middleware"
+	"github.com/jedwards1230/my-wiki/internal/notify"
+	"github.com/jedwards1230/my-wiki/internal/render"
+	"github.com/jedwards1230/my-wiki/internal/search"
+	"github.com/jedwards1230/my-wiki/internal/server"
+	"github.com/jedwards1230/my-wiki/internal/service"
+	"github.com/jedwards1230/my-wiki/internal/vault"
+	"github.com/spf13/cobra"
+)
+
+func newServeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start the wiki server",
+		Long:  "Start the wiki HTTP server with static site, API, and optionally MCP transport.\n\nUse --mcp-port to start the MCP server alongside the HTTP server in the same process.\nFor MCP-only deployments, use 'serve mcp http' (long-lived, K8s) or 'serve mcp stdio'\n(per-session, embedded in MCP clients like Claude Code).",
+	}
+
+	// Add subcommands
+	cmd.AddCommand(newServeHTTPCmd())
+	cmd.AddCommand(newServeMCPParentCmd())
+
+	// Default to http if no subcommand given
+	cmd.RunE = runServeHTTP
+
+	// Flags shared with http subcommand
+	cmd.Flags().String("port", envOr(EnvPort, "8080"), "HTTP port (env: "+EnvPort+")")
+	cmd.Flags().String("public-dir", envOr(EnvPublicDir, "/data/public"), "path to Quartz public output (env: "+EnvPublicDir+")")
+	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: "+EnvMCPPort+")")
+	cmd.Flags().String("quartz-dir", envOr(EnvQuartzDir, ""), "path to Quartz project directory; enables Quartz build triggering (env: "+EnvQuartzDir+")")
+	cmd.Flags().Bool("watch", envOrBool(EnvWatch, true), "watch vault directory for filesystem changes (env: "+EnvWatch+")")
+	cmd.Flags().String("renderer", envOr(EnvRenderer, "quartz"), "HTML renderer: 'quartz' (default) or 'native' (env: "+EnvRenderer+")")
+
+	return cmd
+}
+
+func newServeHTTPCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "http",
+		Short: "Start the HTTP server (static site + API)",
+		RunE:  runServeHTTP,
+	}
+
+	cmd.Flags().String("port", envOr(EnvPort, "8080"), "HTTP port (env: "+EnvPort+")")
+	cmd.Flags().String("public-dir", envOr(EnvPublicDir, "/data/public"), "path to Quartz public output (env: "+EnvPublicDir+")")
+	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: "+EnvMCPPort+")")
+	cmd.Flags().String("quartz-dir", envOr(EnvQuartzDir, ""), "path to Quartz project directory; enables Quartz build triggering (env: "+EnvQuartzDir+")")
+	cmd.Flags().Bool("watch", envOrBool(EnvWatch, true), "watch vault directory for filesystem changes (env: "+EnvWatch+")")
+	cmd.Flags().String("renderer", envOr(EnvRenderer, "quartz"), "HTML renderer: 'quartz' (default) or 'native' (env: "+EnvRenderer+")")
+
+	return cmd
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envOrBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		return strings.EqualFold(v, "true") || v == "1"
+	}
+	return fallback
+}
+
+// defaultWatchExcludeDirs lists vault subdirectories the filesystem watcher
+// skips by default — Obsidian metadata, raw byte storage (intentionally
+// silent), and the device-only private folder.
+var defaultWatchExcludeDirs = []string{".obsidian", "raw", "private"}
+
+// excludeDirsFromEnv returns the watcher exclude list, honoring
+// EnvWatchExcludeDirs as a comma-separated override. Unset or empty
+// falls back to defaultWatchExcludeDirs (matches envOr semantics). To
+// disable all exclusions entirely, set the var to whitespace or a lone
+// comma — anything that produces no non-empty entries after splitting.
+func excludeDirsFromEnv() []string {
+	v := os.Getenv(EnvWatchExcludeDirs)
+	if v == "" {
+		return defaultWatchExcludeDirs
+	}
+	out := make([]string, 0, strings.Count(v, ",")+1)
+	for _, d := range strings.Split(v, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// authConfigFromEnv returns an AuthConfig if EnvAuthIssuer is set, nil otherwise.
+func authConfigFromEnv() *middleware.AuthConfig {
+	issuer := os.Getenv(EnvAuthIssuer)
+	if issuer == "" {
+		return nil
+	}
+	cfg := &middleware.AuthConfig{
+		IssuerURL:           issuer,
+		Audience:            os.Getenv(EnvAuthAudience),
+		AllowAnyUser:        strings.EqualFold(os.Getenv(EnvAuthAllowAnyUser), "true"),
+		ResourceMetadataURL: os.Getenv(EnvAuthResourceMetadataURL),
+	}
+	if groups := os.Getenv(EnvAuthAllowedGroups); groups != "" {
+		for _, g := range strings.Split(groups, ",") {
+			if g = strings.TrimSpace(g); g != "" {
+				cfg.AllowedGroups = append(cfg.AllowedGroups, g)
+			}
+		}
+	}
+	return cfg
+}
+
+// wrapAuth wraps an http.Handler with the given auth middleware. When mw is nil
+// it returns the handler unchanged (auth disabled).
+func wrapAuth(handler http.Handler, mw func(http.Handler) http.Handler) http.Handler {
+	if mw == nil {
+		return handler
+	}
+	return mw(handler)
+}
+
+// requireAuthOrAck enforces fail-closed auth for network-facing surfaces. When
+// auth IS configured (authConfigured true) it is a no-op. When auth is NOT
+// configured it requires the operator to explicitly acknowledge running open
+// via EnvAuthDisabled: if set truthy, it logs a prominent warning that the
+// surface is unauthenticated and the whole vault is exposed, and returns nil;
+// otherwise it returns an error refusing to start. surface names the listener
+// (e.g. "HTTP REST API", "MCP HTTP server") for the message.
+//
+// EnvAuthDisabled is parsed with the same truthiness rule as envOrBool
+// (case-insensitive "true" or "1").
+func requireAuthOrAck(logger *slog.Logger, authConfigured bool, surface string) error {
+	if authConfigured {
+		return nil
+	}
+	v := os.Getenv(EnvAuthDisabled)
+	if strings.EqualFold(v, "true") || v == "1" {
+		logger.Warn("authentication DISABLED — "+surface+" is running with NO authentication; the entire vault is exposed for unauthenticated read, write, delete, and move",
+			"surface", surface,
+			EnvAuthDisabled, v,
+		)
+		return nil
+	}
+	return fmt.Errorf("%s refusing to start without authentication: set %s to an OIDC issuer URL to enable auth, or set %s=true to explicitly run open (exposes the entire vault unauthenticated)", surface, EnvAuthIssuer, EnvAuthDisabled)
+}
+
+// authMiddlewares holds both text/plain (MCP) and JSON (REST API) auth middlewares.
+type authMiddlewares struct {
+	mcp func(http.Handler) http.Handler // text/plain 401/403 responses
+	api func(http.Handler) http.Handler // JSON envelope 401/403 responses
+}
+
+// buildAuthMiddlewares constructs JWT middlewares for both MCP and REST API at startup.
+// Returns nil when auth is disabled (cfg nil). On OIDC discovery failure the error is
+// surfaced so the server fails fast rather than silently starting without auth.
+//
+// Two variants are built from the same OIDC config: NewAuth returns text/plain errors
+// (matching MCP transport conventions), NewAuthJSON returns JSON envelope errors
+// (matching the REST API's response format).
+//
+// OIDC discovery is bounded by a 30s timeout so a slow or unreachable provider cannot
+// hang startup indefinitely (e.g. when Authentik is down during a rolling deploy).
+func buildAuthMiddlewares(ctx context.Context, logger *slog.Logger, cfg *middleware.AuthConfig) (*authMiddlewares, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	discoveryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	mcpMW, err := middleware.NewAuth(discoveryCtx, *cfg)
+	if err != nil {
+		return nil, err
+	}
+	apiMW, err := middleware.NewAuthJSON(discoveryCtx, *cfg)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info("auth enabled",
+		"issuer", cfg.IssuerURL,
+		"audience", cfg.Audience,
+		"allowed_groups", cfg.AllowedGroups,
+		"allow_any_user", cfg.AllowAnyUser,
+		"resource_metadata_url", cfg.ResourceMetadataURL,
+	)
+	if cfg.AllowAnyUser && len(cfg.AllowedGroups) == 0 {
+		logger.Warn("auth enabled with AllowAnyUser=true and no AllowedGroups; every authenticated token has full write access. Set " + EnvAuthAllowedGroups + " to restrict.")
+	}
+	return &authMiddlewares{mcp: mcpMW, api: apiMW}, nil
+}
+
+// makeActivityCallback constructs a mutation callback that appends activity log
+// entries and marks the relevant files dirty for Quartz rebuild. The returned
+// callback is safe for concurrent use. If notifier is nil (e.g. stdio mode),
+// dirty marking is skipped — activity entries still append to the vault.
+func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify.RebuildNotifier, vaultDir string, logger *slog.Logger) func(service.MutationEvent) {
+	var mu sync.Mutex
+	return func(evt service.MutationEvent) {
+		pagePath := strings.TrimSuffix(evt.Path, ".md")
+		entry := service.ActivityEntry{
+			Type:       string(evt.Kind),
+			Title:      fmt.Sprintf("[[%s]]", pagePath),
+			AutoLogged: true,
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if err := activitySvc.Append(entry); err != nil {
+			logger.Warn("auto-activity failed", "error", err, "path", evt.Path)
+		}
+		if notifier == nil {
+			return
+		}
+		today := time.Now().Format("2006-01-02")
+		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "activity", today+".md"), notify.ChangeModified)
+		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "log.md"), notify.ChangeModified)
+	}
+}
+
+func runServeHTTP(cmd *cobra.Command, _ []string) error {
+	port, _ := cmd.Flags().GetString("port")
+	publicDir, _ := cmd.Flags().GetString("public-dir")
+	vaultDir, _ := cmd.Root().Flags().GetString("vault")
+	mcpPort, _ := cmd.Flags().GetInt("mcp-port")
+	quartzDir, _ := cmd.Flags().GetString("quartz-dir")
+	watchEnabled, _ := cmd.Flags().GetBool("watch")
+	rendererName, _ := cmd.Flags().GetString("renderer")
+	rendererName = strings.ToLower(strings.TrimSpace(rendererName))
+	if rendererName == "" {
+		rendererName = "quartz"
+	}
+	if rendererName != "quartz" && rendererName != "native" {
+		return fmt.Errorf("invalid --renderer %q (must be 'quartz' or 'native')", rendererName)
+	}
+	useNative := rendererName == "native"
+
+	// Support env var for mcp-port when flag is at default
+	if mcpPort == 0 {
+		if envVal := os.Getenv(EnvMCPPort); envVal != "" {
+			_, _ = fmt.Sscanf(envVal, "%d", &mcpPort)
+		}
+	}
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	// Set as default so MCP handlers (and any future library code) emit
+	// structured logs on the same JSON stream as the server.
+	slog.SetDefault(logger)
+
+	// Warn if TZ is set but timezone data is missing (Alpine without tzdata).
+	if tz := os.Getenv("TZ"); tz != "" {
+		if _, err := time.LoadLocation(tz); err != nil {
+			logger.Warn("TZ set but timezone data unavailable — timestamps will use UTC; install tzdata", "TZ", tz, "error", err)
+		}
+	}
+
+	// Build auth middlewares early — they protect both the REST API and MCP server.
+	authMWs, err := buildAuthMiddlewares(context.Background(), logger, authConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("auth setup: %w", err)
+	}
+	// Fail closed: the HTTP server always registers the REST API write routes
+	// (api.NewHandler), so when no auth middleware was built the entire vault
+	// is exposed for unauthenticated read/write/delete/move. Refuse to start
+	// unless the operator explicitly acknowledges via EnvAuthDisabled. This
+	// also covers the in-process MCP listener below (same process, same
+	// authMWs), so no separate guard is needed there.
+	if err := requireAuthOrAck(logger, authMWs != nil, "HTTP REST API"); err != nil {
+		return err
+	}
+
+	cfg := server.Config{
+		PublicDir: publicDir,
+		VaultDir:  vaultDir,
+		Port:      port,
+	}
+
+	// Vault instance used by both renderer wiring and the API handler.
+	v := vault.New(vaultDir)
+
+	// publicFS is the source of HTML for the static + markdown handlers.
+	// In quartz mode it points at the on-disk public dir (optionally via
+	// memfs when WIKI_IN_MEMORY_HTML is on); in native mode it's a memfs
+	// the renderer populates directly with the rendered site tree.
+	var (
+		publicFS      fs.FS
+		closePublicFS func() error
+		nativeBuilder *render.Builder
+	)
+	if useNative {
+		pfs, closer, builder, err := buildNativePublicFS(v, logger)
+		if err != nil {
+			return fmt.Errorf("native renderer setup: %w", err)
+		}
+		publicFS = pfs
+		closePublicFS = closer
+		nativeBuilder = builder
+		cfg.FragmentRenderer = builder
+	} else {
+		pfs, closer, err := buildPublicFS(publicDir, logger)
+		if err != nil {
+			return fmt.Errorf("public fs setup: %w", err)
+		}
+		publicFS = pfs
+		closePublicFS = closer
+	}
+	if closePublicFS != nil {
+		defer func() { _ = closePublicFS() }()
+	}
+	vaultFS := os.DirFS(vaultDir)
+
+	sub := search.NewSubstringSearcher(v)
+	engines := []search.Searcher{sub}
+
+	idx := search.NewIndexSearcher(v)
+	if err := idx.Build(); err != nil {
+		logger.Warn("search index build failed, index engine not registered", "error", err)
+	} else {
+		logger.Info("search index built")
+		engines = append(engines, idx)
+	}
+	searchSvc := service.NewSearchService(engines...)
+
+	// Build services needed by the rebuild notifier
+	directorySvc := service.NewDirectoryService(v)
+
+	// Create Quartz builder if quartz-dir is configured (Quartz mode only).
+	// This replaces Quartz's built-in --watch mode: the Go server triggers
+	// one-shot builds after debounced filesystem changes.
+	var quartzBuilder *notify.QuartzBuilder
+	if !useNative && quartzDir != "" {
+		quartzBuilder = notify.NewQuartzBuilder(quartzDir, vaultDir, publicDir, logger)
+	}
+
+	// nativeRebuildFS is the *memfs.FS the native builder writes new
+	// snapshots into. Captured here from publicFS so the rebuild callback
+	// can swap snapshots atomically.
+	var nativeRebuildFS *memfs.FS
+	if useNative {
+		nativeRebuildFS, _ = publicFS.(*memfs.FS)
+	}
+
+	// Debounced post-mutation hook: regenerate computed pages and either
+	// run a Quartz build (quartz mode) or re-render via the native builder
+	// (native mode). The two paths are mutually exclusive.
+	notifier := notify.New(2*time.Second, func(paths []string) {
+		if _, _, err := directorySvc.Generate(); err != nil {
+			logger.Warn("rebuild notifier: directory generate failed", "error", err)
+		}
+		switch {
+		case quartzBuilder != nil:
+			quartzBuilder.Build()
+		case nativeBuilder != nil && nativeRebuildFS != nil:
+			snap, err := nativeBuilder.Build(context.Background())
+			if err != nil {
+				logger.Warn("native rebuild failed", "error", err)
+				return
+			}
+			nativeRebuildFS.Store(snap)
+		}
+		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
+	})
+	defer notifier.Close()
+
+	// Build webhook dispatch pipeline (opt-in via WIKI_WEBHOOKS_CONFIG).
+	// When disabled, pipeline is nil and subsequent checks skip dispatcher wiring.
+	pipeline, err := buildDispatchPipeline(vaultDir, logger, nil)
+	if err != nil {
+		return fmt.Errorf("webhook dispatcher setup: %w", err)
+	}
+	defer func() {
+		if pipeline != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if cerr := pipeline.closer(shutdownCtx); cerr != nil {
+				logger.Warn("webhook dispatcher close", "error", cerr)
+			}
+		}
+	}()
+
+	// Start filesystem watcher to detect external changes (Obsidian Sync,
+	// git pull, manual edits) and feed them into the rebuild notifier.
+	// When the dispatch pipeline is enabled, the watcher sink fans out to
+	// both the rebuild notifier and the dispatch pipeline sink.
+	if watchEnabled {
+		var watcherSink notify.Sink = notifier
+		if pipeline != nil {
+			watcherSink = notify.NewFanoutSink(notifier, pipeline.sink)
+		}
+		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, watcherSink,
+			notify.WithExcludeDirs(excludeDirsFromEnv()),
+			notify.WithWatcherLogger(logger),
+		)
+		if watchErr != nil {
+			logger.Warn("filesystem watcher failed to start", "error", watchErr)
+		} else {
+			go vaultWatcher.Run()
+			defer func() { _ = vaultWatcher.Close() }()
+			logger.Info("filesystem watcher started", "vaultDir", vaultDir)
+		}
+	}
+
+	// Shared PageService with auto-activity logging on mutations. When the
+	// dispatch pipeline is enabled, mutations also feed the router so
+	// inbox.changed events fire on API/MCP edits.
+	var dispatchRouter *dispatch.EventRouter
+	if pipeline != nil {
+		dispatchRouter = pipeline.router
+	}
+	pageSvc := buildPageService(v, notifier, dispatchRouter, logger)
+
+	// Startup reconciliation: when enabled and the dispatcher is wired,
+	// synthesize an inbox.changed event for any existing inbox/*.md files
+	// so consumers pick up the backlog on boot.
+	if pipeline != nil && pipeline.cfg.ReconcileOnStart {
+		paths := scanInboxForReconcile(vaultDir, logger)
+		if len(paths) > 0 {
+			logger.Info("reconcile on start found pending inbox items", "count", len(paths))
+			pipeline.router.RecordReconcile(paths)
+		}
+	}
+
+	var apiOpts []api.HandlerOption
+	if authMWs != nil {
+		apiOpts = append(apiOpts, api.WithAuthMiddleware(authMWs.api))
+	}
+	if strings.EqualFold(os.Getenv(EnvAuthReads), "true") {
+		apiOpts = append(apiOpts, api.WithAuthReads(true))
+	}
+	apiOpts = append(apiOpts, api.WithRebuildNotifier(notifier))
+	apiOpts = append(apiOpts, api.WithPageService(pageSvc))
+	if nativeBuilder != nil {
+		// Adapt the renderer surface to the small interfaces the API
+		// package declares so we don't drag internal/render into
+		// internal/api (preserves the api → service → vault layering).
+		apiOpts = append(apiOpts, api.WithRenderEndpoints(
+			nativeRendererPages{b: nativeBuilder},
+			nativeRendererBacklinks{b: nativeBuilder},
+		))
+	}
+	apiHandler := api.NewHandler(v, searchSvc, apiOpts...)
+
+	srv := server.New(cfg, publicFS, vaultFS, logger,
+		server.WithAPIRoutes(apiHandler.RegisterRoutes),
+	)
+
+	// Graceful shutdown on SIGTERM/SIGINT
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	// Start periodic search index rebuild (only if registered)
+	if len(engines) > 1 {
+		idx.StartAutoRebuild(ctx, 5*time.Minute)
+	}
+
+	// Readiness gate. Quartz mode waits for the on-disk index.html to
+	// appear (Quartz writes it at the end of its build); native mode runs
+	// an initial Build() synchronously here and flips ready as soon as it
+	// returns.
+	if useNative {
+		snap, err := nativeBuilder.Build(ctx)
+		if err != nil {
+			return fmt.Errorf("native renderer initial build: %w", err)
+		}
+		nativeRebuildFS.Store(snap)
+		srv.SetReady()
+		logger.Info("native renderer ready", "pages", snap.Files(), "bytes", snap.Bytes())
+	} else {
+		go func() {
+			indexPath := publicDir + "/index.html"
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if _, err := os.Stat(indexPath); err == nil {
+						srv.SetReady()
+						logger.Info("server ready", "publicDir", publicDir)
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	httpSrv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	// Collect servers that need graceful shutdown
+	servers := []*http.Server{httpSrv}
+
+	// Start HTTP server
+	errCh := make(chan error, 2)
+	go func() {
+		logger.Info("starting wiki-server", "version", version, "port", port, "publicDir", publicDir, "vaultDir", vaultDir)
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("HTTP server failed: %w", err)
+		}
+	}()
+
+	// Optionally start MCP server in the same process. --instance-name is a
+	// root persistent flag (env: WIKI_INSTANCE_NAME) so it surfaces here the
+	// same way it does in `serve mcp http` and `serve mcp stdio`. The MCP
+	// server itself is built via the shared helper so option wiring stays
+	// identical across all three transports.
+	if mcpPort > 0 {
+		instanceName, _ := cmd.Flags().GetString("instance-name")
+		mcpSrv := buildMCPServer(v, searchSvc, notifier, pageSvc, instanceName)
+		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
+
+		mux := http.NewServeMux()
+		var mcpAuthMW func(http.Handler) http.Handler
+		if authMWs != nil {
+			mcpAuthMW = authMWs.mcp
+		}
+		mux.Handle("/mcp", wrapAuth(httpTransport, mcpAuthMW))
+		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte("ok"))
+		})
+
+		mcpHTTPSrv := &http.Server{
+			Addr:              fmt.Sprintf(":%d", mcpPort),
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      60 * time.Second,
+			IdleTimeout:       120 * time.Second,
+		}
+		servers = append(servers, mcpHTTPSrv)
+
+		go func() {
+			logger.Info("starting wiki MCP server", "port", mcpPort, "vaultDir", vaultDir)
+			if err := mcpHTTPSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("MCP server failed: %w", err)
+			}
+		}()
+	}
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+
+	logger.Info("shutting down")
+	notifier.Close()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Shut down all servers
+	var firstErr error
+	for _, s := range servers {
+		if err := s.Shutdown(shutdownCtx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// nativeRendererPages adapts *render.Builder to api.RenderPage so the
+// internal/api package does not need to import internal/render.
+type nativeRendererPages struct{ b *render.Builder }
+
+func (a nativeRendererPages) PageBySlug(slug string) (title, description string, ok bool) {
+	p := a.b.PageBySlug(slug)
+	if p == nil {
+		return "", "", false
+	}
+	return p.Title, p.Description, true
+}
+
+// nativeRendererBacklinks adapts *render.Builder to api.RenderBacklinks.
+type nativeRendererBacklinks struct{ b *render.Builder }
+
+func (a nativeRendererBacklinks) Lookup(slug string) []api.RenderBacklinkEntry {
+	src := a.b.BacklinkIndex().Lookup(slug)
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]api.RenderBacklinkEntry, len(src))
+	for i, e := range src {
+		out[i] = api.RenderBacklinkEntry{Title: e.Title, URL: e.URL}
+	}
+	return out
+}

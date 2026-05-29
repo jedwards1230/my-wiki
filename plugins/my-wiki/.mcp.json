@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "my-wiki": {
+      "url": "${MY_WIKI_MCP_URL:-https://wiki.example.com/mcp}",
+      "transport": "streamable-http"
+    }
+  }
+}

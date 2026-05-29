@@ -1,0 +1,64 @@
+{{- if and .Values.webhooks.enabled .Values.webhooks.alerts.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-webhooks
+  labels:
+    app.kubernetes.io/name: wiki
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: webhooks
+spec:
+  groups:
+    - name: my-wiki-webhooks
+      rules:
+        # Failure rate = (terminal drops + circuit-open rejections) / total.
+        # Each delivery increments exactly one outcome, so summing all
+        # outcomes equals total deliveries. clamp_min guards against
+        # division-by-zero when a consumer has no traffic at all in the
+        # window.
+        - alert: WikiWebhookDispatchFailureRateHigh
+          expr: |
+            sum by(consumer) (rate(wiki_webhook_dispatch_total{outcome=~"dropped|circuit_open"}[5m]))
+              /
+            clamp_min(sum by(consumer) (rate(wiki_webhook_dispatch_total[5m])), 1)
+              > {{ .Values.webhooks.alerts.failureRateThreshold }}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Wiki webhook dispatch failure rate high for {{`{{ $labels.consumer }}`}}"
+            description: |
+              Consumer {{`{{ $labels.consumer }}`}} is dropping more than
+              {{ .Values.webhooks.alerts.failureRateThreshold }} of dispatch attempts over the last 5 minutes
+              (retries exhausted or circuit open). Check consumer availability and the wiki-server logs.
+        - alert: WikiWebhookDeliveriesDropped
+          expr: |
+            increase(wiki_webhook_dispatch_total{outcome=~"dropped|circuit_open"}[5m]) > 0
+          for: {{ .Values.webhooks.alerts.droppedDeliveriesFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Wiki webhook deliveries dropped for {{`{{ $labels.consumer }}`}}"
+            description: |
+              Dispatches to consumer {{`{{ $labels.consumer }}`}} are being dropped (either
+              retry exhaustion or an open circuit breaker). Inbox events are not reaching this
+              consumer. Investigate consumer health, then clear the circuit by restoring service.
+        # Queue saturation: the >= comparator fires when depth equals the
+        # configured queue capacity (default 100). A > comparator would
+        # never fire at full saturation, missing the exact condition
+        # the alert is meant to catch.
+        - alert: WikiWebhookQueueDepthHigh
+          expr: |
+            max by(consumer) (wiki_webhook_queue_depth) >= {{ .Values.webhooks.alerts.queueDepthThreshold }}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Wiki webhook queue depth high for {{`{{ $labels.consumer }}`}}"
+            description: |
+              Consumer {{`{{ $labels.consumer }}`}} has at least
+              {{ .Values.webhooks.alerts.queueDepthThreshold }} envelopes queued for delivery.
+              The consumer is processing slower than the wiki is producing events, or is
+              unreachable. New events are dropped once the queue fills.
+{{- end }}

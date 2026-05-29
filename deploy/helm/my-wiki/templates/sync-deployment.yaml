@@ -1,0 +1,131 @@
+{{- if .Values.obsidianSync.standalone }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-sync
+  labels:
+    app.kubernetes.io/name: wiki-sync
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: sync
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wiki-sync
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wiki-sync
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        fsGroup: 100
+        {{- with .Values.podSecurityContext.fsGroupChangePolicy }}
+        fsGroupChangePolicy: {{ . }}
+        {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      initContainers:
+        - name: setup-sync
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              export HOME=/data/home
+              mkdir -p $HOME /data/vault
+
+              echo "Logging in to Obsidian..."
+              ob login --email="$OBSIDIAN_EMAIL" --password="$OBSIDIAN_PASSWORD"
+
+              if ! ob sync-status --path /data/vault 2>/dev/null; then
+                echo "Setting up sync for {{ .Values.obsidian.vault }}..."
+                ob sync-setup \
+                  --vault {{ .Values.obsidian.vault | quote }} \
+                  --path /data/vault \
+                  --password "$OBSIDIAN_E2E_PASSWORD" \
+                  --device-name {{ .Values.obsidian.deviceName | quote }}
+                ob sync-config \
+                  --path /data/vault \
+                  --excluded-folders {{ .Values.obsidian.excludedFolders | quote }} \
+                  --mode {{ .Values.obsidian.syncMode | quote }} \
+                  --device-name {{ .Values.obsidian.deviceName | quote }}
+              fi
+
+              echo "Running initial sync..."
+              ob sync --path /data/vault
+              echo "Init sync complete."
+          env:
+            - name: OBSIDIAN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.obsidianSecretName | default (printf "%s-obsidian" .Release.Name) }}
+                  key: OBSIDIAN_EMAIL
+            - name: OBSIDIAN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.obsidianSecretName | default (printf "%s-obsidian" .Release.Name) }}
+                  key: OBSIDIAN_PASSWORD
+            - name: OBSIDIAN_E2E_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.obsidianSecretName | default (printf "%s-obsidian" .Release.Name) }}
+                  key: OBSIDIAN_E2E_PASSWORD
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.resources.setupSync | nindent 12 }}
+
+      containers:
+        - name: sync
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              export HOME=/data/home
+              echo "Starting continuous sync..."
+              ob sync --path /data/vault --continuous
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.resources.sync | nindent 12 }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

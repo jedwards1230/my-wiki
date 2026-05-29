@@ -1,0 +1,428 @@
+package service
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/jedwards1230/my-wiki/internal/vault"
+)
+
+// PageInfo describes a wiki page.
+type PageInfo struct {
+	Path     string `json:"path"`
+	Title    string `json:"title,omitempty"`
+	HasMeta  bool   `json:"has_meta"`
+	Modified string `json:"modified,omitempty"` // RFC 3339, populated when sort_by=modified
+}
+
+// PageService provides wiki page CRUD operations.
+type PageService struct {
+	storage      vault.Storage
+	excludedDirs []string
+	onMutation   func(MutationEvent)
+}
+
+// PageOption configures optional PageService behavior.
+type PageOption func(*PageService)
+
+// WithOnMutation sets a callback invoked after successful page mutations.
+func WithOnMutation(fn func(MutationEvent)) PageOption {
+	return func(s *PageService) { s.onMutation = fn }
+}
+
+// WithExcludedDirs sets the directories to exclude from page listing.
+// The provided slice is copied so the caller can safely modify it afterward.
+func WithExcludedDirs(dirs []string) PageOption {
+	cp := make([]string, len(dirs))
+	copy(cp, dirs)
+	return func(s *PageService) { s.excludedDirs = cp }
+}
+
+// NewPageService creates a PageService backed by the given storage.
+func NewPageService(storage vault.Storage, opts ...PageOption) *PageService {
+	defaults := make([]string, len(vault.DefaultExcludedDirs))
+	copy(defaults, vault.DefaultExcludedDirs)
+	s := &PageService{
+		storage:      storage,
+		excludedDirs: defaults,
+	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// ensureMD ensures the path has a .md extension.
+func ensureMD(relPath string) string {
+	if !strings.HasSuffix(relPath, ".md") {
+		relPath += ".md"
+	}
+	return relPath
+}
+
+// ErrPathDenied is returned when a page operation targets a directory that is
+// denied to the API/HTTP/MCP page surface (see apiDeniedPrefixes). It is a
+// sentinel so the API layer can map it to 404 — refusing to confirm whether
+// the underlying file exists.
+var ErrPathDenied = errors.New("page not found")
+
+// apiDeniedPrefixes are the vault directories denied for read AND write via
+// every page operation reachable over the network (REST API, HTTP markdown
+// catch-all, MCP tools).
+//
+// Scope rationale: this is intentionally NARROWER than the page-listing
+// exclude list (vault.DefaultExcludedDirs / defaultWatchExcludeDirs, which
+// also include "raw"). The security intent is confidentiality and editor
+// hygiene:
+//   - "private"   — confidential, device-only content that must never be
+//     served or mutated through the API.
+//   - ".obsidian" — Obsidian editor config; exposing/editing it serves no
+//     legitimate purpose and risks leaking workspace internals.
+//
+// "raw" is deliberately NOT denied here: it is served intentionally by the
+// dedicated /raw/ handler (RawHandler) and its files are valid wikilink
+// targets. Denying it would break legitimate raw serving. raw/ is excluded
+// from page LISTING only, which is a separate concern.
+var apiDeniedPrefixes = []string{"private", ".obsidian"}
+
+// IsAPIDenied reports whether relPath falls under a denied directory
+// (apiDeniedPrefixes) and therefore must not be readable or writable through
+// the API/HTTP/MCP page surface. The path is cleaned and normalized to
+// forward slashes first so that variants like "private/x", "private/../private/x",
+// or back-slashed paths cannot bypass the check.
+func IsAPIDenied(relPath string) bool {
+	normalized := filepath.ToSlash(filepath.Clean(relPath))
+	normalized = strings.TrimPrefix(normalized, "./")
+	for _, prefix := range apiDeniedPrefixes {
+		if normalized == prefix || strings.HasPrefix(normalized, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// Read returns the content of a wiki page at the given relative path.
+func (s *PageService) Read(relPath string) (string, error) {
+	if IsAPIDenied(relPath) {
+		return "", ErrPathDenied
+	}
+	relPath = ensureMD(relPath)
+
+	data, err := s.storage.ReadFile(relPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Check if the path without .md is a directory
+			dirPath := strings.TrimSuffix(relPath, ".md")
+			if info, dirErr := s.storage.Stat(dirPath); dirErr == nil && info.IsDir() {
+				return "", fmt.Errorf("%s is a directory, not a page", dirPath)
+			}
+			return "", fmt.Errorf("page not found: %s", relPath)
+		}
+		return "", err
+	}
+
+	return string(data), nil
+}
+
+// Write creates or overwrites a wiki page at the given relative path.
+// Content is validated for required frontmatter before writing.
+func (s *PageService) Write(relPath, content string) error {
+	if IsAPIDenied(relPath) {
+		return ErrPathDenied
+	}
+	if err := validateFrontmatter(relPath, content); err != nil {
+		return err
+	}
+
+	relPath = ensureMD(relPath)
+
+	// Check existence before writing to distinguish create vs edit.
+	existed := false
+	if _, statErr := s.storage.Stat(relPath); statErr == nil {
+		existed = true
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+
+	if err := s.storage.WriteFile(relPath, []byte(content), 0o644); err != nil {
+		return err
+	}
+
+	if s.onMutation != nil {
+		kind := MutationEdit
+		if !existed {
+			kind = MutationCreate
+		}
+		s.onMutation(MutationEvent{Kind: kind, Path: filepath.ToSlash(relPath)})
+	}
+
+	return nil
+}
+
+// ValidationError is returned when page content fails frontmatter validation.
+// Callers can type-assert to distinguish validation failures from filesystem errors.
+type ValidationError struct {
+	Message string
+}
+
+func (e *ValidationError) Error() string { return e.Message }
+
+// dateRe matches YYYY-MM-DD format.
+var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// validateFrontmatter checks that content has the required frontmatter fields
+// for the given path. Wiki pages require title, tags, and date. Files under
+// raw/ are plain static hosting and skip page-level validation entirely.
+//
+// The raw/ check runs against the cleaned, forward-slash form of relPath so
+// paths like "raw/../foo.md" (which the storage layer resolves to "foo.md")
+// don't bypass wiki-page validation.
+func validateFrontmatter(relPath, content string) error {
+	normalizedRelPath := filepath.ToSlash(filepath.Clean(relPath))
+	if normalizedRelPath == "raw" || strings.HasPrefix(normalizedRelPath, "raw/") {
+		return nil
+	}
+
+	fm, err := vault.ParseFrontmatterString(content)
+	if err != nil {
+		return &ValidationError{Message: fmt.Sprintf("failed to parse frontmatter: %v", err)}
+	}
+	if fm == nil {
+		return &ValidationError{Message: "missing frontmatter block (expected --- delimiters)"}
+	}
+
+	return validateWikiFrontmatter(fm)
+}
+
+func validateWikiFrontmatter(fm map[string]string) error {
+	if fm["title"] == "" {
+		return &ValidationError{Message: "missing required frontmatter field: title"}
+	}
+	tags, hasTags := fm["tags"]
+	if !hasTags || tags == "" {
+		return &ValidationError{Message: "missing required frontmatter field: tags (must have at least one tag)"}
+	}
+	dateVal, hasDate := fm["date"]
+	if !hasDate || dateVal == "" {
+		return &ValidationError{Message: "missing required frontmatter field: date"}
+	}
+	if !dateRe.MatchString(dateVal) {
+		return &ValidationError{Message: fmt.Sprintf("invalid date format: expected YYYY-MM-DD, got %q", dateVal)}
+	}
+	return nil
+}
+
+// Delete removes a wiki page at the given relative path.
+func (s *PageService) Delete(relPath string) error {
+	if IsAPIDenied(relPath) {
+		return ErrPathDenied
+	}
+	relPath = ensureMD(relPath)
+
+	if _, err := s.storage.Stat(relPath); os.IsNotExist(err) {
+		return fmt.Errorf("page not found: %s", relPath)
+	}
+
+	if err := s.storage.Remove(relPath); err != nil {
+		return err
+	}
+
+	if s.onMutation != nil {
+		s.onMutation(MutationEvent{Kind: MutationDelete, Path: filepath.ToSlash(relPath)})
+	}
+
+	return nil
+}
+
+// ListOptions configures page listing behavior.
+type ListOptions struct {
+	Prefix string // filter to pages under this directory
+	SortBy string // "name" (default) or "modified"
+	Limit  int    // max results (0 = unlimited)
+}
+
+// List returns wiki pages under the given options.
+func (s *PageService) List(opts ListOptions) ([]PageInfo, error) {
+	searchDir := ""
+	if opts.Prefix != "" {
+		searchDir = opts.Prefix
+	}
+	sortByMtime := opts.SortBy == "modified"
+
+	type pageWithMtime struct {
+		info  PageInfo
+		mtime time.Time
+	}
+	var items []pageWithMtime
+
+	err := s.storage.WalkDir(searchDir, func(rel string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			for _, excluded := range s.excludedDirs {
+				if rel == excluded {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if filepath.Ext(rel) != ".md" {
+			return nil
+		}
+
+		// Exclude meta/activity/ from modified-sorted listings (same as old recent behavior).
+		if sortByMtime && (strings.HasPrefix(rel, "meta/activity/") || strings.HasPrefix(rel, filepath.Join("meta", "activity")+string(filepath.Separator))) {
+			return nil
+		}
+
+		info := PageInfo{Path: rel}
+
+		// Try to get title from frontmatter (read only a small prefix)
+		f, readErr := s.storage.OpenFile(rel, os.O_RDONLY, 0)
+		if readErr == nil {
+			buf := make([]byte, 1024)
+			n, _ := f.Read(buf)
+			_ = f.Close()
+			if title := extractTitle(buf[:n]); title != "" {
+				info.Title = title
+				info.HasMeta = true
+			}
+		}
+
+		// Fallback title from filename when frontmatter title is empty.
+		if info.Title == "" {
+			info.Title = strings.TrimSuffix(filepath.Base(rel), ".md")
+		}
+
+		var mtime time.Time
+		if sortByMtime {
+			if fi, statErr := s.storage.Stat(rel); statErr == nil {
+				mtime = fi.ModTime()
+				info.Modified = mtime.UTC().Format(time.RFC3339)
+			}
+		}
+
+		items = append(items, pageWithMtime{info: info, mtime: mtime})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if sortByMtime {
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].mtime.After(items[j].mtime)
+		})
+	}
+
+	if opts.Limit > 0 && len(items) > opts.Limit {
+		items = items[:opts.Limit]
+	}
+
+	pages := make([]PageInfo, len(items))
+	for i, item := range items {
+		pages[i] = item.info
+	}
+	return pages, nil
+}
+
+// Move renames/relocates a wiki page from src to dst.
+// Both paths have .md ensured. Fails if source does not exist or destination already exists.
+func (s *PageService) Move(src, dst string) error {
+	if IsAPIDenied(src) || IsAPIDenied(dst) {
+		return ErrPathDenied
+	}
+	src = ensureMD(src)
+	dst = ensureMD(dst)
+
+	if _, err := s.storage.Stat(src); os.IsNotExist(err) {
+		return fmt.Errorf("source page not found: %s", src)
+	} else if err != nil {
+		return err
+	}
+
+	if _, err := s.storage.Stat(dst); err == nil {
+		return fmt.Errorf("destination already exists: %s", dst)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := s.storage.Rename(src, dst); err != nil {
+		return err
+	}
+
+	if s.onMutation != nil {
+		s.onMutation(MutationEvent{Kind: MutationMove, Path: filepath.ToSlash(dst), From: filepath.ToSlash(src)})
+	}
+
+	return nil
+}
+
+// Patch applies a series of find-and-replace operations to an existing page.
+// If any find string is not found, it returns an error without writing.
+func (s *PageService) Patch(relPath string, ops []PatchOp) (string, error) {
+	if IsAPIDenied(relPath) {
+		return "", ErrPathDenied
+	}
+	if len(ops) == 0 {
+		return "", fmt.Errorf("operations must not be empty")
+	}
+	for i, op := range ops {
+		if op.Find == "" {
+			return "", fmt.Errorf("operation %d: find must be non-empty", i)
+		}
+		_ = i // validated
+	}
+
+	content, err := s.Read(relPath)
+	if err != nil {
+		return "", err
+	}
+
+	for i, op := range ops {
+		if !strings.Contains(content, op.Find) {
+			return "", fmt.Errorf("patch op %d: find string not found in %s", i, relPath)
+		}
+		content = strings.Replace(content, op.Find, op.Replace, 1)
+	}
+
+	if err := s.Write(relPath, content); err != nil {
+		return "", err
+	}
+
+	return content, nil
+}
+
+// extractTitle extracts the title field from YAML frontmatter bytes.
+func extractTitle(data []byte) string {
+	content := string(data)
+	if !strings.HasPrefix(content, "---\n") {
+		return ""
+	}
+
+	end := strings.Index(content[4:], "\n---")
+	if end < 0 {
+		return ""
+	}
+
+	fm := content[4 : 4+end]
+	for _, line := range strings.Split(fm, "\n") {
+		if strings.HasPrefix(line, "title:") {
+			val := strings.TrimSpace(strings.TrimPrefix(line, "title:"))
+			if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+				val = val[1 : len(val)-1]
+			}
+			return val
+		}
+	}
+
+	return ""
+}

@@ -1,0 +1,99 @@
+{{- if .Values.webhooks.enabled }}
+{{- if not .Values.webhooks.wiki.baseURL -}}
+{{- fail "webhooks.enabled requires webhooks.wiki.baseURL (used to build the prompt URL embedded in every envelope)." -}}
+{{- end -}}
+{{- if not .Values.webhooks.wiki.mcpURL -}}
+{{- fail "webhooks.enabled requires webhooks.wiki.mcpURL (consumers use it to call back via MCP)." -}}
+{{- end -}}
+{{- if and .Values.webhooks.consumers (not .Values.webhooks.secrets.existingSecretName) -}}
+{{- fail "webhooks.consumers requires webhooks.secrets.existingSecretName — create a Secret providing the env vars referenced by secretEnvKey/bearerEnvKey and set its name here." -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-webhooks
+  labels:
+    app.kubernetes.io/name: wiki
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: webhooks
+data:
+  webhooks.yaml: |
+    reconcile_on_start: {{ .Values.webhooks.reconcileOnStart }}
+    defaults:
+      timeout: {{ .Values.webhooks.defaults.timeout }}
+      retries:
+        max_attempts: {{ .Values.webhooks.defaults.retries.maxAttempts }}
+        initial_backoff: {{ .Values.webhooks.defaults.retries.initialBackoff }}
+        max_backoff: {{ .Values.webhooks.defaults.retries.maxBackoff }}
+      circuit_breaker:
+        threshold: {{ .Values.webhooks.defaults.circuitBreaker.threshold }}
+        cooldown: {{ .Values.webhooks.defaults.circuitBreaker.cooldown }}
+      debounce:
+        {{- range $event, $window := .Values.webhooks.defaults.debounce }}
+        {{ $event }}: {{ $window }}
+        {{- end }}
+    wiki:
+      base_url: {{ .Values.webhooks.wiki.baseURL | quote }}
+      mcp_url: {{ .Values.webhooks.wiki.mcpURL | quote }}
+    events:
+      {{- range $event, $cfg := .Values.webhooks.events }}
+      {{ $event }}:
+        prompt: {{ $cfg.prompt | quote }}
+      {{- end }}
+    consumers:
+      {{- range .Values.webhooks.consumers }}
+      - name: {{ .name | quote }}
+        url: {{ .url | quote }}
+        events:
+          {{- range .events }}
+          - {{ . }}
+          {{- end }}
+        {{- if .pathFilters }}
+        path_filters:
+          {{- with .pathFilters.include }}
+          include:
+            {{- range . }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- end }}
+          {{- with .pathFilters.exclude }}
+          exclude:
+            {{- range . }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+        secret_env: {{ .secretEnvKey | quote }}
+        {{- if .bearerEnvKey }}
+        bearer_token_env: {{ .bearerEnvKey | quote }}
+        {{- end }}
+        {{- if .timeout }}
+        timeout: {{ .timeout }}
+        {{- end }}
+        {{- if .retries }}
+        retries:
+          {{- if .retries.maxAttempts }}
+          max_attempts: {{ .retries.maxAttempts }}
+          {{- end }}
+          {{- if .retries.initialBackoff }}
+          initial_backoff: {{ .retries.initialBackoff }}
+          {{- end }}
+          {{- if .retries.maxBackoff }}
+          max_backoff: {{ .retries.maxBackoff }}
+          {{- end }}
+        {{- end }}
+        {{- if .circuitBreaker }}
+        circuit_breaker:
+          {{- if .circuitBreaker.threshold }}
+          threshold: {{ .circuitBreaker.threshold }}
+          {{- end }}
+          {{- if .circuitBreaker.cooldown }}
+          cooldown: {{ .circuitBreaker.cooldown }}
+          {{- end }}
+        {{- end }}
+        {{- if .skipAllDeletes }}
+        skip_all_deletes: true
+        {{- end }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,278 @@
+replicaCount: 1
+
+# HTML renderer selection.
+#   quartz (default): Quartz v4 builds static HTML on disk; the Go server
+#     serves those files. The setup-quartz init container and the quartz
+#     --watch sidecar are both enabled.
+#   native: the in-process Go renderer compiles the vault to memory.
+#     The setup-quartz init and quartz sidecar are disabled; the Node
+#     pieces of the image are unused but ship anyway (image size is
+#     identical — the second-image follow-up is a separate PR).
+#
+# Rollback: change `renderer: native` back to `quartz` and helm upgrade.
+# ArgoCD typically reverts in ~60-90s.
+renderer: quartz
+
+image:
+  repository: ghcr.io/jedwards1230/my-wiki
+  tag: ""  # defaults to appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+timezone: "UTC"
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: wiki.example.com
+  tls:
+    secretName: wiki-tls
+
+obsidian:
+  vault: "My Wiki"
+  deviceName: "my-wiki"
+  excludedFolders: "private"
+  syncMode: "bidirectional"
+
+# When true, obsidian-headless runs as a separate single-replica Deployment
+# instead of as init+sidecar in the main server pod. Requires
+# persistence.enabled=true and persistence.accessMode=ReadWriteMany so both
+# Deployments can mount the PVC and share data.
+obsidianSync:
+  standalone: false
+
+quartz:
+  concurrency: 4
+  baseUrl: "wiki.example.com"
+  repoUrl: "https://github.com/jedwards1230/my-wiki/releases"
+  # When true, wiki-server triggers Quartz builds via WIKI_QUARTZ_DIR instead
+  # of running the quartz --watch sidecar. The setup-quartz init container
+  # still runs on every pod start for the initial build (it wipes and
+  # recreates /data/quartz and /data/public).
+  serverManaged: false
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 5Gi
+
+# Pod-level securityContext applied to both the wiki server and (when standalone)
+# wiki-sync Deployments. fsGroup is hardcoded to 100 because the wiki image
+# expects files to be group-writable by the users (100) group. fsGroupChangePolicy
+# defaults to OnRootMismatch to skip kubelet's recursive chown on every rollout
+# once the volume root has the right group — important for large NFS volumes.
+podSecurityContext:
+  fsGroupChangePolicy: OnRootMismatch
+
+# Name of the K8s Secret containing OBSIDIAN_EMAIL, OBSIDIAN_PASSWORD, OBSIDIAN_E2E_PASSWORD.
+# Create this secret however you like (kubectl, Sealed Secrets, External Secrets, etc.)
+obsidianSecretName: ""  # defaults to {{ .Release.Name }}-obsidian
+
+homepage:
+  enabled: false
+  name: "Wiki"
+  description: "Home knowledge base"
+  group: "Web Services"
+  icon: "obsidian.png"
+
+resources:
+  setupSync:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  setupQuartz:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  sync:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  quartz:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  wikiServer:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+# wiki-server runtime options. Decoupled from mcp/quartz/etc. so it can
+# hold orthogonal feature flags without overloading those blocks.
+server:
+  # Load Quartz's rendered HTML into an atomically-swappable in-memory
+  # fs.FS instead of serving directly off publicDir. The Go server
+  # reloads the snapshot on filesystem changes (debounced ~250ms) via
+  # fsnotify. Eliminates the brief 404/partial-read window that occurs
+  # when Quartz is mid-rebuild and overwriting files in place.
+  #
+  # Trade-off: adds the public tree's byte size to the pod's RSS (a few
+  # MB for this vault; monitor wiki_memfs_bytes). Leave off if disk
+  # space is tight and the race window isn't causing visible problems.
+  inMemoryHTML: false
+
+mcp:
+  enabled: false
+  port: 8081
+  # Separate Ingress resource for /mcp path.
+  ingress:
+    enabled: false
+    middleware: ""  # Traefik middleware (e.g., kube-system-redirect-lan-auth@kubernetescrd)
+  # NetworkPolicy restricting which namespaces can reach the MCP port.
+  # When disabled (default), the MCP port is reachable from any pod in the cluster.
+  networkPolicy:
+    enabled: false
+    # Namespaces allowed to reach the MCP port (by kubernetes.io/metadata.name label).
+    allowedNamespaces: []
+    #  - mcp-infra
+
+auth:
+  # Require auth on read-only GET routes (pages, search, etc.).
+  # When false (default), only mutating routes require auth.
+  authReads: false
+
+  # Server-level JWT validation (Go middleware).
+  # Protects /mcp and mutating /api/ routes (and reads when auth.authReads=true).
+  jwt:
+    enabled: false
+    # Must exactly match the iss claim emitted by your OIDC provider (e.g. Authentik).
+    issuer: ""
+    # OAuth2 client ID / expected aud claim.
+    audience: ""
+    # Group allowlist — the token's groups claim must contain at least one entry.
+    # Leaving this empty requires allowAnyUser=true as an explicit opt-in.
+    allowedGroups: []
+    # Fail-closed default: when allowedGroups is empty, the server refuses to start
+    # unless this is set to true. Only enable when you trust every user your OIDC
+    # provider will issue a token for (e.g. a single-tenant Authentik instance).
+    allowAnyUser: false
+    # RFC 9728 Protected Resource Metadata URL — when set, 401 responses include
+    # WWW-Authenticate header for MCP OAuth discovery.
+    resourceMetadataUrl: ""
+
+  # OAuth discovery sidecar (nginx serving RFC 9728 + 8414 metadata).
+  # Required for Claude Desktop / Custom Connectors to discover how to auth.
+  discovery:
+    enabled: false
+    providerSlug: ""        # Authentik provider slug (e.g., "my-wiki")
+    resourceUrl: ""         # External URL (e.g., "https://wiki.example.com")
+    authentikInternalUrl: "http://authentik-server.authentik.svc.cluster.local:9000"
+    authentikExternalHost: "auth.example.com"
+    resources:
+      requests:
+        cpu: 5m
+        memory: 16Mi
+      limits:
+        cpu: 50m
+        memory: 32Mi
+
+metrics:
+  enabled: false
+  interval: 30s
+
+# Webhook dispatcher: consumer-agnostic surface for delivering signed
+# envelopes when inbox/ content changes. Disabled by default.
+#
+# Secrets: this chart does not create Secrets. Operators must create a
+# user-managed Secret containing one key per `secretEnvKey` / `bearerEnvKey`
+# referenced below, and set `webhooks.secrets.existingSecretName` to its
+# name. Each consumer's HMAC secret and (optional) bearer token are then
+# projected into the pod as environment variables.
+webhooks:
+  enabled: false
+  # Scan inbox/ on startup and emit a synthetic reconcile event for any
+  # pending files so consumers can catch up across restarts.
+  reconcileOnStart: true
+
+  defaults:
+    timeout: 10s
+    retries:
+      maxAttempts: 5
+      initialBackoff: 2s
+      maxBackoff: 2m
+    circuitBreaker:
+      threshold: 5
+      cooldown: 60s
+    debounce:
+      inbox.changed: 90s
+
+  # Wiki locators embedded in every envelope so consumers can call back into
+  # this instance without being pre-configured. Required when webhooks.enabled.
+  wiki:
+    baseURL: ""   # e.g. https://wiki.example.com
+    mcpURL: ""    # e.g. https://wiki.example.com/mcp
+
+  # Event → prompt mapping. Consumers fetch
+  # `<wiki.baseURL>/meta/prompts/<prompt>.md` to load instructions.
+  events:
+    inbox.changed:
+      prompt: inbox-manager
+
+  # List of webhook consumers. Each entry:
+  #   name:           unique identifier (used in metrics labels)
+  #   url:            full webhook URL (https recommended)
+  #   events:         event types this consumer subscribes to
+  #   pathFilters:
+  #     include:      [optional] prefix list — only paths matching at least one entry
+  #     exclude:      [optional] prefix list — paths matching any are dropped
+  #   secretEnvKey:   env var name holding the HMAC-SHA256 secret (required)
+  #   bearerEnvKey:   [optional] env var name holding a bearer token
+  #   timeout:        [optional] per-consumer override
+  #   retries:        [optional] per-consumer override
+  #   circuitBreaker: [optional] per-consumer override
+  #   skipAllDeletes: [optional] true to suppress dispatches where every
+  #                   change in the batch has action=deleted. Useful for
+  #                   agent-driven consumers that would otherwise re-trigger
+  #                   themselves when cleaning up processed files. Mixed
+  #                   batches (any created/modified path) still dispatch.
+  consumers: []
+  # Example:
+  #   - name: automation
+  #     url: https://automation.example.com/webhook/inbox
+  #     events: [inbox.changed]
+  #     pathFilters:
+  #       include: ["inbox/"]
+  #     secretEnvKey: WIKI_WEBHOOK_AUTOMATION_SECRET
+  #     bearerEnvKey: WIKI_WEBHOOK_AUTOMATION_BEARER
+
+  # Name of an existing Kubernetes Secret that provides the env vars named
+  # in consumer secretEnvKey/bearerEnvKey. The Secret is NOT created by this
+  # chart; create it via kubectl, Sealed Secrets, 1Password Operator, etc.
+  secrets:
+    existingSecretName: ""
+
+  # PrometheusRule for alerting on dispatch failures. Requires the Prometheus
+  # Operator CRDs to be installed in the cluster.
+  alerts:
+    enabled: true
+    failureRateThreshold: 0.1
+    droppedDeliveriesFor: 5m
+    queueDepthThreshold: 100
+
+nodeSelector: {}
+tolerations: []
+
+# Inject arbitrary manifests (e.g., OnePasswordItem, NetworkPolicy, ServiceMonitor)
+extraManifests: []

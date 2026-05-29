@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: wiki
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    {{- if .Values.mcp.enabled }}
+    - port: {{ .Values.mcp.port }}
+      targetPort: mcp
+      protocol: TCP
+      name: mcp
+    {{- end }}
+    {{- if .Values.auth.discovery.enabled }}
+    - port: 8090
+      targetPort: oauth
+      protocol: TCP
+      name: oauth-metadata
+    {{- end }}
+  selector:
+    app.kubernetes.io/name: wiki
+    app.kubernetes.io/instance: {{ .Release.Name }}

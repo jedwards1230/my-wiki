@@ -1,0 +1,40 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: wiki
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if .Values.homepage.enabled }}
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: {{ .Values.homepage.name | quote }}
+    gethomepage.dev/description: {{ .Values.homepage.description | quote }}
+    gethomepage.dev/group: {{ .Values.homepage.group | quote }}
+    gethomepage.dev/icon: {{ .Values.homepage.icon | quote }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}
+                port:
+                  name: http
+{{- end }}

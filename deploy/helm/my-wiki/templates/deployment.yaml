@@ -1,0 +1,452 @@
+{{- if and .Values.auth.discovery.enabled (not .Values.auth.jwt.enabled) -}}
+{{- fail "auth.discovery.enabled requires auth.jwt.enabled — cannot advertise OAuth protection without enforcing it." -}}
+{{- end -}}
+{{- if and .Values.auth.discovery.enabled (not .Values.mcp.enabled) -}}
+{{- fail "auth.discovery.enabled requires mcp.enabled — discovery sidecar serves MCP OAuth metadata; enable mcp first." -}}
+{{- end -}}
+{{- if and .Values.auth.discovery.enabled (not .Values.ingress.enabled) -}}
+{{- fail "auth.discovery.enabled requires ingress.enabled — discovery endpoints need a public domain to serve from." -}}
+{{- end -}}
+{{- if and .Values.auth.discovery.enabled (not .Values.auth.jwt.resourceMetadataUrl) -}}
+{{- fail "auth.discovery.enabled requires auth.jwt.resourceMetadataUrl — discovery sidecar requires it for RFC 9728 compliance." -}}
+{{- end -}}
+{{- if and .Values.mcp.ingress.enabled (not .Values.mcp.enabled) -}}
+{{- fail "mcp.ingress.enabled requires mcp.enabled — MCP ingress requires mcp.enabled." -}}
+{{- end -}}
+{{- if and .Values.mcp.ingress.enabled (not .Values.auth.jwt.enabled) (not .Values.mcp.ingress.middleware) -}}
+{{- fail "mcp.ingress.enabled without auth exposes full write access — set auth.jwt.enabled or mcp.ingress.middleware." -}}
+{{- end -}}
+{{- if and .Values.auth.jwt.enabled (not .Values.auth.jwt.allowedGroups) (not .Values.auth.jwt.allowAnyUser) -}}
+{{- fail "auth.jwt.enabled with empty auth.jwt.allowedGroups requires auth.jwt.allowAnyUser=true to explicitly opt in to granting any authenticated user full write access." -}}
+{{- end -}}
+{{- if and .Values.obsidianSync.standalone (or (not .Values.persistence.enabled) (ne .Values.persistence.accessMode "ReadWriteMany")) -}}
+{{- fail "obsidianSync.standalone requires persistence.enabled=true and persistence.accessMode=ReadWriteMany — both Deployments must mount the same PVC." -}}
+{{- end -}}
+{{- if and (gt (int .Values.replicaCount) 1) (or (not .Values.persistence.enabled) (ne .Values.persistence.accessMode "ReadWriteMany")) -}}
+{{- fail "replicaCount > 1 requires persistence.enabled=true and persistence.accessMode=ReadWriteMany for shared volume access." -}}
+{{- end -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: wiki
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wiki
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wiki
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        fsGroup: 100
+        {{- with .Values.podSecurityContext.fsGroupChangePolicy }}
+        fsGroupChangePolicy: {{ . }}
+        {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      initContainers:
+        {{- if not .Values.obsidianSync.standalone }}
+        - name: setup-sync
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              export HOME=/data/home
+              mkdir -p $HOME /data/vault
+
+              echo "Logging in to Obsidian..."
+              ob login --email="$OBSIDIAN_EMAIL" --password="$OBSIDIAN_PASSWORD"
+
+              if ! ob sync-status --path /data/vault 2>/dev/null; then
+                echo "Setting up sync for {{ .Values.obsidian.vault }}..."
+                ob sync-setup \
+                  --vault {{ .Values.obsidian.vault | quote }} \
+                  --path /data/vault \
+                  --password "$OBSIDIAN_E2E_PASSWORD" \
+                  --device-name {{ .Values.obsidian.deviceName | quote }}
+                ob sync-config \
+                  --path /data/vault \
+                  --excluded-folders {{ .Values.obsidian.excludedFolders | quote }} \
+                  --mode {{ .Values.obsidian.syncMode | quote }} \
+                  --device-name {{ .Values.obsidian.deviceName | quote }}
+              fi
+
+              echo "Running initial sync..."
+              ob sync --path /data/vault
+              echo "Init sync complete."
+          env:
+            - name: OBSIDIAN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.obsidianSecretName | default (printf "%s-obsidian" .Release.Name) }}
+                  key: OBSIDIAN_EMAIL
+            - name: OBSIDIAN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.obsidianSecretName | default (printf "%s-obsidian" .Release.Name) }}
+                  key: OBSIDIAN_PASSWORD
+            - name: OBSIDIAN_E2E_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.obsidianSecretName | default (printf "%s-obsidian" .Release.Name) }}
+                  key: OBSIDIAN_E2E_PASSWORD
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.resources.setupSync | nindent 12 }}
+        {{- end }}
+
+        {{- /* In standalone mode, the sync Deployment may not have completed its
+             initial sync before setup-quartz runs. This is acceptable: the vault
+             data persists on the RWX PVC across restarts, so only the very first
+             deploy on an empty PVC hits this race. The readiness probe waits for
+             public/index.html, and VaultWatcher triggers a Quartz rebuild once
+             sync writes arrive.
+
+             setup-quartz is gated on the chart-level `renderer` value — native
+             mode skips Quartz entirely since the Go renderer builds in-memory
+             from the live vault on startup. */}}
+        {{- if eq .Values.renderer "quartz" }}
+        - name: setup-quartz
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c"]
+          env:
+            - name: QUARTZ_BASE_URL
+              value: {{ .Values.quartz.baseUrl | quote }}
+            - name: QUARTZ_REPO_URL
+              value: {{ .Values.quartz.repoUrl | quote }}
+            - name: HOME
+              value: /tmp
+            - name: NPM_CONFIG_CACHE
+              value: /tmp/.npm
+          args:
+            - |
+              set -e
+              # One-time cleanup of legacy /data/quartz PVC copy (pre-0.2.4
+              # charts cp'd the whole Quartz project here). rm -rf is
+              # already idempotent on missing dirs; genuine IO/permission
+              # errors still fail the init.
+              rm -rf /data/quartz
+
+              echo "Generating index files..."
+              wiki-server --vault /data/vault directory --generate
+
+              echo "Building Quartz..."
+              cd /quartz && npx quartz build --output /data/public --directory /data/vault
+              echo "Quartz build complete."
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: quartz-cache
+              mountPath: /quartz/quartz/.quartz-cache
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.setupQuartz | nindent 12 }}
+        {{- end }}
+
+      containers:
+        {{- if not .Values.obsidianSync.standalone }}
+        - name: sync
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              export HOME=/data/home
+              echo "Starting continuous sync..."
+              ob sync --path /data/vault --continuous
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.resources.sync | nindent 12 }}
+        {{- end }}
+
+        {{- /* The Quartz --watch sidecar runs only in quartz mode and only when
+             quartz.serverManaged is false (i.e. Quartz manages its own builds
+             rather than the Go server triggering them). Native renderer mode
+             does not need it at all. */}}
+        {{- if and (eq .Values.renderer "quartz") (not .Values.quartz.serverManaged) }}
+        - name: quartz
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c"]
+          env:
+            - name: QUARTZ_BASE_URL
+              value: {{ .Values.quartz.baseUrl | quote }}
+            - name: QUARTZ_REPO_URL
+              value: {{ .Values.quartz.repoUrl | quote }}
+            - name: HOME
+              value: /tmp
+            - name: NPM_CONFIG_CACHE
+              value: /tmp/.npm
+          args:
+            - |
+              echo "Starting Quartz in watch mode..."
+              cd /quartz && npx quartz build --watch --concurrency {{ .Values.quartz.concurrency }} --output /data/public --directory /data/vault
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: quartz-cache
+              mountPath: /quartz/quartz/.quartz-cache
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources.quartz | nindent 12 }}
+        {{- end }}
+
+        - name: wiki-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/wiki-server", "serve"]
+          args:
+            {{- if .Values.mcp.enabled }}
+            - --mcp-port={{ .Values.mcp.port }}
+            {{- end }}
+          env:
+            - name: TZ
+              value: {{ .Values.timezone | default "UTC" | quote }}
+            - name: WIKI_RENDERER
+              value: {{ .Values.renderer | quote }}
+            {{- /* WIKI_PUBLIC_DIR is set in both modes — Quartz writes
+                 there; native renderer reads it as a hint but populates
+                 memory directly so the directory can be a stub. */}}
+            - name: WIKI_PUBLIC_DIR
+              value: "/data/public"
+            - name: WIKI_VAULT_DIR
+              value: "/data/vault"
+            - name: WIKI_PORT
+              value: "8080"
+            {{- if .Values.server.inMemoryHTML }}
+            - name: WIKI_IN_MEMORY_HTML
+              value: "true"
+            {{- end }}
+            {{- if and (eq .Values.renderer "quartz") .Values.quartz.serverManaged }}
+            - name: WIKI_QUARTZ_DIR
+              value: "/quartz"
+            - name: QUARTZ_BASE_URL
+              value: {{ .Values.quartz.baseUrl | quote }}
+            - name: QUARTZ_REPO_URL
+              value: {{ .Values.quartz.repoUrl | quote }}
+            - name: HOME
+              value: /tmp
+            - name: NPM_CONFIG_CACHE
+              value: /tmp/.npm
+            {{- end }}
+            {{- if .Values.auth.jwt.enabled }}
+            - name: WIKI_AUTH_ISSUER
+              value: {{ required "auth.jwt.issuer is required when auth.jwt.enabled=true" .Values.auth.jwt.issuer | quote }}
+            - name: WIKI_AUTH_AUDIENCE
+              value: {{ required "auth.jwt.audience is required when auth.jwt.enabled=true" .Values.auth.jwt.audience | quote }}
+            {{- if .Values.auth.jwt.allowedGroups }}
+            - name: WIKI_AUTH_ALLOWED_GROUPS
+              value: {{ join "," .Values.auth.jwt.allowedGroups | quote }}
+            {{- end }}
+            {{- if .Values.auth.jwt.allowAnyUser }}
+            - name: WIKI_AUTH_ALLOW_ANY_USER
+              value: "true"
+            {{- end }}
+            {{- if .Values.auth.jwt.resourceMetadataUrl }}
+            - name: WIKI_AUTH_RESOURCE_METADATA_URL
+              value: {{ .Values.auth.jwt.resourceMetadataUrl | quote }}
+            {{- end }}
+            {{- if .Values.auth.authReads }}
+            - name: WIKI_AUTH_READS
+              value: "true"
+            {{- end }}
+            {{- end }}
+            {{- if .Values.webhooks.enabled }}
+            - name: WIKI_WEBHOOKS_CONFIG
+              value: /etc/my-wiki/webhooks.yaml
+            {{- range .Values.webhooks.consumers }}
+            {{- if .secretEnvKey }}
+            - name: {{ .secretEnvKey }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.webhooks.secrets.existingSecretName }}
+                  key: {{ .secretEnvKey }}
+            {{- end }}
+            {{- if .bearerEnvKey }}
+            - name: {{ .bearerEnvKey }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.webhooks.secrets.existingSecretName }}
+                  key: {{ .bearerEnvKey }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            {{- if .Values.mcp.enabled }}
+            - name: mcp
+              containerPort: {{ .Values.mcp.port }}
+              protocol: TCP
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if and (eq .Values.renderer "quartz") .Values.quartz.serverManaged }}
+            - name: quartz-cache
+              mountPath: /quartz/quartz/.quartz-cache
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
+            {{- if .Values.webhooks.enabled }}
+            - name: webhooks-config
+              mountPath: /etc/my-wiki
+              readOnly: true
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources.wikiServer | nindent 12 }}
+
+        {{- if .Values.auth.discovery.enabled }}
+        - name: oauth-metadata
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - name: oauth
+              containerPort: 8090
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: oauth-metadata-conf
+              mountPath: /etc/nginx/conf.d
+            - name: oauth-metadata-json
+              mountPath: /etc/nginx/metadata
+            - name: nginx-tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.auth.discovery.resources | nindent 12 }}
+        {{- end }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        # Quartz hardcodes its esbuild cache at <project>/quartz/.quartz-cache.
+        # wiki-server runs with readOnlyRootFilesystem=true, so it can't write
+        # anywhere on the image layer — mount an emptyDir at the cache path
+        # to give Quartz a writable location. setup-quartz and the --watch
+        # sidecar use the same mount for consistency.
+        - name: quartz-cache
+          emptyDir: {}
+        # Writable /tmp for HOME + npm cache. Required by wiki-server's
+        # readOnlyRootFilesystem=true; harmless on the other containers.
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.webhooks.enabled }}
+        - name: webhooks-config
+          configMap:
+            name: {{ .Release.Name }}-webhooks
+        {{- end }}
+        {{- if .Values.auth.discovery.enabled }}
+        - name: oauth-metadata-conf
+          configMap:
+            name: {{ .Release.Name }}-oauth-metadata
+            items:
+              - key: nginx.conf
+                path: default.conf
+        - name: oauth-metadata-json
+          configMap:
+            name: {{ .Release.Name }}-oauth-metadata
+            items:
+              - key: resource-server.json
+                path: resource-server.json
+              - key: authorization-server.json
+                path: authorization-server.json
+        - name: nginx-tmp
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        {{- end }}
