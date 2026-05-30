@@ -1,21 +1,19 @@
 # Server Modes
 
-`wiki-server` exposes one binary across four runtime surfaces. They share the same vault, services, and MCP tool surface — they differ in which transports and background workers run.
-
-## The four surfaces
+One binary, four runtime surfaces. They share the same vault, services, and MCP tools — they differ in which transports and background workers run.
 
 | # | Invocation | Use case |
 |---|------------|----------|
-| 1 | `wiki-server serve` | HTTP + Quartz, no MCP. Browser-only deployment. |
-| 2 | `wiki-server serve --mcp-port=N` | HTTP + Quartz **and** MCP-over-HTTP in one process. **Home K8s prod path.** |
-| 3 | `wiki-server serve mcp http` | Standalone MCP-over-HTTP (no Quartz, no REST API). |
-| 4 | `wiki-server serve mcp stdio` | Per-session MCP-over-stdio. **Work laptop path.** |
+| 1 | `wiki-server serve` | HTTP + Quartz, no MCP. Browser-only. |
+| 2 | `wiki-server serve --mcp-port=N` | HTTP + Quartz **and** MCP-over-HTTP in one process. **Home K8s prod.** |
+| 3 | `wiki-server serve mcp http` | Standalone MCP-over-HTTP (no Quartz/REST). |
+| 4 | `wiki-server serve mcp stdio` | Per-session MCP-over-stdio. **Work laptop.** |
 
-`serve mcp` (no transport) is a deprecated alias — cobra prints a deprecation message and shows help.
+`serve mcp` (no transport) is a deprecated alias — prints a deprecation message and shows help.
 
 ## Feature matrix
 
-| Feature | (1) `serve` | (2) `serve --mcp-port` | (3) `serve mcp http` | (4) `serve mcp stdio` |
+| Feature | (1) `serve` | (2) `--mcp-port` | (3) `mcp http` | (4) `mcp stdio` |
 |---|---|---|---|---|
 | HTTP listener (rendered HTML) | ✅ | ✅ | ❌ | ❌ |
 | Renderer (`--renderer`) | `quartz`/`native` | `quartz`/`native` | n/a | n/a |
@@ -31,11 +29,11 @@
 | Search MCP tool | n/a | ✅ (TF-IDF + substring) | ✅ (substring) | ✅ (substring) |
 | TF-IDF search index | ✅ | ✅ | ❌ | ❌ |
 | Activity auto-logging on mutations | ✅ | ✅ | ✅ | ✅ |
-| Prometheus `/metrics` | ✅ | ✅ | ❌ | ❌ |
+| Prometheus `/metrics` (unauthenticated) | ✅ | ✅ | ❌ | ❌ |
 | Logs to | stdout (JSON) | stdout (JSON) | stdout (JSON) | **stderr** (JSON) |
 | Lifetime | long-lived | long-lived | long-lived | per-session |
 
-Stdio routes logs to stderr because stdout is reserved for the MCP JSON-RPC framing — any log line on stdout corrupts the protocol stream.
+Stdio logs to stderr because stdout carries the MCP JSON-RPC framing — any stdout log line corrupts the protocol stream.
 
 ## Flags by surface
 
@@ -51,13 +49,16 @@ Stdio routes logs to stderr because stdout is reserved for the MCP JSON-RPC fram
 | `--watch` (fsnotify) | ✅ | ✅ | ✅ | ❌ |
 | `--renderer` (`quartz`/`native`) | ✅ | ✅ | ❌ | ❌ |
 
-`--instance-name` is honored by every MCP surface. It surfaces as `instance_name` in the `whoami` MCP tool response, letting agents distinguish my-wiki from work-wiki when both are connected.
+`--instance-name` surfaces as `instance_name` in the `whoami` MCP tool, letting agents distinguish my-wiki from work-wiki when both are connected.
 
 ## When to pick which
 
-**Home K8s deployment (current production):** surface (2). The Helm chart invokes `wiki-server serve --mcp-port=8081` so a single pod serves the website, REST API, and MCP from one process.
+- **(2)** — Home K8s production. Helm invokes `serve --mcp-port=8081`; one pod serves website, REST, and MCP.
+- **(4)** — Work laptop. Register in `.mcp.json` (below). Optional: `wiki-server launchd install` for a daily `lint`.
+- **(3)** — MCP-only, no browser. For MCP access without exposing the site, or testing the MCP layer. Substring search only (no TF-IDF).
+- **(1)** — Browser-only (default `serve` without `--mcp-port`). Read-only human consumption, no agent surface.
 
-**Work laptop:** surface (4). Register in `.mcp.json`:
+`.mcp.json` for surface (4):
 ```json
 {
   "mcpServers": {
@@ -70,19 +71,12 @@ Stdio routes logs to stderr because stdout is reserved for the MCP JSON-RPC fram
   }
 }
 ```
-Optional companion: `wiki-server launchd install` schedules a daily `lint` via macOS LaunchAgent.
-
-**MCP-only browser-less server (rare):** surface (3). Useful if you want MCP access from outside the cluster without exposing the Quartz site, or for testing the MCP layer in isolation. Note: no TF-IDF index here either — substring search only.
-
-**Browser-only (no MCP):** surface (1). The default `serve` invocation without `--mcp-port`. Useful if you're hosting the wiki for read-only human consumption and don't want any agent surface.
 
 ## Unified construction
 
-The three MCP server surfaces share construction through two helpers in `internal/cli/mcp_runner.go`:
+The three MCP surfaces share two helpers in `internal/cli/mcp_runner.go`:
 
-- `buildMCPServer(...)` — single source of truth for MCP option wiring. Surfaces (2), (3), and (4) all call it.
-- `runMCP(ctx, vaultDir, cfg, logger)` — end-to-end runner for the two standalone surfaces. Drives the dependency graph from a small `mcpRunConfig` struct (`Transport`, `EnableWatcher`, `EnableDispatch`, `EnableAuth`, `EnableSearch`, `EnableSearchIndex`, `InstanceName`, `HTTPPort`).
+- `buildMCPServer(...)` — single source of truth for MCP option wiring. Surfaces (2), (3), (4) all call it.
+- `runMCP(ctx, vaultDir, cfg, logger)` — end-to-end runner for the standalone surfaces, driven by an `mcpRunConfig` struct (`Transport`, `EnableWatcher`, `EnableDispatch`, `EnableAuth`, `EnableSearch`, `EnableSearchIndex`, `InstanceName`, `HTTPPort`).
 
-`serve mcp http` and `serve mcp stdio` are now thin shims that pre-set the config and call `runMCP`. The embedded MCP path (surface (2)) keeps its inline construction because it shares its dependency graph with the REST API, but it still uses `buildMCPServer` so the MCP option set stays identical across all three surfaces.
-
-Adding a new flag (e.g. webhook dispatch from stdio mutations) is now a config-struct field flip rather than a copy-paste between runners.
+`serve mcp http`/`stdio` are thin shims that pre-set the config and call `runMCP`. Surface (2) keeps inline construction (it shares its dependency graph with the REST API) but still uses `buildMCPServer` for an identical MCP option set. Adding a flag is a config-field flip, not a copy-paste.
