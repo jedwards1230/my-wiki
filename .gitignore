@@ -1,5 +1,5 @@
 node_modules/
-wiki-server
+/wiki-server
 .env
 .claude/settings.local.json
 docs/plans/

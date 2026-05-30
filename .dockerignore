@@ -10,7 +10,7 @@
 .idea
 
 # Local build artifacts
-wiki-server
+/wiki-server
 coverage.out
 *.log
 
