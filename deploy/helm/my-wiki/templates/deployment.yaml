@@ -117,61 +117,6 @@ spec:
             {{- toYaml .Values.resources.setupSync | nindent 12 }}
         {{- end }}
 
-        {{- /* In standalone mode, the sync Deployment may not have completed its
-             initial sync before setup-quartz runs. This is acceptable: the vault
-             data persists on the RWX PVC across restarts, so only the very first
-             deploy on an empty PVC hits this race. The readiness probe waits for
-             public/index.html, and VaultWatcher triggers a Quartz rebuild once
-             sync writes arrive.
-
-             setup-quartz is gated on the chart-level `renderer` value — native
-             mode skips Quartz entirely since the Go renderer builds in-memory
-             from the live vault on startup. */}}
-        {{- if eq .Values.renderer "quartz" }}
-        - name: setup-quartz
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["sh", "-c"]
-          env:
-            - name: QUARTZ_BASE_URL
-              value: {{ .Values.quartz.baseUrl | quote }}
-            - name: QUARTZ_REPO_URL
-              value: {{ .Values.quartz.repoUrl | quote }}
-            - name: HOME
-              value: /tmp
-            - name: NPM_CONFIG_CACHE
-              value: /tmp/.npm
-          args:
-            - |
-              set -e
-              # One-time cleanup of legacy /data/quartz PVC copy (pre-0.2.4
-              # charts cp'd the whole Quartz project here). rm -rf is
-              # already idempotent on missing dirs; genuine IO/permission
-              # errors still fail the init.
-              rm -rf /data/quartz
-
-              echo "Generating index files..."
-              wiki-server --vault /data/vault directory --generate
-
-              echo "Building Quartz..."
-              cd /quartz && npx quartz build --output /data/public --directory /data/vault
-              echo "Quartz build complete."
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            capabilities:
-              drop: ["ALL"]
-          volumeMounts:
-            - name: data
-              mountPath: /data
-            - name: quartz-cache
-              mountPath: /quartz/quartz/.quartz-cache
-            - name: tmp
-              mountPath: /tmp
-          resources:
-            {{- toYaml .Values.resources.setupQuartz | nindent 12 }}
-        {{- end }}
-
       containers:
         {{- if not .Values.obsidianSync.standalone }}
         - name: sync
@@ -195,44 +140,6 @@ spec:
             {{- toYaml .Values.resources.sync | nindent 12 }}
         {{- end }}
 
-        {{- /* The Quartz --watch sidecar runs only in quartz mode and only when
-             quartz.serverManaged is false (i.e. Quartz manages its own builds
-             rather than the Go server triggering them). Native renderer mode
-             does not need it at all. */}}
-        {{- if and (eq .Values.renderer "quartz") (not .Values.quartz.serverManaged) }}
-        - name: quartz
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["sh", "-c"]
-          env:
-            - name: QUARTZ_BASE_URL
-              value: {{ .Values.quartz.baseUrl | quote }}
-            - name: QUARTZ_REPO_URL
-              value: {{ .Values.quartz.repoUrl | quote }}
-            - name: HOME
-              value: /tmp
-            - name: NPM_CONFIG_CACHE
-              value: /tmp/.npm
-          args:
-            - |
-              echo "Starting Quartz in watch mode..."
-              cd /quartz && npx quartz build --watch --concurrency {{ .Values.quartz.concurrency }} --output /data/public --directory /data/vault
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            capabilities:
-              drop: ["ALL"]
-          volumeMounts:
-            - name: data
-              mountPath: /data
-            - name: quartz-cache
-              mountPath: /quartz/quartz/.quartz-cache
-            - name: tmp
-              mountPath: /tmp
-          resources:
-            {{- toYaml .Values.resources.quartz | nindent 12 }}
-        {{- end }}
-
         - name: wiki-server
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -244,32 +151,13 @@ spec:
           env:
             - name: TZ
               value: {{ .Values.timezone | default "UTC" | quote }}
-            - name: WIKI_RENDERER
-              value: {{ .Values.renderer | quote }}
-            {{- /* WIKI_PUBLIC_DIR is set in both modes — Quartz writes
-                 there; native renderer reads it as a hint but populates
-                 memory directly so the directory can be a stub. */}}
-            - name: WIKI_PUBLIC_DIR
-              value: "/data/public"
             - name: WIKI_VAULT_DIR
               value: "/data/vault"
             - name: WIKI_PORT
               value: "8080"
-            {{- if .Values.server.inMemoryHTML }}
-            - name: WIKI_IN_MEMORY_HTML
-              value: "true"
-            {{- end }}
-            {{- if and (eq .Values.renderer "quartz") .Values.quartz.serverManaged }}
-            - name: WIKI_QUARTZ_DIR
-              value: "/quartz"
-            - name: QUARTZ_BASE_URL
-              value: {{ .Values.quartz.baseUrl | quote }}
-            - name: QUARTZ_REPO_URL
-              value: {{ .Values.quartz.repoUrl | quote }}
-            - name: HOME
-              value: /tmp
-            - name: NPM_CONFIG_CACHE
-              value: /tmp/.npm
+            {{- with .Values.baseURL }}
+            - name: WIKI_BASE_URL
+              value: {{ . | quote }}
             {{- end }}
             {{- if .Values.auth.jwt.enabled }}
             - name: WIKI_AUTH_ISSUER
@@ -331,12 +219,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            {{- if and (eq .Values.renderer "quartz") .Values.quartz.serverManaged }}
-            - name: quartz-cache
-              mountPath: /quartz/quartz/.quartz-cache
-            - name: tmp
-              mountPath: /tmp
-            {{- end }}
             {{- if .Values.webhooks.enabled }}
             - name: webhooks-config
               mountPath: /etc/my-wiki
@@ -412,17 +294,6 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
-        # Quartz hardcodes its esbuild cache at <project>/quartz/.quartz-cache.
-        # wiki-server runs with readOnlyRootFilesystem=true, so it can't write
-        # anywhere on the image layer — mount an emptyDir at the cache path
-        # to give Quartz a writable location. setup-quartz and the --watch
-        # sidecar use the same mount for consistency.
-        - name: quartz-cache
-          emptyDir: {}
-        # Writable /tmp for HOME + npm cache. Required by wiki-server's
-        # readOnlyRootFilesystem=true; harmless on the other containers.
-        - name: tmp
-          emptyDir: {}
         {{- if .Values.webhooks.enabled }}
         - name: webhooks-config
           configMap:

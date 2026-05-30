@@ -4,9 +4,9 @@ One binary, four runtime surfaces. They share the same vault, services, and MCP 
 
 | # | Invocation | Use case |
 |---|------------|----------|
-| 1 | `wiki-server serve` | HTTP + Quartz, no MCP. Browser-only. |
-| 2 | `wiki-server serve --mcp-port=N` | HTTP + Quartz **and** MCP-over-HTTP in one process. **Home K8s prod.** |
-| 3 | `wiki-server serve mcp http` | Standalone MCP-over-HTTP (no Quartz/REST). |
+| 1 | `wiki-server serve` | HTTP, no MCP. Browser-only. |
+| 2 | `wiki-server serve --mcp-port=N` | HTTP + MCP-over-HTTP in one process. **Home K8s prod.** |
+| 3 | `wiki-server serve mcp http` | Standalone MCP-over-HTTP (no REST). |
 | 4 | `wiki-server serve mcp stdio` | Per-session MCP-over-stdio. **Work laptop.** |
 
 `serve mcp` (no transport) is a deprecated alias — prints a deprecation message and shows help.
@@ -16,7 +16,6 @@ One binary, four runtime surfaces. They share the same vault, services, and MCP 
 | Feature | (1) `serve` | (2) `--mcp-port` | (3) `mcp http` | (4) `mcp stdio` |
 |---|---|---|---|---|
 | HTTP listener (rendered HTML) | ✅ | ✅ | ❌ | ❌ |
-| Renderer (`--renderer`) | `quartz`/`native` | `quartz`/`native` | n/a | n/a |
 | REST API (`/api/*`) | ✅ | ✅ | ❌ | ❌ |
 | Raw file serving (`/raw/*`) | ✅ | ✅ | ❌ | ❌ |
 | MCP transport | ❌ | streamable-http | streamable-http | stdio |
@@ -25,7 +24,6 @@ One binary, four runtime surfaces. They share the same vault, services, and MCP 
 | OIDC auth (Authentik) | ✅ | ✅ | ✅ | ❌ |
 | Webhook dispatch | ✅ | ✅ | ✅ | ❌ |
 | Filesystem watcher (fsnotify) | ✅ | ✅ | ✅ | ❌ |
-| Quartz build pipeline | ✅ | ✅ | ❌ | ❌ |
 | Search MCP tool | n/a | ✅ (TF-IDF + substring) | ✅ (substring) | ✅ (substring) |
 | TF-IDF search index | ✅ | ✅ | ❌ | ❌ |
 | Activity auto-logging on mutations | ✅ | ✅ | ✅ | ✅ |
@@ -42,12 +40,9 @@ Stdio logs to stderr because stdout carries the MCP JSON-RPC framing — any std
 | `--vault` (root) | ✅ | ✅ | ✅ | ✅ |
 | `--instance-name` (root) | ✅ | ✅ | ✅ | ✅ |
 | `--port` (HTTP) | ✅ | ✅ | ❌ | ❌ |
-| `--public-dir` (Quartz output) | ✅ | ✅ | ❌ | ❌ |
-| `--quartz-dir` (Quartz source) | ✅ | ✅ | ❌ | ❌ |
 | `--mcp-port` (embed MCP) | ✅ | ✅ | ❌ | ❌ |
 | `--port` (MCP-only HTTP) | ❌ | ❌ | ✅ | ❌ |
 | `--watch` (fsnotify) | ✅ | ✅ | ✅ | ❌ |
-| `--renderer` (`quartz`/`native`) | ✅ | ✅ | ❌ | ❌ |
 
 `--instance-name` surfaces as `instance_name` in the `whoami` MCP tool, letting agents distinguish my-wiki from work-wiki when both are connected.
 

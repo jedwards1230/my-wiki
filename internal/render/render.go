@@ -507,9 +507,8 @@ func slugFromPath(p string) string {
 // in the source before goldmark sees it. The GFM table parser runs before
 // inline parsers, so an unescaped pipe inside a wikilink located in a table
 // cell is consumed as a column separator — cell splits in half and the
-// wikilink never resolves. Quartz handles this by running its wikilink
-// transformer pre-parse; we accomplish the same with a tiny scan that only
-// touches text inside `[[...]]` segments.
+// wikilink never resolves. We sidestep this with a tiny pre-parse scan that
+// only touches text inside `[[...]]` segments.
 //
 // Already-escaped pipes (`\|`) and pipes outside any `[[...]]` are
 // untouched, so this is safe on documents authored either way.

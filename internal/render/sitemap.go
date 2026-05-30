@@ -75,7 +75,7 @@ type RSS struct {
 }
 
 // BuildRSS renders index.xml bytes. Includes the 50 most recently
-// modified pages, sorted descending — Quartz's default.
+// modified pages, sorted descending.
 func BuildRSS(pages []*Page, baseURL, siteTitle, siteDesc string) ([]byte, error) {
 	sorted := make([]*Page, 0, len(pages))
 	sorted = append(sorted, pages...)

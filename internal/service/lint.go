@@ -459,8 +459,8 @@ func stripFrontmatter(content string) string {
 // navigable link to its verbatim raw file in the body — either a markdown
 // link to a path under the configured raw-path prefix or a wikilink to
 // one. The frontmatter `raw:` field is not enough on its own: it isn't
-// rendered as a link in Quartz, and stripping frontmatter before scanning
-// means the body must carry the connection independently.
+// rendered as a link, and stripping frontmatter before scanning means the
+// body must carry the connection independently.
 //
 // Both the tag name and the raw-path prefix are read from
 // meta/lint-config.yaml so this check stays in sync with the schema

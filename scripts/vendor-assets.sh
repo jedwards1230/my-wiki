@@ -144,11 +144,11 @@ fetch "https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_VERSION}/dist/mermaid.min.
 # --- Webfonts (Google Fonts via gwfh) --------------------------------------
 # google-webfonts-helper hands back a zip of woff2 files for the chosen
 # subset/weight. Skipping italic to keep the bundle small; bold + regular
-# are enough for content typography (Quartz today doesn't use italic either).
+# are enough for content typography (no italic faces are used anywhere).
 #
 # If gwfh is unreachable, the fallback is to bake bare Google Fonts CDN
-# links into wiki.css — documented in docs/RENDERER.md. We intentionally do
-# not silently fall back here: a failed asset vendor should fail the script
+# links into wiki.css. We intentionally do not silently fall back here: a
+# failed asset vendor should fail the script
 # so the operator notices.
 fetch_webfont() {
     local family="$1"

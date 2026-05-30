@@ -16,8 +16,8 @@ func newServeMCPStdioCmd() *cobra.Command {
 		Long: `Start a Model Context Protocol server over stdin/stdout for direct
 embedding in MCP clients (Claude Code, .mcp.json entries, etc).
 
-This mode skips everything stdio doesn't need: no HTTP listener, no Quartz
-build pipeline, no obsidian-headless sync, no OIDC auth, no webhook dispatch.
+This mode skips everything stdio doesn't need: no HTTP listener, no HTML
+rendering, no obsidian-headless sync, no OIDC auth, no webhook dispatch.
 Substring search is the only search backend (no TF-IDF index).
 
 All logs are written to stderr — stdout is reserved for the JSON-RPC protocol.

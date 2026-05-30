@@ -1,7 +1,7 @@
 // Package memfs implements an fs.FS whose entire contents live in memory
 // and are atomically swappable. It exists so static handlers can serve
-// Quartz output (or any other directory tree) without ever racing against
-// a rebuild that is rewriting files on disk.
+// the native renderer's output (or any other directory tree) without ever
+// racing against a rebuild that is rewriting files on disk.
 //
 // A Snapshot is an immutable view of a directory tree at one moment. An
 // FS holds a pointer to the current Snapshot and publishes replacements

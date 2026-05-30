@@ -31,7 +31,7 @@ func WithAuthReads(enabled bool) HandlerOption {
 }
 
 // WithRebuildNotifier sets a notifier that is called after successful vault
-// mutations to trigger Quartz rebuilds.
+// mutations to trigger renderer rebuilds.
 func WithRebuildNotifier(n *notify.RebuildNotifier) HandlerOption {
 	return func(h *Handler) {
 		h.notifier = n

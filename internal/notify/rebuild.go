@@ -7,7 +7,7 @@ import (
 
 // RebuildNotifier batches vault mutations and triggers a single rebuild
 // callback after a debounce period of inactivity. This ensures rapid writes
-// (e.g. batch page creation) result in one Quartz rebuild instead of many.
+// (e.g. batch page creation) result in one rebuild instead of many.
 type RebuildNotifier struct {
 	mu       sync.Mutex
 	dirty    map[string]struct{}

@@ -105,7 +105,7 @@ func runMCP(ctx context.Context, vaultDir string, cfg mcpRunConfig, logger *slog
 
 	// Rebuild notifier: only wired when we have something for it to do
 	// (a watcher feeding it, or dispatch wanting to fan out from it).
-	// Standalone MCP has no Quartz builder; the flush only regenerates
+	// Standalone MCP has no HTML renderer; the flush only regenerates
 	// the directory index so MCP `list` results stay current after edits.
 	var notifier *notify.RebuildNotifier
 	if cfg.EnableWatcher || cfg.EnableDispatch {

@@ -504,9 +504,8 @@ third body.
 		t.Errorf("section transclusion leaked following section into output: %s", out)
 	}
 	// Heading depth-preservation: the Second heading is at level 2,
-	// rendered as <h2>; we don't assert exact level (Quartz parity is
-	// "leave heading levels alone") but the word should appear in some
-	// heading tag.
+	// rendered as <h2>; we don't assert exact level (heading levels are
+	// left as-authored) but the word should appear in some heading tag.
 	if !strings.Contains(out, "Second") {
 		t.Errorf("section heading text missing: %s", out)
 	}

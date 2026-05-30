@@ -349,7 +349,7 @@ func (v *Vault) BuildSlugIndex() (map[string]string, error) {
 		// Populate the basename key only if it isn't already taken — when
 		// two pages share a basename the full-path key wins; the bare
 		// basename links to whichever page was discovered first. This
-		// matches Quartz's "shortest match" link resolution.
+		// implements "shortest match" link resolution.
 		baseKey := strings.ToLower(base)
 		if _, exists := slugs[baseKey]; !exists {
 			slugs[baseKey] = relNoExtSlash

@@ -108,7 +108,7 @@ jobs:
     uses: jedwards1230/release-workflows/.github/workflows/ai-release.yml@v0
     with:
       service_name: my-wiki
-      service_description: "an Obsidian-backed wiki rendered with Quartz and served from K8s"
+      service_description: "an Obsidian-backed wiki with a native Go renderer, served from K8s"
       bump_type: ${{ needs.detect.outputs.bump_type }}
       chart_path: deploy/helm/my-wiki/Chart.yaml
       dry_run: ${{ needs.detect.outputs.dry_run == 'true' }}

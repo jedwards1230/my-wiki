@@ -6,8 +6,8 @@
  * [data-theme] attribute on <html>, set by wiki.js based on localStorage +
  * prefers-color-scheme.
  *
- * Color tokens are ported 1:1 from quartz/quartz.config.ts so the visual
- * diff against Quartz output is minimal.
+ * Color tokens use a named light→dark scale (--light, --gray, --dark,
+ * --secondary, ...) tuned for readable light/dark contrast.
  */
 
 /* ----------- Webfont declarations (self-hosted woff2 under /_/static/fonts) */
@@ -55,7 +55,7 @@
   font-display: swap;
 }
 
-/* ----------- Color tokens (light + dark, mirror Quartz's palette) */
+/* ----------- Color tokens (light + dark) */
 
 :root {
   --light: #faf8f8;
@@ -196,7 +196,7 @@ code, pre, kbd {
 
 /* ----------- Layout grid
  *
- * Three-column grid matching Quartz's proportions:
+ * Three-column grid:
  *   left sidebar (fixed)  |  main content (flex)  |  right sidebar (fixed)
  *
  * At 1920px: ~320px + ~860px + ~320px = ~1500px total
@@ -546,8 +546,8 @@ body.right-rail-collapsed .right-rail-toggle {
   margin: 0;
 }
 /* Nested branches indent slightly and get a faint guide-line on the
-   left (Quartz parity) so the tree shape is readable without taking
-   much horizontal room. */
+   left so the tree shape is readable without taking much horizontal
+   room. */
 .explorer-ul .explorer-ul {
   margin-left: 6px;
   padding-left: 0.7rem;
@@ -707,10 +707,10 @@ ul.tags li {
   margin: 0;
 }
 
-/* Chip pill shared by tag-links and inline wikilinks. Matches Quartz's
-   `a.internal` shape (highlight bg, 5px radius, tight 0.1rem padding,
-   1.4rem line-height so the pill height matches our 1.55 body
-   line-box and doesn't push surrounding lines apart). */
+/* Chip pill shared by tag-links and inline wikilinks (`a.internal`):
+   highlight bg, 5px radius, tight 0.1rem padding, 1.4rem line-height so
+   the pill height matches our 1.55 body line-box and doesn't push
+   surrounding lines apart. */
 a.internal {
   background: var(--highlight);
   border-radius: 5px;
@@ -788,7 +788,7 @@ a.internal.tag-link::before {
   padding-left: 1.5rem;
   margin: 0 0 1rem;
 }
-/* Task lists — match Quartz's checkbox handling */
+/* Task lists — checkbox handling */
 .article-body li:has(> input[type="checkbox"]) {
   list-style-type: none;
   padding-left: 0;
@@ -933,7 +933,7 @@ blockquote {
   mask-repeat: no-repeat;
 }
 
-/* Icon masks — data-uri SVGs matching Quartz exactly */
+/* Icon masks — data-uri SVGs */
 .callout[data-callout="note"]     .callout-icon,
 .callout:not([data-callout])      .callout-icon {
   mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="2" x2="22" y2="6"></line><path d="M7.5 20.5 19 9l-4-4L3.5 16.5 2 22z"></path></svg>');
