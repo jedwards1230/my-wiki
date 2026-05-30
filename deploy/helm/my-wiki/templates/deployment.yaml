@@ -19,6 +19,9 @@
 {{- if and .Values.auth.jwt.enabled (not .Values.auth.jwt.allowedGroups) (not .Values.auth.jwt.allowAnyUser) -}}
 {{- fail "auth.jwt.enabled with empty auth.jwt.allowedGroups requires auth.jwt.allowAnyUser=true to explicitly opt in to granting any authenticated user full write access." -}}
 {{- end -}}
+{{- if and (not .Values.auth.jwt.enabled) (not .Values.auth.disabled) -}}
+{{- fail "auth.jwt.enabled=false requires auth.disabled=true to explicitly run without authentication — the server fails closed otherwise. Set auth.jwt.enabled with an OIDC issuer, or auth.disabled=true for a network-gated (e.g. LAN-only) deployment." -}}
+{{- end -}}
 {{- if and .Values.obsidianSync.standalone (or (not .Values.persistence.enabled) (ne .Values.persistence.accessMode "ReadWriteMany")) -}}
 {{- fail "obsidianSync.standalone requires persistence.enabled=true and persistence.accessMode=ReadWriteMany — both Deployments must mount the same PVC." -}}
 {{- end -}}
@@ -180,6 +183,9 @@ spec:
             - name: WIKI_AUTH_READS
               value: "true"
             {{- end }}
+            {{- else if .Values.auth.disabled }}
+            - name: WIKI_AUTH_DISABLED
+              value: "true"
             {{- end }}
             {{- if .Values.webhooks.enabled }}
             - name: WIKI_WEBHOOKS_CONFIG
