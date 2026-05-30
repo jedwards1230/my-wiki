@@ -17,6 +17,7 @@ Design context: issue [#73].
 # Helm values.yaml
 renderer: native   # or "quartz"
 ```
+
 ```bash
 helm upgrade my-wiki oci://ghcr.io/jedwards1230/charts/my-wiki -f values.yaml
 # or locally:

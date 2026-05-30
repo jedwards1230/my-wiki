@@ -49,7 +49,8 @@ A macOS LaunchAgent for daily lint (`--instance-name` is appended to the plist l
 
 ```bash
 ./wiki-server --vault /path/to/vault --instance-name work-wiki launchd install
-./wiki-server --instance-name work-wiki launchd {status|uninstall}
+./wiki-server --instance-name work-wiki launchd status
+./wiki-server --instance-name work-wiki launchd uninstall
 ```
 
 ## Deployment

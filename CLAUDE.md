@@ -30,12 +30,13 @@ gofmt -w .
 ./wiki-server serve mcp http --vault /path/to/vault --port 8081
 ./wiki-server serve mcp stdio --vault /path/to/vault --instance-name work-wiki
 
-# CLI subcommands operate on the vault directly
-./wiki-server {lint|directory|log|activity} --vault /path/to/vault
+# CLI subcommands operate on the vault directly: lint, directory, log, activity
+./wiki-server lint --vault /path/to/vault
 
 # macOS LaunchAgent for daily lint
 ./wiki-server --vault /path/to/vault --instance-name work-wiki launchd install
-./wiki-server --instance-name work-wiki launchd {status|uninstall}
+./wiki-server --instance-name work-wiki launchd status
+./wiki-server --instance-name work-wiki launchd uninstall
 ```
 
 `serve mcp stdio` logs to stderr (stdout is reserved for JSON-RPC) and skips HTTP, Quartz, OIDC, webhooks, and the TF-IDF index. Bare `serve mcp` (no transport) is deprecated — it prints a deprecation message and falls through to help, it does NOT start a server.
