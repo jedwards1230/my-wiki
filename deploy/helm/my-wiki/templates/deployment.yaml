@@ -73,15 +73,17 @@ spec:
               mkdir -p $HOME /data/vault
 
               echo "Logging in to Obsidian..."
-              # Obsidian's /user/signin origin intermittently returns HTTP 504
-              # (Cloudflare gateway timeout) as an HTML page; `ob login` has no
-              # retry and crashes on the non-JSON response. Retry with backoff
-              # so a transient 504 doesn't crashloop the pod.
+              # `ob login` has no retry and exits non-zero on any failure —
+              # notably Obsidian's /user/signin origin intermittently returns
+              # HTTP 504 (Cloudflare gateway timeout) as an HTML page that the
+              # CLI's JSON parse chokes on. Retry with backoff so a transient
+              # failure doesn't crashloop the pod.
               n=0
               until ob login --email="$OBSIDIAN_EMAIL" --password="$OBSIDIAN_PASSWORD"; do
+                rc=$?
                 n=$((n+1))
-                if [ "$n" -ge 10 ]; then echo "login failed after $n attempts" >&2; exit 1; fi
-                echo "login attempt $n failed (likely a transient Obsidian 504) — retrying in 30s..." >&2
+                if [ "$n" -ge 10 ]; then echo "ob login failed after $n attempts (last exit code $rc)" >&2; exit 1; fi
+                echo "ob login attempt $n failed (exit code $rc) — retrying in 30s..." >&2
                 sleep 30
               done
 
