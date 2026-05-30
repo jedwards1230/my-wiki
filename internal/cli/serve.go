@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -45,11 +44,8 @@ func newServeCmd() *cobra.Command {
 
 	// Flags shared with http subcommand
 	cmd.Flags().String("port", envOr(EnvPort, "8080"), "HTTP port (env: "+EnvPort+")")
-	cmd.Flags().String("public-dir", envOr(EnvPublicDir, "/data/public"), "path to Quartz public output (env: "+EnvPublicDir+")")
 	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: "+EnvMCPPort+")")
-	cmd.Flags().String("quartz-dir", envOr(EnvQuartzDir, ""), "path to Quartz project directory; enables Quartz build triggering (env: "+EnvQuartzDir+")")
 	cmd.Flags().Bool("watch", envOrBool(EnvWatch, true), "watch vault directory for filesystem changes (env: "+EnvWatch+")")
-	cmd.Flags().String("renderer", envOr(EnvRenderer, "quartz"), "HTML renderer: 'quartz' (default) or 'native' (env: "+EnvRenderer+")")
 
 	return cmd
 }
@@ -62,11 +58,8 @@ func newServeHTTPCmd() *cobra.Command {
 	}
 
 	cmd.Flags().String("port", envOr(EnvPort, "8080"), "HTTP port (env: "+EnvPort+")")
-	cmd.Flags().String("public-dir", envOr(EnvPublicDir, "/data/public"), "path to Quartz public output (env: "+EnvPublicDir+")")
 	cmd.Flags().Int("mcp-port", 0, "MCP server port; when non-zero, starts MCP alongside HTTP (env: "+EnvMCPPort+")")
-	cmd.Flags().String("quartz-dir", envOr(EnvQuartzDir, ""), "path to Quartz project directory; enables Quartz build triggering (env: "+EnvQuartzDir+")")
 	cmd.Flags().Bool("watch", envOrBool(EnvWatch, true), "watch vault directory for filesystem changes (env: "+EnvWatch+")")
-	cmd.Flags().String("renderer", envOr(EnvRenderer, "quartz"), "HTML renderer: 'quartz' (default) or 'native' (env: "+EnvRenderer+")")
 
 	return cmd
 }
@@ -209,7 +202,7 @@ func buildAuthMiddlewares(ctx context.Context, logger *slog.Logger, cfg *middlew
 }
 
 // makeActivityCallback constructs a mutation callback that appends activity log
-// entries and marks the relevant files dirty for Quartz rebuild. The returned
+// entries and marks the relevant files dirty for renderer rebuild. The returned
 // callback is safe for concurrent use. If notifier is nil (e.g. stdio mode),
 // dirty marking is skipped — activity entries still append to the vault.
 func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify.RebuildNotifier, vaultDir string, logger *slog.Logger) func(service.MutationEvent) {
@@ -237,20 +230,9 @@ func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify
 
 func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	port, _ := cmd.Flags().GetString("port")
-	publicDir, _ := cmd.Flags().GetString("public-dir")
 	vaultDir, _ := cmd.Root().Flags().GetString("vault")
 	mcpPort, _ := cmd.Flags().GetInt("mcp-port")
-	quartzDir, _ := cmd.Flags().GetString("quartz-dir")
 	watchEnabled, _ := cmd.Flags().GetBool("watch")
-	rendererName, _ := cmd.Flags().GetString("renderer")
-	rendererName = strings.ToLower(strings.TrimSpace(rendererName))
-	if rendererName == "" {
-		rendererName = "quartz"
-	}
-	if rendererName != "quartz" && rendererName != "native" {
-		return fmt.Errorf("invalid --renderer %q (must be 'quartz' or 'native')", rendererName)
-	}
-	useNative := rendererName == "native"
 
 	// Support env var for mcp-port when flag is at default
 	if mcpPort == 0 {
@@ -287,43 +269,20 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	}
 
 	cfg := server.Config{
-		PublicDir: publicDir,
-		VaultDir:  vaultDir,
-		Port:      port,
+		VaultDir: vaultDir,
+		Port:     port,
 	}
 
 	// Vault instance used by both renderer wiring and the API handler.
 	v := vault.New(vaultDir)
 
-	// publicFS is the source of HTML for the static + markdown handlers.
-	// In quartz mode it points at the on-disk public dir (optionally via
-	// memfs when WIKI_IN_MEMORY_HTML is on); in native mode it's a memfs
-	// the renderer populates directly with the rendered site tree.
-	var (
-		publicFS      fs.FS
-		closePublicFS func() error
-		nativeBuilder *render.Builder
-	)
-	if useNative {
-		pfs, closer, builder, err := buildNativePublicFS(v, logger)
-		if err != nil {
-			return fmt.Errorf("native renderer setup: %w", err)
-		}
-		publicFS = pfs
-		closePublicFS = closer
-		nativeBuilder = builder
-		cfg.FragmentRenderer = builder
-	} else {
-		pfs, closer, err := buildPublicFS(publicDir, logger)
-		if err != nil {
-			return fmt.Errorf("public fs setup: %w", err)
-		}
-		publicFS = pfs
-		closePublicFS = closer
+	// publicFS is the source of HTML for the static + markdown handlers:
+	// a memfs the native renderer populates with the rendered site tree.
+	publicFS, _, nativeBuilder, err := buildNativePublicFS(v, logger)
+	if err != nil {
+		return fmt.Errorf("native renderer setup: %w", err)
 	}
-	if closePublicFS != nil {
-		defer func() { _ = closePublicFS() }()
-	}
+	cfg.FragmentRenderer = nativeBuilder
 	vaultFS := os.DirFS(vaultDir)
 
 	sub := search.NewSubstringSearcher(v)
@@ -341,33 +300,18 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// Build services needed by the rebuild notifier
 	directorySvc := service.NewDirectoryService(v)
 
-	// Create Quartz builder if quartz-dir is configured (Quartz mode only).
-	// This replaces Quartz's built-in --watch mode: the Go server triggers
-	// one-shot builds after debounced filesystem changes.
-	var quartzBuilder *notify.QuartzBuilder
-	if !useNative && quartzDir != "" {
-		quartzBuilder = notify.NewQuartzBuilder(quartzDir, vaultDir, publicDir, logger)
-	}
-
 	// nativeRebuildFS is the *memfs.FS the native builder writes new
-	// snapshots into. Captured here from publicFS so the rebuild callback
-	// can swap snapshots atomically.
-	var nativeRebuildFS *memfs.FS
-	if useNative {
-		nativeRebuildFS, _ = publicFS.(*memfs.FS)
-	}
+	// snapshots into. Captured from publicFS so the rebuild callback can
+	// swap snapshots atomically.
+	nativeRebuildFS, _ := publicFS.(*memfs.FS)
 
-	// Debounced post-mutation hook: regenerate computed pages and either
-	// run a Quartz build (quartz mode) or re-render via the native builder
-	// (native mode). The two paths are mutually exclusive.
+	// Debounced post-mutation hook: regenerate computed pages and re-render
+	// the vault via the native builder into a fresh memfs snapshot.
 	notifier := notify.New(2*time.Second, func(paths []string) {
 		if _, _, err := directorySvc.Generate(); err != nil {
 			logger.Warn("rebuild notifier: directory generate failed", "error", err)
 		}
-		switch {
-		case quartzBuilder != nil:
-			quartzBuilder.Build()
-		case nativeBuilder != nil && nativeRebuildFS != nil:
+		if nativeRebuildFS != nil {
 			snap, err := nativeBuilder.Build(context.Background())
 			if err != nil {
 				logger.Warn("native rebuild failed", "error", err)
@@ -470,37 +414,15 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		idx.StartAutoRebuild(ctx, 5*time.Minute)
 	}
 
-	// Readiness gate. Quartz mode waits for the on-disk index.html to
-	// appear (Quartz writes it at the end of its build); native mode runs
-	// an initial Build() synchronously here and flips ready as soon as it
-	// returns.
-	if useNative {
-		snap, err := nativeBuilder.Build(ctx)
-		if err != nil {
-			return fmt.Errorf("native renderer initial build: %w", err)
-		}
-		nativeRebuildFS.Store(snap)
-		srv.SetReady()
-		logger.Info("native renderer ready", "pages", snap.Files(), "bytes", snap.Bytes())
-	} else {
-		go func() {
-			indexPath := publicDir + "/index.html"
-			ticker := time.NewTicker(500 * time.Millisecond)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					if _, err := os.Stat(indexPath); err == nil {
-						srv.SetReady()
-						logger.Info("server ready", "publicDir", publicDir)
-						return
-					}
-				}
-			}
-		}()
+	// Readiness gate: run an initial Build() synchronously and flip ready
+	// as soon as it returns.
+	snap, err := nativeBuilder.Build(ctx)
+	if err != nil {
+		return fmt.Errorf("native renderer initial build: %w", err)
 	}
+	nativeRebuildFS.Store(snap)
+	srv.SetReady()
+	logger.Info("native renderer ready", "pages", snap.Files(), "bytes", snap.Bytes())
 
 	httpSrv := &http.Server{
 		Addr:              ":" + port,
@@ -517,7 +439,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// Start HTTP server
 	errCh := make(chan error, 2)
 	go func() {
-		logger.Info("starting wiki-server", "version", version, "port", port, "publicDir", publicDir, "vaultDir", vaultDir)
+		logger.Info("starting wiki-server", "version", version, "port", port, "vaultDir", vaultDir)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("HTTP server failed: %w", err)
 		}

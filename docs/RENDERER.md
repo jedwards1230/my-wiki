@@ -1,58 +1,33 @@
 # Renderer
 
-`wiki-server` ships two HTML renderers behind one flag: `--renderer` (env `WIKI_RENDERER`, Helm `renderer:`). They share the vault, API, MCP server, and auth/middleware chain — only HTML emission differs.
-
-| Mode | What runs | Source of HTML |
-|------|-----------|----------------|
-| `quartz` (default) | Quartz v4 + obsidian-headless | `/data/public/*` on disk |
-| `native` | In-process Go renderer (`internal/render`) | atomic in-memory snapshot |
+`wiki-server` renders HTML in-process with a native Go renderer (`internal/render`). It shares the vault, API, MCP server, and auth/middleware chain — only HTML emission lives here. Rendered output is held in an atomic in-memory snapshot, never written to disk.
 
 Design context: issue [#73].
 
 [#73]: https://github.com/jedwards1230/my-wiki/issues/73
 
-## How to flip it
+## Pipeline
 
-```yaml
-# Helm values.yaml
-renderer: native   # or "quartz"
-```
+goldmark parses markdown → `html/template` wraps it in the page shell → Chroma (via goldmark-highlighting) handles syntax highlighting with CSS classes (light "github", dark "github-dark").
 
-```bash
-helm upgrade my-wiki oci://ghcr.io/jedwards1230/charts/my-wiki -f values.yaml
-# or locally:
-WIKI_RENDERER=native docker compose up
-./wiki-server serve --renderer native --vault /path/to/vault
-```
+`Builder.Build(ctx)` renders every page in parallel (errgroup) into a `*memfs.Snapshot` and atomically swaps the live `*memfs.FS`. Vault writes are debounced by `internal/notify.RebuildNotifier` (2s window); on flush the builder re-renders and swaps the snapshot — no mid-rebuild 404, readers always see a consistent view.
 
-ArgoCD picks up the change in ~60–90s. The pod is recreated (`strategy: Recreate`), so there's a brief outage — a few seconds, since the native renderer's initial Build runs synchronously before `/readyz` flips to 200.
+`WIKI_BASE_URL` (Helm `baseURL`) feeds sitemap, RSS, and canonical/OpenGraph link generation. Unset → relative links only.
 
-## What changes per mode
+## URLs
 
-### Init containers and sidecars
+| URL | Serves |
+|-----|--------|
+| `/` and `/{path}/` | Go-rendered HTML |
+| `/{path}.md` | vault markdown (text/plain) |
+| `/raw/{path}` | native bytes from `vault/raw/` |
+| `/api/*` | REST API (incl. `/api/popover/{slug}`, `/api/backlinks`, `/api/graph.json`) |
+| `/_/static/*` | embedded asset bundle (htmx + Alpine + KaTeX + Mermaid + fonts + wiki.css/js) |
+| `HX-Request: true` | content-only fragment from `RenderFragment` |
 
-The `setup-quartz` init and the `quartz` `--watch` sidecar are gated on `renderer == "quartz"`. In `native` mode the pod runs: `setup-sync` init + `sync` sidecar (`ob sync --continuous`) + `wiki-server` with `WIKI_RENDERER=native`. The Node/Quartz image layers are unused in `native` mode but still ship (removing them is a follow-up; keeping them makes rollback a single Helm value flip).
+## Static assets
 
-### Rebuild trigger
-
-Both renderers debounce vault writes via `internal/notify.RebuildNotifier` (2s window). On flush:
-- `quartz`: re-runs `npx quartz build` against the live vault.
-- `native`: calls `Builder.Build(ctx)` and atomically swaps the `*memfs.FS` snapshot — no mid-rebuild 404; readers always see a consistent snapshot.
-
-### URLs and behavior
-
-| URL | quartz | native |
-|-----|--------|--------|
-| `/` (rendered HTML) | Quartz output | Go-rendered HTML |
-| `/{path}.md` | vault markdown (text/plain) | same |
-| `/raw/{path}` | native bytes from `vault/raw/` | same |
-| `/api/*` | REST API | same + `/api/popover/{slug}` + `/api/backlinks` |
-| `/_/static/*` | dormant (no client refs) | live (htmx + Alpine + KaTeX + Mermaid + fonts + wiki.css/js) |
-| `HX-Request: true` | fall-through to full HTML | content-only fragment from `RenderFragment` |
-
-### Static assets
-
-Both modes mount the embedded bundle under `/_/static/`:
+The embedded bundle mounts under `/_/static/`:
 
 ```
 /_/static/wiki.css, wiki.js
@@ -61,9 +36,11 @@ Both modes mount the embedded bundle under `/_/static/`:
 /_/static/fonts/*.woff2
 ```
 
-Pinned versions + sha256 hashes: `internal/server/assets/MANIFEST.txt`. Regenerate with `scripts/vendor-assets.sh` after a version bump.
+Assets are embedded via `//go:embed` in `internal/server/assets/assets.go`. Pinned versions + sha256 hashes: `internal/server/assets/MANIFEST.txt`. Regenerate with `scripts/vendor-assets.sh` after a version bump.
 
-### Transclusion (native only)
+The graph view ships as a lightweight canvas widget in `wiki.js` (no d3/cytoscape); it reads node/link data from `/api/graph.json` (`internal/api/graph.go`).
+
+## Transclusion
 
 Full Obsidian-style `![[…]]` transclusion:
 
@@ -89,20 +66,6 @@ Error states are intentionally visible:
 
 The cache is built in `Builder.Build` as a pre-render pass over every page (parse → AST cache → render), so targets resolve against the current snapshot. CSS: `wiki.css` under `/* ----------- Transclusion */`.
 
-## Rollback
-
-Single value flip — set `renderer: quartz` and `helm upgrade`; ArgoCD reverts in ~60–90s. The PVC is unchanged across flips (the vault is the only persistent state). If `native` breaks an entire vault (e.g. a goldmark parse error fails the initial Build, leaving the pod `NotReady`), the fix is the same flip — the Quartz pipeline is unaffected.
-
-## Known issues / follow-ups
-
-Cut from this PR to keep the diff reviewable; full list in [#73].
-
-- **Graph view + `/api/graph` + cytoscape** — deferred (PR #1).
-- **Delete Quartz entirely** (PR #2) — drops Node from the image (~700 MB → ~50 MB), removes `setup-quartz`/`quartz` containers.
-- **Extract obsidian-headless to its own Deployment** (PR #3) — needs RWX PVC; lets wiki-server shed Node.
-- **Webfont fallback** — `scripts/vendor-assets.sh` fails hard if `gwfh.mranftl.com` is unreachable. Inline fallback: bake Google Fonts CDN URLs into `wiki.css`. Hand-run script, not the hot path.
-- **Visual regression CI** (PR #7) — no playwright-diff baseline yet; cross-renderer review is manual.
-
 ## File map
 
 ```
@@ -116,8 +79,9 @@ internal/render/
   embed.go         //go:embed templates
   templates/       base/list/404 .html.tmpl, sitemap.xml.tmpl, rss.xml.tmpl
   testdata/vault/  synthetic vault exercising every extension
+internal/api/  graph.go (GET /api/graph.json)
 internal/server/assets/  wiki.css / wiki.js / vendor/ / fonts/ / MANIFEST.txt / assets.go
-internal/cli/  envvars.go (EnvRenderer), serve.go (--renderer flag), public_fs.go (buildNativePublicFS)
-deploy/helm/my-wiki/  values.yaml (renderer:), templates/deployment.yaml (gated init/sidecar)
+internal/cli/  public_fs.go (buildNativePublicFS)
+deploy/helm/my-wiki/  values.yaml (baseURL:), templates/deployment.yaml
 docs/RENDERER.md  this file
 ```

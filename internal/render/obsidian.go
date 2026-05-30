@@ -3,8 +3,8 @@ package render
 // obsidian.go holds every Obsidian-flavored markdown extension the
 // renderer ships: callouts, ==highlight==, %%comment%%, $math$ inline +
 // $$math$$ block, ^block-id refs, the wikilink resolver, and the TOC
-// extractor. Kept in one file to match Quartz's "OFM as a single
-// transformer" shape and the slimmed plan's "ONE obsidian.go" mandate.
+// extractor. Kept in one file so all Obsidian-flavored markdown handling
+// lives in a single place.
 
 import (
 	"bytes"
@@ -38,7 +38,7 @@ type SlugResolver struct {
 
 // ResolveWikilink returns the URL bytes for a wikilink target. Returns
 // (nil, nil) to render the link as plain text when the target is missing
-// — matches Quartz's behavior for broken wikilinks.
+// — broken wikilinks degrade to their literal text.
 func (r *SlugResolver) ResolveWikilink(n *wikilink.Node) ([]byte, error) {
 	target := string(n.Target)
 	frag := string(n.Fragment)
@@ -69,8 +69,8 @@ func (r *SlugResolver) ResolveWikilink(n *wikilink.Node) ([]byte, error) {
 		// Broken link — leave as plain text. The abhg renderer wraps it
 		// in a class="broken" span when destination is nil; we instead
 		// return an empty href that the template's CSS styles distinctly.
-		// Returning (nil, nil) renders the contents only — which is what
-		// Quartz does for broken links.
+		// Returning (nil, nil) renders the contents only — broken links
+		// show as plain text.
 		return nil, nil
 	}
 	// "index" is the home page — emit "/" instead of "/index/".

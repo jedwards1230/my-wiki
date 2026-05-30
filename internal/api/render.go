@@ -9,8 +9,8 @@ import (
 )
 
 // RenderBacklinks exposes the per-slug backlinks list as a slug-keyed
-// lookup. The native renderer satisfies it via *render.Builder; quartz
-// mode leaves it nil and the endpoints return 404.
+// lookup, satisfied by *render.Builder. Surfaces without a renderer (e.g.
+// standalone MCP) leave it nil and the endpoints return 404.
 type RenderBacklinks interface {
 	Lookup(slug string) []RenderBacklinkEntry
 }

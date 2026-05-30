@@ -1,10 +1,10 @@
-// Package render is the native Go markdown renderer. It replaces Quartz's
-// HTML output with goldmark + a small set of Obsidian-flavored extensions,
+// Package render is the native Go markdown renderer. It turns the vault
+// into HTML with goldmark + a small set of Obsidian-flavored extensions,
 // and emits a complete site tree (per-page HTML, folder + tag listings,
 // sitemap.xml, index.xml RSS, 404.html) into a memfs.Snapshot.
 //
-// The renderer is gated behind WIKI_RENDERER=native and lives alongside the
-// Quartz pipeline. See docs/RENDERER.md for the operator runbook.
+// It is the only renderer the server ships. See docs/RENDERER.md for the
+// pipeline overview.
 package render
 
 import (

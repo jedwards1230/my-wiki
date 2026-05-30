@@ -14,7 +14,7 @@ import (
 	"github.com/jedwards1230/my-wiki/internal/service"
 )
 
-// StaticHandler serves Quartz static site output with try_files logic:
+// StaticHandler serves the rendered static site output with try_files logic:
 // exact path → path.html → path/index.html → 404.html
 type StaticHandler struct {
 	fsys fs.FS
@@ -33,7 +33,7 @@ func (h *StaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try path.html (Quartz generates about.html, served at /about)
+	// Try path.html (the renderer generates about.html, served at /about)
 	if p != "" && h.serveFile(w, r, p+".html") {
 		return
 	}

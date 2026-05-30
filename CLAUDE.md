@@ -5,11 +5,11 @@ Guidance for Claude Code when working in this repository.
 ## Project Overview
 
 `wiki-server` is a Go server that serves an Obsidian vault as a website. It combines:
-- **Quartz v4** (Node.js) static site generation for rendered HTML
+- **Native Go renderer** (`internal/render`, goldmark) for rendered HTML
 - **Go HTTP server** for static serving, markdown delivery, REST API, and MCP
 - **obsidian-headless** for Obsidian Sync
 
-Three content paths: `/path` (Quartz HTML), `/path.md` (vault markdown), `/raw/path` (native source files with directory listing).
+Three content paths: `/path` (rendered HTML), `/path.md` (vault markdown), `/raw/path` (native source files with directory listing).
 
 ## Commands
 
@@ -25,8 +25,8 @@ go vet ./... && golangci-lint run ./...
 go mod tidy                                      # CI checks this
 gofmt -w .
 
-# Run (needs vault dir + Quartz public output)
-./wiki-server serve --vault /path/to/vault --public-dir /path/to/quartz/public --port 8080
+# Run (needs vault dir)
+./wiki-server serve --vault /path/to/vault --port 8080
 ./wiki-server serve mcp http --vault /path/to/vault --port 8081
 ./wiki-server serve mcp stdio --vault /path/to/vault --instance-name work-wiki
 
@@ -39,9 +39,9 @@ gofmt -w .
 ./wiki-server --instance-name work-wiki launchd uninstall
 ```
 
-`serve mcp stdio` logs to stderr (stdout is reserved for JSON-RPC) and skips HTTP, Quartz, OIDC, webhooks, and the TF-IDF index. Bare `serve mcp` (no transport) is deprecated — it prints a deprecation message and falls through to help, it does NOT start a server.
+`serve mcp stdio` logs to stderr (stdout is reserved for JSON-RPC) and skips HTTP, OIDC, webhooks, and the TF-IDF index. Bare `serve mcp` (no transport) is deprecated — it prints a deprecation message and falls through to help, it does NOT start a server.
 
-See [docs/OVERVIEW.md](docs/OVERVIEW.md) (architecture), [docs/SERVER-MODES.md](docs/SERVER-MODES.md) (feature matrix), [docs/RENDERER.md](docs/RENDERER.md) (`WIKI_RENDERER=quartz|native` runbook).
+See [docs/OVERVIEW.md](docs/OVERVIEW.md) (architecture), [docs/SERVER-MODES.md](docs/SERVER-MODES.md) (feature matrix), [docs/RENDERER.md](docs/RENDERER.md) (native renderer pipeline).
 
 ## Architecture
 
@@ -58,7 +58,7 @@ internal/
   notify/      Filesystem change debouncer
   middleware/  gzip, logging, Prometheus metrics, cache headers
   dispatch/    Webhook pipeline — config loader, debouncer, EventRouter, dispatcher, sinks
-  memfs/       Atomically-swappable in-memory fs.FS for WIKI_IN_MEMORY_HTML
+  memfs/       Atomically-swappable in-memory fs.FS for native renderer snapshots
   version/     Build-time version string (-ldflags)
 ```
 
@@ -76,14 +76,14 @@ For CSS/template/rendered-output changes, verify visually before a PR (skip for 
 go build -o wiki-server ./cmd/wiki-server
 mkdir -p /tmp/wiki-test-vault
 printf -- '---\ntitle: Test\n---\n# Test\nContent (code blocks, tables, callouts).\n' > /tmp/wiki-test-vault/test.md
-./wiki-server serve --renderer native --vault /tmp/wiki-test-vault --port 9876
+./wiki-server serve --vault /tmp/wiki-test-vault --port 9876
 # Use Playwright (MCP): navigate to http://localhost:9876/test/, screenshot light + dark.
 # Dark mode: document.documentElement.setAttribute('data-theme', 'dark')
 ```
 
 ## Native Renderer Frontend
 
-`--renderer native` uses goldmark + a single-page app with htmx + Alpine.js:
+The renderer uses goldmark + a single-page app with htmx + Alpine.js:
 
 - **CSS**: `internal/server/assets/wiki.css` — all styles incl. dark mode (`html[data-theme="dark"]`, `prefers-color-scheme`)
 - **JS**: `internal/server/assets/wiki.js` — theme toggle, search, code-copy, mermaid lazy-load
@@ -96,7 +96,7 @@ Assets are embedded via `//go:embed` in `internal/server/assets/assets.go`, serv
 
 ## Build & Release
 
-- **Docker**: multi-stage — Go binary built in `golang:1.25-alpine`, copied into `node:24-alpine` (Quartz + obsidian-headless). Custom Quartz config in `quartz/` overlaid at build time.
+- **Docker**: multi-stage — Go binary built in `golang:1.25-alpine`, copied into `node:24-alpine` (obsidian-headless).
 - **Helm**: `deploy/helm/my-wiki/`, published to `oci://ghcr.io/jedwards1230/charts/my-wiki`. Chart version auto-bumped by the release workflow.
 - **CI** (`.github/workflows/ci.yml`): test (race + coverage), lint (go vet + golangci-lint + mod tidy), build.
 - **Release** (`.github/workflows/release.yml`): auto-semver on push to main (PR labels `semver:patch|minor|major`), builds image to GHCR, publishes Helm OCI chart, creates GitHub release.

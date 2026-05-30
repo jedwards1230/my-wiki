@@ -14,7 +14,7 @@
 coverage.out
 *.log
 
-# Node / Quartz (image clones Quartz fresh)
+# Node modules (image installs its own)
 node_modules
 
 # Deploy assets unused by the image build

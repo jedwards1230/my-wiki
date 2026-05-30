@@ -1,18 +1,5 @@
 replicaCount: 1
 
-# HTML renderer selection.
-#   quartz (default): Quartz v4 builds static HTML on disk; the Go server
-#     serves those files. The setup-quartz init container and the quartz
-#     --watch sidecar are both enabled.
-#   native: the in-process Go renderer compiles the vault to memory.
-#     The setup-quartz init and quartz sidecar are disabled; the Node
-#     pieces of the image are unused but ship anyway (image size is
-#     identical — the second-image follow-up is a separate PR).
-#
-# Rollback: change `renderer: native` back to `quartz` and helm upgrade.
-# ArgoCD typically reverts in ~60-90s.
-renderer: quartz
-
 image:
   repository: ghcr.io/jedwards1230/my-wiki
   tag: ""  # defaults to appVersion
@@ -21,6 +8,11 @@ image:
 imagePullSecrets: []
 
 timezone: "UTC"
+
+# Canonical external base URL (e.g. "https://wiki.example.com"). Used by the
+# native renderer for sitemap, RSS, and canonical/OpenGraph links.
+# Empty = relative links only.
+baseURL: ""
 
 service:
   type: ClusterIP
@@ -46,16 +38,6 @@ obsidian:
 # Deployments can mount the PVC and share data.
 obsidianSync:
   standalone: false
-
-quartz:
-  concurrency: 4
-  baseUrl: "wiki.example.com"
-  repoUrl: "https://github.com/jedwards1230/my-wiki/releases"
-  # When true, wiki-server triggers Quartz builds via WIKI_QUARTZ_DIR instead
-  # of running the quartz --watch sidecar. The setup-quartz init container
-  # still runs on every pod start for the initial build (it wipes and
-  # recreates /data/quartz and /data/public).
-  serverManaged: false
 
 persistence:
   enabled: true
@@ -90,13 +72,6 @@ resources:
     limits:
       cpu: 500m
       memory: 512Mi
-  setupQuartz:
-    requests:
-      cpu: 200m
-      memory: 512Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
   sync:
     requests:
       cpu: 50m
@@ -104,13 +79,6 @@ resources:
     limits:
       cpu: 200m
       memory: 256Mi
-  quartz:
-    requests:
-      cpu: 100m
-      memory: 512Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
   wikiServer:
     requests:
       cpu: 10m
@@ -118,20 +86,6 @@ resources:
     limits:
       cpu: 100m
       memory: 64Mi
-
-# wiki-server runtime options. Decoupled from mcp/quartz/etc. so it can
-# hold orthogonal feature flags without overloading those blocks.
-server:
-  # Load Quartz's rendered HTML into an atomically-swappable in-memory
-  # fs.FS instead of serving directly off publicDir. The Go server
-  # reloads the snapshot on filesystem changes (debounced ~250ms) via
-  # fsnotify. Eliminates the brief 404/partial-read window that occurs
-  # when Quartz is mid-rebuild and overwriting files in place.
-  #
-  # Trade-off: adds the public tree's byte size to the pod's RSS (a few
-  # MB for this vault; monitor wiki_memfs_bytes). Leave off if disk
-  # space is tight and the race window isn't causing visible problems.
-  inMemoryHTML: false
 
 mcp:
   enabled: false

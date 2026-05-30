@@ -5,21 +5,18 @@ services:
       args:
         BUILD_VERSION: dev
     environment:
-      # Renderer selection — matches the Helm chart's `renderer` value.
-      # Defaults to "quartz" for local-dev parity with production.
-      WIKI_RENDERER: ${WIKI_RENDERER:-quartz}
-      QUARTZ_BASE_URL: localhost:8080
-      QUARTZ_REPO_URL: https://github.com/jedwards1230/my-wiki
+      # Canonical base URL for sitemap/RSS/canonical links (optional locally).
+      WIKI_BASE_URL: http://localhost:8080
+      # Local dev has no OIDC provider — explicitly run the server without auth.
+      WIKI_AUTH_DISABLED: "true"
     ports:
       - "8080:8080"
     volumes:
       - ${WIKI_VAULT:-./vault}:/data/vault:ro
     command:
-      - sh
-      - -c
-      - |
-        echo "Building Quartz site..."
-        cd /quartz
-        npx quartz build --directory /data/vault --output /data/public --bundleInfo
-        echo "Starting wiki-server..."
-        wiki-server serve --vault /data/vault --port 8080
+      - wiki-server
+      - serve
+      - --vault
+      - /data/vault
+      - --port
+      - "8080"

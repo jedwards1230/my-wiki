@@ -548,7 +548,7 @@
   let graphRaf = 0;
 
   // Persistent set of slugs the user has visited this session. Powers the
-  // visited-vs-unvisited node coloring (Quartz parity). Best-effort —
+  // visited-vs-unvisited node coloring. Best-effort —
   // localStorage failures (private browsing, quota) degrade silently to
   // "nothing is marked visited" rather than throwing.
   const GRAPH_VISITED_KEY = "wiki-graph-visited";
@@ -611,8 +611,8 @@
       (adj.get(slug) || new Set()).forEach(id => keep.add(id));
 
       // Count site-wide links per node — drives node radius so hub pages
-      // visually stand out (Quartz: `2 + sqrt(numLinks)`, capped at 7
-      // so a node never dominates the small right-rail canvas).
+      // visually stand out (`2 + sqrt(numLinks)`, capped at 7 so a node
+      // never dominates the small right-rail canvas).
       const siteLinkCount = new Map();
       g.nodes.forEach(n => siteLinkCount.set(n.id, 0));
       (g.links || []).forEach(function (l) {
@@ -646,7 +646,7 @@
       });
 
       // Persistent labels when the subgraph is small enough to read
-      // comfortably (Quartz parity for the "blank until hover" feel).
+      // comfortably (otherwise labels stay blank until hover).
       const showAllLabels = nodes.length <= 15;
 
       // hover state for label rendering + neighbour dimming

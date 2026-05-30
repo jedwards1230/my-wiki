@@ -407,7 +407,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 // BuildExplorerTree builds the collapsible file-tree for the left sidebar.
 // It walks `all` pages, reconstructs the folder hierarchy, and marks the
 // path from root to `activeSlug` as open. The tree is sorted folders-first
-// then alphabetically within each group, mirroring Quartz's explorer.
+// then alphabetically within each group.
 func BuildExplorerTree(all []*Page, activeSlug string) []*ExplorerNode {
 	// Collect slug → title from pages.
 	titles := make(map[string]string, len(all))

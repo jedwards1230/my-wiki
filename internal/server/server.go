@@ -14,14 +14,13 @@ import (
 
 // Config holds server configuration.
 type Config struct {
-	PublicDir string
-	VaultDir  string
-	Port      string
+	VaultDir string
+	Port     string
 
-	// FragmentRenderer is consulted on HX-Request: true requests. Native
-	// renderer mode wires the Builder; Quartz mode leaves it nil and the
-	// catch-all falls back to full-page HTML (htmx then extracts #main via
-	// hx-select on the client).
+	// FragmentRenderer is consulted on HX-Request: true requests. The
+	// native renderer wires the Builder; when nil, the catch-all falls
+	// back to full-page HTML (htmx then extracts #main via hx-select on
+	// the client).
 	FragmentRenderer FragmentRenderer
 }
 
@@ -33,9 +32,9 @@ type Server struct {
 }
 
 // FragmentRenderer renders a content fragment for a given URL path. The
-// native renderer implements this — Quartz mode passes nil and the
-// catch-all returns full HTML for HX-Request swaps (htmx falls back to
-// extracting `#main` from the full body via hx-select).
+// native renderer implements this; when nil, the catch-all returns full
+// HTML for HX-Request swaps (htmx falls back to extracting `#main` from
+// the full body via hx-select).
 type FragmentRenderer interface {
 	RenderFragment(urlPath string) ([]byte, bool)
 }
@@ -67,9 +66,7 @@ func New(cfg Config, publicFS, vaultFS fs.FS, logger *slog.Logger, opts ...Optio
 	mux := http.NewServeMux()
 	// Native-renderer static assets — htmx/Alpine/KaTeX/Mermaid/fonts plus
 	// our wiki.css/wiki.js. Mounted under /_/static/ (leading underscore
-	// guarantees no vault-slug collision). Registered ahead of the catch-all
-	// in both quartz and native modes; in quartz mode the assets are dormant
-	// but cheap to ship.
+	// guarantees no vault-slug collision), ahead of the catch-all.
 	mux.Handle("GET /_/static/", http.StripPrefix("/_/static/", assets.Handler()))
 
 	healthHandler := HealthHandler()

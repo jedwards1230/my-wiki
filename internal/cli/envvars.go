@@ -40,43 +40,12 @@ const EnvInstanceName = "WIKI_INSTANCE_NAME"
 // Default: "8080". Used by `serve` and `serve http`.
 const EnvPort = "WIKI_PORT"
 
-// EnvPublicDir is the path to the Quartz static output directory served
-// at "/".
+// EnvBaseURL is the canonical external base URL of the site (e.g.
+// "https://wiki.example.com"). The native renderer uses it for sitemap,
+// RSS, and canonical/OpenGraph link generation.
 //
-// Default: "/data/public". The directory is watched (or loaded into memory
-// when EnvInMemoryHTML is truthy) for changes triggered by Quartz rebuilds.
-const EnvPublicDir = "WIKI_PUBLIC_DIR"
-
-// EnvQuartzDir is the path to the Quartz project directory. When set, the
-// Go server triggers one-shot Quartz builds after debounced filesystem
-// changes (replacing Quartz's built-in --watch mode).
-//
-// Default: empty — Quartz build triggering is disabled and the server only
-// serves whatever already exists under EnvPublicDir.
-const EnvQuartzDir = "WIKI_QUARTZ_DIR"
-
-// EnvInMemoryHTML, when truthy (1/true/yes — case-insensitive), causes the
-// server to load EnvPublicDir into an atomically-swappable in-memory fs.FS
-// and serve from there; fsnotify drives debounced reloads on Quartz
-// rebuilds. Eliminates the mid-rebuild 404 window at the cost of adding the
-// public tree's size to RSS.
-//
-// Default: false (serve directly from disk via os.DirFS).
-const EnvInMemoryHTML = "WIKI_IN_MEMORY_HTML"
-
-// EnvRenderer selects the HTML renderer used for the served wiki:
-//
-//   - "quartz" (default): Quartz v4 produces static HTML on disk under
-//     EnvPublicDir; the Go server serves those files unchanged. This is
-//     the production-stable path.
-//   - "native": the in-process Go renderer (internal/render) compiles the
-//     vault into an in-memory snapshot on startup and after each debounced
-//     vault change. EnvPublicDir is unused (memory-only).
-//
-// Surfaced as --renderer on `serve` and `serve http`. The Helm chart
-// drives this via .Values.renderer; flipping the value is the documented
-// rollback for the native renderer. See docs/RENDERER.md.
-const EnvRenderer = "WIKI_RENDERER"
+// Default: empty (relative links only).
+const EnvBaseURL = "WIKI_BASE_URL"
 
 // ---------------------------------------------------------------------------
 // Filesystem watcher
