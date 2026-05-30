@@ -107,6 +107,11 @@ auth:
   # When false (default), only mutating routes require auth.
   authReads: false
 
+  # Explicitly run with NO authentication. Required when jwt.enabled=false:
+  # the server fails closed, so a network-gated (e.g. LAN-only) deployment
+  # must acknowledge running open by setting this true.
+  disabled: false
+
   # Server-level JWT validation (Go middleware).
   # Protects /mcp and mutating /api/ routes (and reads when auth.authReads=true).
   jwt:
