@@ -1,33 +1,32 @@
 # my-wiki Overview
 
-A single Go binary (`wiki-server`) that turns an Obsidian vault into a queryable, agent-accessible knowledge base. Same binary runs as a 24/7 service on a homelab K8s cluster *and* as an on-demand stdio MCP server on a laptop, with the same vault conventions either way.
+A single Go binary (`wiki-server`) that turns an Obsidian vault into an agent-accessible knowledge base. The same binary runs as a 24/7 K8s service *and* as an on-demand stdio MCP server, with the same vault conventions either way.
 
 ## What it does
 
-- **Serves an Obsidian vault** as a website (Quartz v4 rendering markdown to static HTML).
-- **Exposes a REST API** for vault operations (`/api/pages`, `/api/search`, etc).
-- **Speaks MCP** (Model Context Protocol) so AI agents can read/write/lint the vault as a tool surface.
-- **Runs vault-maintenance CLIs** (`lint`, `directory`, `log`, `activity`) for one-shot operations.
+- **Serves an Obsidian vault** as a website (Quartz v4 → static HTML).
+- **REST API** for vault operations (`/api/pages`, `/api/search`, ...).
+- **MCP server** so AI agents can read/write/lint the vault as a tool surface.
+- **Vault-maintenance CLIs** (`lint`, `directory`, `log`, `activity`).
 
 ## Two deployment shapes
 
-**Home (K8s, long-lived).** A single pod runs `wiki-server serve --mcp-port=8081` alongside `obsidian-headless` (Obsidian Sync) and Quartz. HTTP server handles browser traffic, REST API handles UI, embedded MCP handles agent calls. OIDC auth, webhook dispatch, and TF-IDF search index are all enabled. Backed by Longhorn PVC; deployed via Helm.
+The binary doesn't know which shape it runs in — it's all flag/subcommand selection. See [SERVER-MODES.md](SERVER-MODES.md) for the per-mode feature matrix.
 
-**Work (macOS laptop, on-demand).** No homelab connection. `wiki-server serve mcp stdio` is invoked by an MCP client (Claude Code) per session and exits when the session ends. Points at a local Obsidian vault directory. No HTTP, no Quartz, no auth — just markdown reads/writes through the same MCP tool surface. A LaunchAgent installed via `wiki-server launchd install` runs `lint` daily.
-
-The binary doesn't know which shape it's running in — that's all flag/subcommand selection. See [SERVER-MODES.md](SERVER-MODES.md) for the per-mode feature matrix.
+- **Home (K8s, long-lived):** one pod runs `serve --mcp-port=8081` alongside obsidian-headless (Obsidian Sync) and Quartz. HTTP, REST, embedded MCP, OIDC auth, webhooks, and the TF-IDF index all enabled. Longhorn PVC, deployed via Helm.
+- **Work (laptop, on-demand):** `serve mcp stdio`, invoked per session by an MCP client (Claude Code) against a local vault. No HTTP, Quartz, or auth — just markdown reads/writes over the same MCP tools. A LaunchAgent runs `lint` daily.
 
 ## Design choices
 
-- **Pluggable renderer.** `WIKI_RENDERER` (Helm value `renderer:`) selects between Quartz v4 (Node) and a native Go renderer (`internal/render`). Quartz is the default; the native renderer is opt-in per deployment and trivially reversible. See [RENDERER.md](RENDERER.md).
-- **Obsidian as source of truth.** Markdown files on disk with YAML frontmatter (`title`, `tags`, `date`). The server never owns content — it just renders, indexes, and lints it. This is what makes the home/work split work: Obsidian's own client edits the vault directly, and `wiki-server` is one of several consumers.
-- **MCP is the agent contract.** Every vault operation is exposed as an MCP tool (`read`, `write`, `edit`, `list`, `search`, `lint`, ...). The REST API is a thin re-skinning of the same service layer for browser use. Agents and humans get parity.
-- **Stripping by transport, not by config.** Stdio mode skips watchers, Quartz, auth, and webhooks because the per-session lifetime makes them pointless — not because they're configurable off. (See issue #65 for a planned refactor that makes the stripping config-driven, so stdio can grow features without copy-paste.)
-- **Activity logging is part of the vault.** Every mutation auto-appends to `meta/activity/YYYY-MM-DD.md` and `meta/log.md`. The audit trail lives where the rest of the content does — searchable, syncable, no separate database.
-- **Schema is markdown, not code.** `meta/schema.md` is the canonical schema, exposed as an MCP resource (`wiki://schema`). Lint rules are hard-coded (kebab-case tags, required frontmatter, link integrity), but the schema *content* is authored per-vault.
+- **Pluggable renderer.** `WIKI_RENDERER` (Helm `renderer:`) selects Quartz v4 (default) or a native Go renderer (`internal/render`). Opt-in, trivially reversible. See [RENDERER.md](RENDERER.md).
+- **Obsidian as source of truth.** Markdown on disk with YAML frontmatter. The server never owns content — it renders, indexes, and lints. Obsidian's own client edits the vault; `wiki-server` is one of several consumers.
+- **MCP is the agent contract.** Every vault op is an MCP tool (`read`, `write`, `edit`, `list`, `search`, `lint`, ...); the REST API is a thin re-skin of the same service layer.
+- **Stripping by transport, not config.** Stdio skips watchers, Quartz, auth, and webhooks because the per-session lifetime makes them pointless (issue #65 plans a config-driven refactor).
+- **Activity logging lives in the vault.** Mutations auto-append to `meta/activity/YYYY-MM-DD.md` and `meta/log.md` — searchable, syncable, no separate database.
+- **Schema is markdown.** `meta/schema.md` is canonical, exposed as MCP resource `wiki://schema`. Lint rules are hard-coded (kebab-case tags, required frontmatter, link integrity); schema *content* is per-vault.
 
-## Where to go next
+## See also
 
-- [SERVER-MODES.md](SERVER-MODES.md) — feature matrix across the four MCP-server surfaces.
-- [../CLAUDE.md](../CLAUDE.md) — agent-facing repo guide (build commands, env vars, conventions).
-- [../README.md](../README.md) — install and quickstart.
+- [SERVER-MODES.md](SERVER-MODES.md) — feature matrix across the MCP-server surfaces
+- [../CLAUDE.md](../CLAUDE.md) — agent repo guide (build commands, env vars, conventions)
+- [../README.md](../README.md) — install and quickstart
