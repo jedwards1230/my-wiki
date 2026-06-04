@@ -21,7 +21,19 @@ type DirectoryEntry struct {
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
 	Tags        string `json:"tags,omitempty"`
+	// Modified is the file's mtime, used only to render the "Recently Updated"
+	// section in generated indexes. Not serialized (the modified-sorted page
+	// listing API is served separately by PageService).
+	Modified time.Time `json:"-"`
 }
+
+const (
+	// recentsLimit caps how many pages the "Recently Updated" section lists.
+	recentsLimit = 10
+	// recentsMinPages gates the section on non-root indexes: a subtree this
+	// small or smaller just duplicates its own directory listing, so skip it.
+	recentsMinPages = 8
+)
 
 // DirectoryService provides page catalog operations.
 type DirectoryService struct {
@@ -71,6 +83,10 @@ func (s *DirectoryService) List(prefix string) ([]DirectoryEntry, error) {
 			if tags := fm["tags"]; tags != "" {
 				entry.Tags = tags
 			}
+		}
+
+		if fi, statErr := os.Stat(p); statErr == nil {
+			entry.Modified = fi.ModTime()
 		}
 
 		result = append(result, entry)
@@ -429,6 +445,9 @@ func renderRootIndex(b *strings.Builder, root *dirNode, allPages []DirectoryEntr
 	b.WriteString("A shared knowledge base — maintained by humans and AI agents.\n\n")
 	b.WriteString("See [[meta/schema]] for the operating manual. See [[meta/log]] for recent activity.\n")
 
+	// Recently updated (vault-wide)
+	renderRecents(b, root)
+
 	// Directory tree
 	b.WriteString("\n## Directory\n\n")
 	renderTreeWikilinks(b, root, 0, 2)
@@ -444,6 +463,8 @@ func renderRootIndex(b *strings.Builder, root *dirNode, allPages []DirectoryEntr
 func renderMidIndex(b *strings.Builder, node *dirNode) {
 	allBelow := collectPages(node)
 
+	renderRecents(b, node)
+
 	b.WriteString("\n## Directory\n\n")
 	renderSubdirTree(b, node, 0, 1)
 
@@ -456,6 +477,8 @@ func renderMidIndex(b *strings.Builder, node *dirNode) {
 }
 
 func renderLeafIndex(b *strings.Builder, node *dirNode) {
+	renderRecents(b, node)
+
 	b.WriteString("\n## Directory\n\n")
 	renderSubdirTree(b, node, 0, 0)
 
@@ -464,6 +487,48 @@ func renderLeafIndex(b *strings.Builder, node *dirNode) {
 	if len(tags) > 0 {
 		b.WriteString("\n## Tags\n\n")
 		renderTagList(b, tags)
+	}
+}
+
+// renderRecents writes a "Recently Updated" section listing the most recently
+// modified pages under node, newest first. On the root index ("") it always
+// renders; on subtree indexes it's gated to subtrees larger than
+// recentsMinPages so small leaves don't just echo their own directory listing.
+//
+// The page set is collectPages(node), which excludes generated index.md files
+// and meta/activity/ (both filtered out before the tree is built). That
+// exclusion is what keeps Generate idempotent: writing an index never changes
+// any other index's recents, so the byte-equality write-skip holds and there's
+// no rebuild cascade when wired to the vault watcher.
+func renderRecents(b *strings.Builder, node *dirNode) {
+	pages := collectPages(node)
+	if node.rel != "" && len(pages) <= recentsMinPages {
+		return
+	}
+
+	sorted := make([]DirectoryEntry, len(pages))
+	copy(sorted, pages)
+	sort.Slice(sorted, func(i, j int) bool {
+		if !sorted[i].Modified.Equal(sorted[j].Modified) {
+			return sorted[i].Modified.After(sorted[j].Modified)
+		}
+		return sorted[i].Path < sorted[j].Path
+	})
+	if len(sorted) > recentsLimit {
+		sorted = sorted[:recentsLimit]
+	}
+	if len(sorted) == 0 {
+		return
+	}
+
+	b.WriteString("\n## Recently Updated\n\n")
+	for _, p := range sorted {
+		wikilink := makeWikilink(p.Path, p.Title)
+		if p.Modified.IsZero() {
+			fmt.Fprintf(b, "- %s\n", wikilink)
+		} else {
+			fmt.Fprintf(b, "- %s — %s\n", wikilink, p.Modified.Format("2006-01-02"))
+		}
 	}
 }
 

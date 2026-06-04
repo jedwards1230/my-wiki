@@ -52,7 +52,7 @@ func (s *ActivityService) Append(entry ActivityEntry) error {
 	if entry.Title == "" {
 		return fmt.Errorf("title cannot be empty after sanitization")
 	}
-	entry.Summary = Sanitize(entry.Summary)
+	entry.Summary = SanitizeBody(entry.Summary)
 
 	if entry.Time == "" {
 		entry.Time = time.Now().Format("15:04")
@@ -105,6 +105,8 @@ func (s *ActivityService) Append(entry ActivityEntry) error {
 }
 
 // Sanitize removes pipe and backtick characters and normalizes whitespace.
+// Used for the H3 header title, which is pipe-delimited (`### time | type | title`)
+// — a raw '|' there would corrupt the record structure.
 func Sanitize(s string) string {
 	s = strings.Map(func(r rune) rune {
 		if r == '|' || r == '`' {
@@ -114,6 +116,15 @@ func Sanitize(s string) string {
 	}, s)
 	s = strings.Join(strings.Fields(s), " ")
 	return s
+}
+
+// SanitizeBody normalizes whitespace in an activity description body while
+// preserving pipe and backtick characters. Unlike Sanitize (used for the
+// pipe-delimited header), the body is free markdown: stripping '|' corrupts
+// aliased wikilinks ([[path|Display]]) and stripping '`' breaks code spans.
+// Collapsing whitespace still prevents a newline from injecting a fake header.
+func SanitizeBody(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // BuildDescription builds a description string from summary and touched pages.

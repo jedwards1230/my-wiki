@@ -77,6 +77,39 @@ func TestActivityService_AppendWithTouched(t *testing.T) {
 	}
 }
 
+func TestActivityService_AppendPreservesAliasedWikilink(t *testing.T) {
+	storage, dir := setupActivityVault(t)
+	svc := NewActivityService(storage)
+
+	// An aliased wikilink in the summary body must survive: stripping the pipe
+	// would collapse [[path|Display]] into a broken [[pathDisplay]] link.
+	err := svc.Append(ActivityEntry{
+		Type:    "edit",
+		Title:   "Created service pages",
+		Time:    "22:50",
+		Summary: "Created [[home/homelab/services/tdarr|Tdarr]] with a `helmfile.yaml` config.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entries, _ := os.ReadDir(filepath.Join(dir, "meta", "activity"))
+	data, _ := os.ReadFile(filepath.Join(dir, "meta", "activity", entries[0].Name()))
+	content := string(data)
+
+	if !strings.Contains(content, "[[home/homelab/services/tdarr|Tdarr]]") {
+		t.Errorf("expected aliased wikilink preserved in body, got:\n%s", content)
+	}
+	if !strings.Contains(content, "`helmfile.yaml`") {
+		t.Errorf("expected backticks preserved in body, got:\n%s", content)
+	}
+	// The pipe-delimited header is still protected — the title line has exactly
+	// the three leading record fields.
+	if !strings.Contains(content, "### 22:50 | edit | Created service pages") {
+		t.Errorf("expected sanitized header title, got:\n%s", content)
+	}
+}
+
 func TestActivityService_AppendUpdatesIndex(t *testing.T) {
 	storage, dir := setupActivityVault(t)
 	svc := NewActivityService(storage)
