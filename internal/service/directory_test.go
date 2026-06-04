@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -394,5 +395,92 @@ func TestDirectoryService_Generate_PreservesDirWithNonMdFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(attachDir, "image.png")); err != nil {
 		t.Errorf("with-attachments/image.png should survive; stat err=%v", err)
+	}
+}
+
+func TestDirectoryService_Generate_RecentsSection(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(dir, "research/aerospace"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "home/homelab"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// A large subtree (> recentsMinPages) with staggered mtimes so ordering is
+	// deterministic. page-09 is newest, page-00 oldest.
+	const n = 10
+	for i := 0; i < n; i++ {
+		name := filepath.Join(dir, "research/aerospace", fmt.Sprintf("page-%02d.md", i))
+		content := fmt.Sprintf("---\ntitle: Page %02d\ntags: research\n---\n\nBody.\n", i)
+		if err := os.WriteFile(name, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mt := base.Add(time.Duration(i) * time.Hour)
+		if err := os.Chtimes(name, mt, mt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A small subtree (1 page) that must NOT get a recents section.
+	smallPage := filepath.Join(dir, "home/homelab/cluster.md")
+	if err := os.WriteFile(smallPage, []byte("---\ntitle: Cluster\ntags: homelab\n---\n\nBody.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewDirectoryService(vault.New(dir))
+	if _, _, err := svc.Generate(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Root index always has recents, newest first.
+	rootData, err := os.ReadFile(filepath.Join(dir, "index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := string(rootData)
+	if !strings.Contains(root, "## Recently Updated") {
+		t.Errorf("root index missing Recently Updated section:\n%s", root)
+	}
+	newestIdx := strings.Index(root, "[[research/aerospace/page-09\\|Page 09]]")
+	olderIdx := strings.Index(root, "[[research/aerospace/page-08\\|Page 08]]")
+	if newestIdx < 0 || olderIdx < 0 {
+		t.Fatalf("expected recent pages as wikilinks in root:\n%s", root)
+	}
+	if newestIdx > olderIdx {
+		t.Errorf("expected page-09 before page-08 (newest first), got root:\n%s", root)
+	}
+	if !strings.Contains(root, "— 2026-01-01") {
+		t.Errorf("expected absolute mtime date in recents, got:\n%s", root)
+	}
+
+	// Recents is capped at recentsLimit entries.
+	recentsBlock := root[strings.Index(root, "## Recently Updated"):]
+	if end := strings.Index(recentsBlock, "## Directory"); end >= 0 {
+		recentsBlock = recentsBlock[:end]
+	}
+	if got := strings.Count(recentsBlock, "\n- "); got != recentsLimit {
+		t.Errorf("expected %d recent entries, got %d:\n%s", recentsLimit, got, recentsBlock)
+	}
+
+	// Large subtree index gets its own recents.
+	aeroData, err := os.ReadFile(filepath.Join(dir, "research/aerospace/index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(aeroData), "## Recently Updated") {
+		t.Errorf("large subtree index missing Recently Updated:\n%s", string(aeroData))
+	}
+
+	// Small subtree index must be gated out.
+	smallData, err := os.ReadFile(filepath.Join(dir, "home/homelab/index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(smallData), "## Recently Updated") {
+		t.Errorf("small subtree should not get Recently Updated:\n%s", string(smallData))
 	}
 }
