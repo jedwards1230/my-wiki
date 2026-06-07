@@ -742,6 +742,57 @@ a.internal.tag-link::before {
 .raw-link:hover {
   color: var(--secondary);
 }
+
+/* Frontmatter description — the authored `description:` surfaced as a lead
+   blurb directly under the header. Only rendered when set in frontmatter
+   (not the auto first-paragraph fallback used for <meta>). */
+.article-description {
+  margin: 0 0 1rem;
+  color: var(--darkgray);
+  font-size: 1.05rem;
+  line-height: 1.5;
+  border-left: 3px solid var(--tertiary);
+  padding-left: 0.75rem;
+}
+
+/* Frontmatter properties table — Obsidian-style key/value list of every
+   remaining YAML field (status, source, aliases, …). Two-column grid:
+   muted labels on the left, values on the right, one row per field. */
+.article-properties {
+  margin: 0 0 1.5rem;
+  padding: 0.75rem 0.9rem;
+  display: grid;
+  grid-template-columns: minmax(7rem, max-content) 1fr;
+  gap: 0.35rem 1rem;
+  font-size: 0.9rem;
+  background: var(--highlight);
+  border-radius: var(--radius);
+}
+.article-properties .property {
+  display: contents;
+}
+.article-properties dt {
+  color: var(--gray);
+  font-weight: 600;
+  margin: 0;
+}
+.article-properties dd {
+  color: var(--darkgray);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.article-properties .property-sep {
+  color: var(--gray);
+}
+@media (max-width: 600px) {
+  .article-properties {
+    grid-template-columns: 1fr;
+    gap: 0.1rem 0;
+  }
+  .article-properties dd {
+    margin-bottom: 0.4rem;
+  }
+}
 .breadcrumbs ol {
   list-style: none;
   padding: 0;

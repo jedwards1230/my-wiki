@@ -75,6 +75,20 @@ type Page struct {
 	// <meta name="description"> and RSS item summaries.
 	Description string
 
+	// DescriptionFromFrontmatter is true when Description came from an
+	// explicit frontmatter `description:` (vs. the first-paragraph
+	// fallback). The page header renders a visible description block only
+	// when this is set, so auto-derived blurbs don't masquerade as authored
+	// summaries.
+	DescriptionFromFrontmatter bool
+
+	// Properties is the ordered list of frontmatter fields not already
+	// surfaced by dedicated header chrome (title/date/tags/description).
+	// Rendered as an Obsidian-style properties table at the top of the
+	// page so every authored YAML field is visible, not just the formatted
+	// few. Empty for list/folder pages.
+	Properties []MetaField
+
 	// Aliases is the frontmatter `aliases:` list. Currently informational
 	// only — the renderer does not yet emit alias redirects (follow-up).
 	Aliases []string
@@ -90,6 +104,26 @@ type Page struct {
 	// ListEntries is populated for IsListPage=true pages — the items shown
 	// on a folder or tag listing.
 	ListEntries []ListEntry
+}
+
+// MetaField is one frontmatter property surfaced in the page's properties
+// table. Values holds one element for a scalar field, or several for a YAML
+// list, so the template can render lists inline without re-parsing.
+type MetaField struct {
+	// Key is the raw frontmatter key, lowercased (e.g. "date-added").
+	Key string
+	// Label is the humanized key for display (e.g. "Date Added").
+	Label string
+	// Values are the rendered values, in source order for lists.
+	Values []MetaValue
+}
+
+// MetaValue is one rendered frontmatter value. When Href is non-empty the
+// template renders an anchor (used for URL-valued fields like `source:`);
+// otherwise Text is shown as plain text.
+type MetaValue struct {
+	Text string
+	Href string
 }
 
 // TOCEntry is one heading in the right-rail table of contents.

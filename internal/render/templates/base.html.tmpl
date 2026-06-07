@@ -250,6 +250,27 @@
     {{- end }}
   </header>
 
+  {{- if and .DescriptionFromFrontmatter .Description }}
+  <p class="article-description">{{ .Description }}</p>
+  {{- end }}
+
+  {{- if .Properties }}
+  <dl class="article-properties">
+    {{- range .Properties }}
+    <div class="property">
+      <dt>{{ .Label }}</dt>
+      <dd>
+        {{- range $i, $v := .Values }}
+        {{- if $i }}<span class="property-sep">,</span> {{ end -}}
+        {{- if $v.Href }}<a href="{{ $v.Href }}" class="external" rel="noopener noreferrer" target="_blank">{{ $v.Text }}</a>
+        {{- else }}{{ $v.Text }}{{ end -}}
+        {{- end }}
+      </dd>
+    </div>
+    {{- end }}
+  </dl>
+  {{- end }}
+
   <div class="article-body">
     {{- if .IsListPage }}
       {{- if .ListEntries }}
