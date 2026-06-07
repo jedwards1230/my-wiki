@@ -66,6 +66,22 @@ const EnvWatch = "WIKI_WATCH"
 // exclusions entirely; empty/unset uses the default.
 const EnvWatchExcludeDirs = "WIKI_WATCH_EXCLUDE_DIRS"
 
+// EnvIndexExcludeDirs is a comma-separated list of vault directories that do
+// NOT receive a generated index.md during `directory --generate`.
+//
+// Default (unset): empty — every non-vault-excluded directory gets an index,
+// including meta/activity. Honored by `serve` and the `directory` CLI.
+const EnvIndexExcludeDirs = "WIKI_INDEX_EXCLUDE_DIRS"
+
+// EnvIndexNoRecentsDirs is a comma-separated list of vault directories whose
+// pages are kept out of every "Recently Updated" section in generated indexes.
+//
+// Default (unset): "meta/activity" (append-heavy audit logs would otherwise
+// dominate vault-wide recents and break Generate's idempotent write-skip).
+// Set to whitespace or a lone comma to surface everything. Honored by `serve`
+// and the `directory` CLI.
+const EnvIndexNoRecentsDirs = "WIKI_INDEX_NORECENTS_DIRS"
+
 // ---------------------------------------------------------------------------
 // MCP server
 // ---------------------------------------------------------------------------

@@ -447,11 +447,12 @@ func activityHandler(s *server.MCPServer, svc *service.ActivityService, vaultDir
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		touched := getStringArrayArg(req, "touched")
 		entry := service.ActivityEntry{
-			Type:    getStringArg(req, "type"),
-			Title:   getStringArg(req, "title"),
-			Time:    getStringArg(req, "time"),
-			Summary: getStringArg(req, "summary"),
-			Touched: touched,
+			Type:       getStringArg(req, "type"),
+			Title:      getStringArg(req, "title"),
+			Time:       getStringArg(req, "time"),
+			Summary:    getStringArg(req, "summary"),
+			Touched:    touched,
+			DaySummary: getStringArg(req, "day_summary"),
 		}
 
 		if err := svc.Append(entry); err != nil {

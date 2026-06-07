@@ -183,7 +183,7 @@ func TestDirectoryGenerate(t *testing.T) {
 	}
 }
 
-func TestDirectoryGenerateExcludesActivity(t *testing.T) {
+func TestDirectoryGenerateActivityIndexButNotRecents(t *testing.T) {
 	dir := setupDirectoryVault(t)
 
 	cmd := NewRootCmd()
@@ -193,17 +193,21 @@ func TestDirectoryGenerateExcludesActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// meta/activity/ should NOT get an index
+	// meta/activity/ now DOES get its own index (no longer hardcoded-excluded).
 	activityIndex := filepath.Join(dir, "meta", "activity", "index.md")
-	if _, err := os.Stat(activityIndex); err == nil {
-		t.Error("meta/activity/index.md should NOT be generated")
+	idxData, err := os.ReadFile(activityIndex)
+	if err != nil {
+		t.Fatalf("meta/activity/index.md should be generated: %v", err)
+	}
+	if !strings.Contains(string(idxData), "2026-04-06") {
+		t.Errorf("activity index should list the day pages, got:\n%s", string(idxData))
 	}
 
-	// Root index should not contain activity log entries
-	data, _ := os.ReadFile(filepath.Join(dir, "index.md"))
-	content := string(data)
-	if strings.Contains(content, "2026-04-06") {
-		t.Error("activity log entries should be excluded from root index")
+	// ...but activity day-files stay out of the root "Recently Updated" by
+	// default (noRecentsDirs = meta/activity).
+	rootData, _ := os.ReadFile(filepath.Join(dir, "index.md"))
+	if strings.Contains(string(rootData), "2026-04-06") {
+		t.Errorf("activity log entries should be excluded from root recents, got:\n%s", string(rootData))
 	}
 }
 
