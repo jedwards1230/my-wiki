@@ -21,6 +21,7 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
 	"go.abhg.dev/goldmark/mermaid"
+	yaml "gopkg.in/yaml.v2"
 )
 
 // Renderer is the compiled goldmark instance + parsed templates. One per
@@ -352,8 +353,9 @@ func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*P
 		if v, ok := metaMap["title"].(string); ok && v != "" {
 			p.Title = v
 		}
-		if v, ok := metaMap["description"].(string); ok {
+		if v, ok := metaMap["description"].(string); ok && v != "" {
 			p.Description = v
+			p.DescriptionFromFrontmatter = true
 		}
 		if v, ok := metaMap["date"].(string); ok {
 			if t, err := parseDate(v); err == nil {
@@ -383,6 +385,12 @@ func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*P
 			}
 		}
 	}
+
+	// Surface every remaining frontmatter field as an Obsidian-style
+	// properties table. GetItems preserves the authored key order; we skip
+	// the fields that already have dedicated header chrome (title/date/tags
+	// /description) so they aren't shown twice.
+	p.Properties = buildProperties(meta.GetItems(ctx))
 
 	// Normalize tags per the Page.Tags contract: lowercased above, here
 	// sort + dedupe so output is deterministic and downstream consumers
@@ -433,6 +441,97 @@ func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*P
 	p.WordCount = computeWordCount(buf.String())
 	p.ReadingTime = computeReadingTime(p.WordCount)
 	return p, nil
+}
+
+// knownMetaKeys are frontmatter fields excluded from the generic properties
+// table. Two groups: fields with dedicated header chrome (title/date/tags/
+// description), which would otherwise show twice; and computed markers that
+// the directory generator injects into auto-generated index pages
+// (pages/generated), which are machinery, not authored content.
+var knownMetaKeys = map[string]struct{}{
+	"title":       {},
+	"date":        {},
+	"tags":        {},
+	"description": {},
+	"pages":       {},
+	"generated":   {},
+}
+
+// buildProperties converts ordered frontmatter items into the page's
+// properties table. It preserves the authored key order (GetItems is
+// order-preserving), skips the fields with dedicated chrome, and drops
+// empty values so the table only shows fields that carry information.
+func buildProperties(items yaml.MapSlice) []MetaField {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]MetaField, 0, len(items))
+	for _, item := range items {
+		key, ok := item.Key.(string)
+		if !ok {
+			key = fmt.Sprintf("%v", item.Key)
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		if _, skip := knownMetaKeys[key]; skip {
+			continue
+		}
+		values := metaValues(item.Value)
+		if len(values) == 0 {
+			continue
+		}
+		out = append(out, MetaField{
+			Key:    key,
+			Label:  humanizeSegment(key),
+			Values: values,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// metaValues flattens a frontmatter value into displayable MetaValues. A
+// scalar yields one element; a YAML list yields one per item. Empty values
+// are dropped.
+func metaValues(v interface{}) []MetaValue {
+	if list, ok := v.([]interface{}); ok {
+		out := make([]MetaValue, 0, len(list))
+		for _, x := range list {
+			if mv, ok := metaScalar(x); ok {
+				out = append(out, mv)
+			}
+		}
+		return out
+	}
+	if mv, ok := metaScalar(v); ok {
+		return []MetaValue{mv}
+	}
+	return nil
+}
+
+// metaScalar renders one scalar frontmatter value. It returns ok=false for
+// nil/empty values so callers can drop them. http(s) strings become links.
+func metaScalar(v interface{}) (MetaValue, bool) {
+	var text string
+	switch tv := v.(type) {
+	case nil:
+		return MetaValue{}, false
+	case string:
+		text = strings.TrimSpace(tv)
+	case time.Time:
+		text = tv.Format("2006-01-02")
+	default:
+		text = fmt.Sprintf("%v", tv)
+	}
+	if text == "" {
+		return MetaValue{}, false
+	}
+	mv := MetaValue{Text: text}
+	if strings.HasPrefix(text, "http://") || strings.HasPrefix(text, "https://") {
+		mv.Href = text
+	}
+	return mv, true
 }
 
 // RenderToBytes runs the full template chain (base.html.tmpl) for a page
