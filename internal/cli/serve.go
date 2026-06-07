@@ -283,6 +283,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("native renderer setup: %w", err)
 	}
 	cfg.FragmentRenderer = nativeBuilder
+	cfg.RawRenderer = nativeBuilder
 	vaultFS := os.DirFS(vaultDir)
 
 	sub := search.NewSubstringSearcher(v)

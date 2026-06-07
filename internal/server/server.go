@@ -22,6 +22,11 @@ type Config struct {
 	// back to full-page HTML (htmx then extracts #main via hx-select on
 	// the client).
 	FragmentRenderer FragmentRenderer
+
+	// RawRenderer renders raw/ markdown sources as HTML pages for browsers.
+	// The native renderer wires the Builder; when nil, raw markdown is always
+	// served as text/plain.
+	RawRenderer RawRenderer
 }
 
 // Server is the wiki HTTP server.
@@ -60,7 +65,7 @@ func New(cfg Config, publicFS, vaultFS fs.FS, logger *slog.Logger, opts ...Optio
 	rawFS, err := fs.Sub(vaultFS, "raw")
 	var rawHandler *RawHandler
 	if err == nil {
-		rawHandler = NewRawHandler(rawFS)
+		rawHandler = NewRawHandler(rawFS, cfg.RawRenderer)
 	}
 
 	mux := http.NewServeMux()
