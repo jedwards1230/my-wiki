@@ -60,6 +60,12 @@ jobs:
             4. Go correctness — ignored error returns, nil deref, unchecked type
                assertions, missing `defer Close` on opened files/bodies.
             5. Hardcoded secrets or tokens.
+            6. Code↔chart drift — if the change adds, renames, or removes an env
+               var, CLI flag, port, or config value the server reads (e.g. a new
+               `WIKI_*` var in internal/cli/envvars.go, a new flag, or a new
+               listen port), check that the Helm chart in `deploy/helm/my-wiki/`
+               (templates + values.yaml) exposes and passes it. Flag drift
+               between what the code now expects and what the chart provides.
 
             Do NOT comment on formatting/naming/style — gofmt, go vet, and
             golangci-lint run in CI and own that. You cannot build or run the code,
