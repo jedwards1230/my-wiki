@@ -12,7 +12,6 @@ import (
 	"html"
 	"html/template"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -45,12 +44,14 @@ func (b *Builder) RenderRawIndex(urlDir string, entries []RawDirEntry) ([]byte, 
 	}
 	markActiveByURL(explorer, urlDir)
 
+	content, toc := buildRawIndex(urlDir, entries)
 	p := &Page{
-		Title:           "Index of " + strings.TrimSuffix(strings.TrimPrefix(urlDir, "/"), "/"),
+		Title:           rawDirTitle(urlDir),
 		Description:     "Source files under " + urlDir,
 		RelativeURL:     urlDir,
 		BreadcrumbItems: rawBreadcrumb(urlDir),
-		ContentHTML:     buildRawListing(urlDir, entries),
+		ContentHTML:     content,
+		TOC:             toc,
 		// Slug stays empty — suppresses graph / backlinks / view-source.
 	}
 	td := TemplateData{
@@ -67,62 +68,84 @@ func (b *Builder) RenderRawIndex(urlDir string, entries []RawDirEntry) ([]byte, 
 	return out, true
 }
 
-// buildRawListing renders a /raw/ directory as an autoindex: a file/folder
-// list (the default everywhere), preceded by an image thumbnail grid ONLY when
-// the directory actually contains images. No images → just the list. All names
-// are HTML-escaped; URLs are built from the already-clean urlDir + name.
-func buildRawListing(urlDir string, entries []RawDirEntry) template.HTML {
-	// Split images out so they can lead with a thumbnail grid; folders and
-	// non-image files stay in the list below.
-	var images, rest []RawDirEntry
+// rawDirTitle is the page title for a /raw/ directory index — the humanized
+// last path segment, matching how wiki folder index pages are titled (e.g.
+// "/raw/clippings/" → "Clippings", "/raw/" → "Raw").
+func rawDirTitle(urlDir string) string {
+	seg := strings.Trim(strings.TrimPrefix(urlDir, "/"), "/")
+	if i := strings.LastIndexByte(seg, '/'); i >= 0 {
+		seg = seg[i+1:]
+	}
+	return humanizeSegment(seg)
+}
+
+// isMediaFile reports whether a filename is renderable media (image, video,
+// audio, or PDF) — the set the Gallery section surfaces.
+func isMediaFile(name string) bool {
+	return isImageExtension(name) || isVideoExtension(name) || isAudioExtension(name) || isPDFExtension(name)
+}
+
+// buildRawIndex renders a /raw/ directory the same way the wiki renders every
+// other folder index: a "Directory" section listing the children as a bulleted
+// list of internal links. It then adds a "Gallery" section — a thumbnail grid
+// of any media detected in the directory — analogous to the Directory/Tags
+// sections on generated folder indexes. Returns the body HTML plus TOC entries
+// so the right-rail "On this page" lists the sections like any other page.
+func buildRawIndex(urlDir string, entries []RawDirEntry) (template.HTML, []TOCEntry) {
+	var media []RawDirEntry
 	for _, e := range entries {
-		if !e.IsDir && isImageExtension(e.Name) {
-			images = append(images, e)
-		} else {
-			rest = append(rest, e)
+		if !e.IsDir && isMediaFile(e.Name) {
+			media = append(media, e)
 		}
 	}
 
 	var b strings.Builder
+	var toc []TOCEntry
 
-	// Image gallery section — conditional on images being present.
-	if len(images) > 0 {
-		b.WriteString(`<section class="raw-images"><ul class="raw-gallery">`)
-		for _, e := range images {
+	// Directory section — every child, as a bulleted internal-link list, the
+	// same markup generated folder indexes produce.
+	b.WriteString(`<h2 id="directory">Directory</h2>`)
+	toc = append(toc, TOCEntry{Depth: 2, Text: "Directory", Anchor: "directory"})
+	if len(entries) == 0 {
+		b.WriteString(`<p><em>This directory is empty.</em></p>`)
+	} else {
+		b.WriteString(`<ul>`)
+		for _, e := range entries {
+			escName := html.EscapeString(e.Name)
+			if e.IsDir {
+				href := html.EscapeString(urlDir + e.Name + "/")
+				b.WriteString(`<li><a class="internal" href="` + href + `">` + escName + `/</a></li>`)
+			} else {
+				href := html.EscapeString(urlDir + e.Name)
+				b.WriteString(`<li><a class="internal" href="` + href + `">` + escName + `</a></li>`)
+			}
+		}
+		b.WriteString(`</ul>`)
+	}
+
+	// Gallery section — thumbnails of detected media. Only rendered when the
+	// directory actually contains media.
+	if len(media) > 0 {
+		b.WriteString(`<h2 id="gallery">Gallery</h2>`)
+		toc = append(toc, TOCEntry{Depth: 2, Text: "Gallery", Anchor: "gallery"})
+		b.WriteString(`<ul class="raw-gallery">`)
+		for _, e := range media {
 			href := html.EscapeString(urlDir + e.Name)
 			escName := html.EscapeString(e.Name)
-			b.WriteString(`<li class="raw-tile raw-tile-img"><a href="` + href +
-				`"><span class="raw-tile-thumb"><img loading="lazy" src="` + href + `" alt="` + escName +
-				`"></span><span class="raw-tile-name">` + escName + `</span></a></li>`)
+			if isImageExtension(e.Name) {
+				b.WriteString(`<li class="raw-tile"><a href="` + href +
+					`"><span class="raw-tile-thumb"><img loading="lazy" src="` + href + `" alt="` + escName +
+					`"></span><span class="raw-tile-name">` + escName + `</span></a></li>`)
+			} else {
+				b.WriteString(`<li class="raw-tile"><a href="` + href +
+					`"><span class="raw-tile-thumb raw-tile-badge">` + html.EscapeString(fileTypeLabel(e.Name)) +
+					`</span><span class="raw-tile-name">` + escName + `</span></a></li>`)
+			}
 		}
-		b.WriteString(`</ul></section>`)
+		b.WriteString(`</ul>`)
 	}
 
-	// File/folder list — the autoindex proper.
-	b.WriteString(`<ul class="raw-list">`)
-	if urlDir != "/raw/" {
-		parent := path.Dir(strings.TrimSuffix(urlDir, "/"))
-		if !strings.HasSuffix(parent, "/") {
-			parent += "/"
-		}
-		b.WriteString(`<li class="raw-row raw-row-dir"><a href="` + html.EscapeString(parent) +
-			`"><span class="raw-row-icon" aria-hidden="true">&#8617;</span><span class="raw-row-name">..</span></a></li>`)
-	}
-	for _, e := range rest {
-		escName := html.EscapeString(e.Name)
-		if e.IsDir {
-			href := html.EscapeString(urlDir + e.Name + "/")
-			b.WriteString(`<li class="raw-row raw-row-dir"><a href="` + href +
-				`"><span class="raw-row-icon" aria-hidden="true">&#128193;</span><span class="raw-row-name">` + escName + `/</span></a></li>`)
-		} else {
-			href := html.EscapeString(urlDir + e.Name)
-			b.WriteString(`<li class="raw-row raw-row-file"><a href="` + href +
-				`"><span class="raw-row-ext" aria-hidden="true">` + html.EscapeString(fileTypeLabel(e.Name)) +
-				`</span><span class="raw-row-name">` + escName + `</span></a></li>`)
-		}
-	}
-	b.WriteString(`</ul>`)
-	return template.HTML(b.String()) //nolint:gosec // names escaped, URLs built from clean dir + name
+	return template.HTML(b.String()), toc //nolint:gosec // names escaped, URLs built from clean dir + name
 }
 
 // buildRawExplorerNode walks the vault's raw/ directory and returns a top-level

@@ -90,47 +90,83 @@ func TestIsHTTPURL(t *testing.T) {
 	}
 }
 
-func TestBuildRawListing(t *testing.T) {
-	t.Run("images present → grid + list", func(t *testing.T) {
-		out := string(buildRawListing("/raw/clippings/", []RawDirEntry{
+func TestRawDirTitle(t *testing.T) {
+	cases := map[string]string{
+		"/raw/":           "Raw",
+		"/raw/clippings/": "Clippings",
+		"/raw/a/b-c/":     "B C",
+		"/raw/gists":      "Gists",
+	}
+	for in, want := range cases {
+		if got := rawDirTitle(in); got != want {
+			t.Errorf("rawDirTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBuildRawIndex(t *testing.T) {
+	t.Run("media present → Directory + Gallery sections", func(t *testing.T) {
+		out, toc := buildRawIndex("/raw/clippings/", []RawDirEntry{
 			{Name: "youtube", IsDir: true},
 			{Name: "photo.png", IsDir: false},
+			{Name: "clip.mp4", IsDir: false},
 			{Name: "notes.txt", IsDir: false},
-		}))
-		if !strings.Contains(out, `class="raw-gallery"`) {
-			t.Errorf("expected image gallery section:\n%s", out)
+		})
+		s := string(out)
+		// Directory section: a standard bulleted internal-link list (no custom
+		// raw-list/icons), listing every child including media.
+		if !strings.Contains(s, `<h2 id="directory">Directory</h2>`) {
+			t.Errorf("missing Directory heading:\n%s", s)
 		}
-		// Image goes in the grid as a thumbnail...
-		if !strings.Contains(out, `<img loading="lazy" src="/raw/clippings/photo.png"`) {
-			t.Errorf("expected photo thumbnail:\n%s", out)
+		for _, want := range []string{
+			`<a class="internal" href="/raw/clippings/youtube/">youtube/</a>`,
+			`<a class="internal" href="/raw/clippings/photo.png">photo.png</a>`,
+			`<a class="internal" href="/raw/clippings/notes.txt">notes.txt</a>`,
+		} {
+			if !strings.Contains(s, want) {
+				t.Errorf("Directory missing %q:\n%s", want, s)
+			}
 		}
-		// ...folders and non-image files go in the list.
-		if !strings.Contains(out, `class="raw-list"`) {
-			t.Errorf("expected file list:\n%s", out)
+		if strings.Contains(s, "raw-list") || strings.Contains(s, "raw-row") {
+			t.Errorf("Directory should use plain article-body list, not custom raw-list:\n%s", s)
 		}
-		if !strings.Contains(out, `/raw/clippings/youtube/`) || !strings.Contains(out, `/raw/clippings/notes.txt`) {
-			t.Errorf("expected folder + file rows:\n%s", out)
+		// Gallery section: image thumbnail + non-image media badge.
+		if !strings.Contains(s, `<h2 id="gallery">Gallery</h2>`) {
+			t.Errorf("missing Gallery heading:\n%s", s)
 		}
-		// Parent link present (not at root).
-		if !strings.Contains(out, `>..</span>`) {
-			t.Errorf("expected parent (..) row:\n%s", out)
+		if !strings.Contains(s, `<img loading="lazy" src="/raw/clippings/photo.png"`) {
+			t.Errorf("Gallery missing image thumbnail:\n%s", s)
+		}
+		if !strings.Contains(s, "MP4") {
+			t.Errorf("Gallery missing video badge:\n%s", s)
+		}
+		// TOC lists both sections for the right-rail "On this page".
+		if len(toc) != 2 || toc[0].Anchor != "directory" || toc[1].Anchor != "gallery" {
+			t.Errorf("toc = %+v, want [directory, gallery]", toc)
 		}
 	})
 
-	t.Run("no images → list only, no gallery", func(t *testing.T) {
-		out := string(buildRawListing("/raw/", []RawDirEntry{
+	t.Run("no media → Directory only, no Gallery", func(t *testing.T) {
+		out, toc := buildRawIndex("/raw/", []RawDirEntry{
 			{Name: "clippings", IsDir: true},
 			{Name: "readme.txt", IsDir: false},
-		}))
-		if strings.Contains(out, "raw-gallery") {
-			t.Errorf("no images, but a gallery section was rendered:\n%s", out)
+		})
+		s := string(out)
+		if !strings.Contains(s, `<h2 id="directory">Directory</h2>`) {
+			t.Errorf("missing Directory heading:\n%s", s)
 		}
-		if !strings.Contains(out, `class="raw-list"`) {
-			t.Errorf("expected file list:\n%s", out)
+		if strings.Contains(s, "Gallery") || strings.Contains(s, "raw-gallery") {
+			t.Errorf("no media, but a Gallery section was rendered:\n%s", s)
 		}
-		// At /raw/ root there is no parent row.
-		if strings.Contains(out, `>..</span>`) {
-			t.Errorf("root listing should not have a parent (..) row:\n%s", out)
+		if len(toc) != 1 || toc[0].Anchor != "directory" {
+			t.Errorf("toc = %+v, want [directory] only", toc)
+		}
+	})
+
+	t.Run("empty directory", func(t *testing.T) {
+		out, _ := buildRawIndex("/raw/empty/", nil)
+		if !strings.Contains(string(out), "empty") {
+			t.Errorf("expected empty-directory note:\n%s", out)
 		}
 	})
 }
