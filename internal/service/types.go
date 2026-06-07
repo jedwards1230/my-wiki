@@ -40,6 +40,11 @@ type ActivityEntry struct {
 	Summary    string   `json:"summary,omitempty"`
 	Touched    []string `json:"touched,omitempty"`
 	AutoLogged bool     `json:"auto_logged,omitempty"`
+	// DaySummary, when non-empty, is stored in the day file's frontmatter
+	// (summary:) and used verbatim as the meta/log.md index line for the day,
+	// overriding the computed digest. Set it once per work session with a
+	// whole-day digest; the per-entry Title still describes this one entry.
+	DaySummary string `json:"day_summary,omitempty"`
 }
 
 // PatchOp represents a single find-and-replace operation.

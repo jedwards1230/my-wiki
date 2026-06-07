@@ -151,6 +151,17 @@ metrics:
   enabled: false
   interval: 30s
 
+# Directory index generation tuning (maps to the WIKI_INDEX_* env vars).
+# Both lists default to empty here; left empty, the var is not set and the
+# server applies its own defaults — no directories excluded from index
+# generation, and meta/activity kept out of "Recently Updated".
+indexing:
+  # Directories that should NOT receive a generated index.md.
+  excludeDirs: []
+  # Directories whose pages are excluded from every "Recently Updated"
+  # section (server default when unset: meta/activity).
+  noRecentsDirs: []
+
 # Webhook dispatcher: consumer-agnostic surface for delivering signed
 # envelopes when inbox/ content changes. Disabled by default.
 #

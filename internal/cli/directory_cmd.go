@@ -29,7 +29,7 @@ func runDirectory(cmd *cobra.Command, _ []string) error {
 	countOnly, _ := cmd.Flags().GetBool("count")
 	generate, _ := cmd.Flags().GetBool("generate")
 
-	svc := service.NewDirectoryService(v)
+	svc := service.NewDirectoryService(v, directoryOptionsFromEnv()...)
 
 	switch {
 	case countOnly:

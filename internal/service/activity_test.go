@@ -273,3 +273,63 @@ func TestBuildDescription(t *testing.T) {
 		})
 	}
 }
+
+func TestComputeDaySummary(t *testing.T) {
+	content := `---
+title: "2026-06-06"
+tags:
+  - meta/activity
+date: 2026-06-06
+---
+
+### 11:13 | create | [[research/neuroscience/sapolsky-depression]]
+### 11:13 | edit | [[research/neuroscience/is-depression-a-circuit-problem]]
+### 16:25 | create | [[research/neuroscience/sapolsky-evolution]]
+### 16:28 | create | [[research/clippings/how-one-hedge-fund-killed-chipotle]]
+### 21:05 | note | Inbox dispatch — no-op
+Touched: [[research/psychedelics/lost-garden-labs]].
+`
+	got := computeDaySummary(content)
+	// 3 creates, 1 edit, 1 note · top dirs by reference count.
+	if !strings.Contains(got, "3 creates") || !strings.Contains(got, "1 edit") || !strings.Contains(got, "1 note") {
+		t.Errorf("type counts wrong: %q", got)
+	}
+	if !strings.Contains(got, "research/neuroscience") {
+		t.Errorf("expected top dir research/neuroscience: %q", got)
+	}
+	if !strings.Contains(got, " · ") {
+		t.Errorf("expected counts · dirs separator: %q", got)
+	}
+}
+
+func TestDaySummaryFrontmatterWins(t *testing.T) {
+	content := `---
+title: "2026-06-06"
+tags:
+  - meta/activity
+date: 2026-06-06
+summary: "Hand-written digest"
+---
+
+### 11:13 | create | [[research/neuroscience/x]]
+`
+	if got := DaySummary(content); got != "Hand-written digest" {
+		t.Errorf("frontmatter summary should win, got %q", got)
+	}
+}
+
+func TestSetFrontmatterSummaryReplaces(t *testing.T) {
+	base := "---\ntitle: \"2026-06-06\"\ntags:\n  - meta/activity\ndate: 2026-06-06\n---\n\n### 11:00 | note | x\n"
+	once := setFrontmatterSummary(base, "first")
+	twice := setFrontmatterSummary(once, "second")
+	if strings.Count(twice, "summary:") != 1 {
+		t.Errorf("expected exactly one summary line, got:\n%s", twice)
+	}
+	if !strings.Contains(twice, `summary: "second"`) {
+		t.Errorf("expected updated summary, got:\n%s", twice)
+	}
+	// Body and other frontmatter preserved.
+	if !strings.Contains(twice, "### 11:00 | note | x") || !strings.Contains(twice, "meta/activity") {
+		t.Errorf("body/frontmatter not preserved:\n%s", twice)
+	}
+}

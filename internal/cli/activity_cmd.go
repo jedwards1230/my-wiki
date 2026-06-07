@@ -22,6 +22,7 @@ Types: edit, create, delete, lint, note, migrate, move`,
 
 	cmd.Flags().StringSlice("touched", nil, "pages created or edited (auto-linked as [[wikilinks]])")
 	cmd.Flags().String("summary", "", "description of what was done")
+	cmd.Flags().String("day-summary", "", "whole-day digest for the meta/log.md index line (stored in the day file's frontmatter; overrides the computed digest)")
 	cmd.Flags().String("time", "", "override timestamp (HH:MM format, default: current time)")
 
 	return cmd
@@ -34,6 +35,7 @@ func runActivity(cmd *cobra.Command, args []string) error {
 	title := args[1]
 	touched, _ := cmd.Flags().GetStringSlice("touched")
 	summary, _ := cmd.Flags().GetString("summary")
+	daySummary, _ := cmd.Flags().GetString("day-summary")
 	timeStr, _ := cmd.Flags().GetString("time")
 
 	if timeStr == "" {
@@ -43,11 +45,12 @@ func runActivity(cmd *cobra.Command, args []string) error {
 	svc := service.NewActivityService(vault.NewFilesystemStorage(vaultDir))
 
 	entry := service.ActivityEntry{
-		Type:    actType,
-		Title:   title,
-		Time:    timeStr,
-		Summary: summary,
-		Touched: touched,
+		Type:       actType,
+		Title:      title,
+		Time:       timeStr,
+		Summary:    summary,
+		Touched:    touched,
+		DaySummary: daySummary,
 	}
 
 	if err := svc.Append(entry); err != nil {

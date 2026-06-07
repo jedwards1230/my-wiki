@@ -102,6 +102,34 @@ func excludeDirsFromEnv() []string {
 	return out
 }
 
+// directoryOptionsFromEnv builds DirectoryService options from the index env
+// vars. Each var is honored only when set (LookupEnv): an unset var keeps the
+// service default, while setting it — even to whitespace — overrides. This lets
+// EnvIndexNoRecentsDirs be cleared to surface every directory in recents.
+func directoryOptionsFromEnv() []service.DirectoryOption {
+	var opts []service.DirectoryOption
+	if v, ok := os.LookupEnv(EnvIndexExcludeDirs); ok {
+		opts = append(opts, service.WithIndexExcludeDirs(splitCSV(v)))
+	}
+	if v, ok := os.LookupEnv(EnvIndexNoRecentsDirs); ok {
+		opts = append(opts, service.WithNoRecentsDirs(splitCSV(v)))
+	}
+	return opts
+}
+
+// splitCSV splits a comma-separated list, trimming whitespace and dropping
+// empty entries. A non-nil-but-empty result is intentional — it signals an
+// explicit "none" override rather than "use the default".
+func splitCSV(v string) []string {
+	out := make([]string, 0, strings.Count(v, ",")+1)
+	for _, d := range strings.Split(v, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // authConfigFromEnv returns an AuthConfig if EnvAuthIssuer is set, nil otherwise.
 func authConfigFromEnv() *middleware.AuthConfig {
 	issuer := os.Getenv(EnvAuthIssuer)
@@ -299,7 +327,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	searchSvc := service.NewSearchService(engines...)
 
 	// Build services needed by the rebuild notifier
-	directorySvc := service.NewDirectoryService(v)
+	directorySvc := service.NewDirectoryService(v, directoryOptionsFromEnv()...)
 
 	// nativeRebuildFS is the *memfs.FS the native builder writes new
 	// snapshots into. Captured from publicFS so the rebuild callback can

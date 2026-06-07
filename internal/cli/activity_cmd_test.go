@@ -110,8 +110,44 @@ func TestActivityUpdatesLogIndex(t *testing.T) {
 	if !strings.Contains(logContent, "1 changes") {
 		t.Errorf("expected '1 changes' in log index, got:\n%s", logContent)
 	}
-	if !strings.Contains(logContent, "First Note") {
-		t.Errorf("expected 'First Note' in log index, got:\n%s", logContent)
+	// The index line is now a computed day digest, not the per-entry title.
+	// A single untouched note yields "1 note".
+	if !strings.Contains(logContent, "1 note") {
+		t.Errorf("expected computed digest '1 note' in log index, got:\n%s", logContent)
+	}
+	if strings.Contains(logContent, "First Note") {
+		t.Errorf("per-entry title should not leak into the log index, got:\n%s", logContent)
+	}
+}
+
+func TestActivityDaySummaryOverridesDigest(t *testing.T) {
+	dir := setupActivityVault(t)
+
+	cmd := NewRootCmd()
+	cmd.SetArgs([]string{
+		"--vault", dir, "activity", "note", "First Note",
+		"--time", "11:00", "--day-summary", "Quiet admin day: tidied notes",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	logContent := func() string {
+		b, err := os.ReadFile(filepath.Join(dir, "meta", "log.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}()
+	if !strings.Contains(logContent, "Quiet admin day: tidied notes") {
+		t.Errorf("expected day-summary in log index, got:\n%s", logContent)
+	}
+
+	// The summary is persisted to the day file's frontmatter.
+	entries, _ := os.ReadDir(filepath.Join(dir, "meta", "activity"))
+	day, _ := os.ReadFile(filepath.Join(dir, "meta", "activity", entries[0].Name()))
+	if !strings.Contains(string(day), "summary:") {
+		t.Errorf("expected summary frontmatter in day file, got:\n%s", string(day))
 	}
 }
 

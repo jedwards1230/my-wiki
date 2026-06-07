@@ -219,6 +219,14 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- if .Values.indexing.excludeDirs }}
+            - name: WIKI_INDEX_EXCLUDE_DIRS
+              value: {{ join "," .Values.indexing.excludeDirs | quote }}
+            {{- end }}
+            {{- if .Values.indexing.noRecentsDirs }}
+            - name: WIKI_INDEX_NORECENTS_DIRS
+              value: {{ join "," .Values.indexing.noRecentsDirs | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080

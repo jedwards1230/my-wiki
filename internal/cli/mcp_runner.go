@@ -109,7 +109,7 @@ func runMCP(ctx context.Context, vaultDir string, cfg mcpRunConfig, logger *slog
 	// the directory index so MCP `list` results stay current after edits.
 	var notifier *notify.RebuildNotifier
 	if cfg.EnableWatcher || cfg.EnableDispatch {
-		directorySvc := service.NewDirectoryService(v)
+		directorySvc := service.NewDirectoryService(v, directoryOptionsFromEnv()...)
 		notifier = notify.New(2*time.Second, func(paths []string) {
 			if _, _, err := directorySvc.Generate(); err != nil {
 				logger.Warn("rebuild notifier: directory generate failed", "error", err)

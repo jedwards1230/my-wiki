@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -88,7 +90,6 @@ func (s *ActivityService) Append(entry ActivityEntry) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
 
 	_, _ = fmt.Fprintln(f)
 	_, _ = fmt.Fprintln(f, entryLine)
@@ -101,7 +102,25 @@ func (s *ActivityService) Append(entry ActivityEntry) error {
 		}
 	}
 
-	return s.updateLogIndex(dailyRelPath, today, entry.Title)
+	// Close the day file before re-reading it (a day_summary update and the
+	// log-index hash both read the file back).
+	_ = f.Close()
+
+	// Tier 1: an explicit day summary is persisted to the day file's
+	// frontmatter so it survives subsequent appends and is editable later by
+	// the maintenance pass. updateLogIndex reads it back as the index line.
+	if ds := Sanitize(entry.DaySummary); ds != "" {
+		data, err := s.storage.ReadFile(dailyRelPath)
+		if err != nil {
+			return err
+		}
+		updated := setFrontmatterSummary(string(data), ds)
+		if err := s.storage.WriteFile(dailyRelPath, []byte(updated), 0o644); err != nil {
+			return err
+		}
+	}
+
+	return s.updateLogIndex(dailyRelPath, today)
 }
 
 // Sanitize removes pipe and backtick characters and normalizes whitespace.
@@ -154,16 +173,17 @@ func BuildDescription(summary string, touched []string) string {
 	return desc
 }
 
-func (s *ActivityService) updateLogIndex(dailyRelPath, today, title string) error {
+func (s *ActivityService) updateLogIndex(dailyRelPath, today string) error {
 	logIndex := s.logIndexPath()
 
 	data, err := s.storage.ReadFile(dailyRelPath)
 	if err != nil {
 		return err
 	}
+	content := string(data)
 
 	entryCount := 0
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
 		if strings.HasPrefix(scanner.Text(), "### ") {
 			entryCount++
@@ -171,7 +191,16 @@ func (s *ActivityService) updateLogIndex(dailyRelPath, today, title string) erro
 	}
 
 	hash := fmt.Sprintf("%x", sha256.Sum256(data))[:6]
-	indexLine := fmt.Sprintf("## [[meta/activity/%s|%s]] %d changes | `%s` | %s", today, today, entryCount, hash, title)
+
+	// Summary precedence: an explicit frontmatter summary (tier 1) wins;
+	// otherwise compute a digest from the day's entries (tier 2). Sanitize so
+	// the chosen summary can never inject the " | " column delimiter.
+	summary := Sanitize(DaySummary(content))
+	if summary == "" {
+		summary = fmt.Sprintf("%d change(s)", entryCount)
+	}
+
+	indexLine := fmt.Sprintf("## [[meta/activity/%s|%s]] %d changes | `%s` | %s", today, today, entryCount, hash, summary)
 
 	// Ensure log index exists
 	if _, err := s.storage.Stat(logIndex); os.IsNotExist(err) {
@@ -212,4 +241,155 @@ func (s *ActivityService) updateLogIndex(dailyRelPath, today, title string) erro
 	_ = f.Close()
 
 	return nil
+}
+
+// activityTypeOrder is the conventional display order for type counts in a
+// computed day digest (mutations first, then narrative kinds).
+var activityTypeOrder = []string{"create", "edit", "delete", "move", "note", "lint", "migrate"}
+
+var activityWikilinkRe = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
+
+// DaySummary returns the index-line summary for a day file's content: the
+// explicit frontmatter `summary:` if present (tier 1), else a computed digest
+// of the day's entries (tier 2). Returns "" only when neither is available.
+func DaySummary(content string) string {
+	if fm, err := vault.ParseFrontmatterString(content); err == nil && fm != nil {
+		if s := strings.TrimSpace(fm["summary"]); s != "" {
+			return s
+		}
+	}
+	return computeDaySummary(content)
+}
+
+// computeDaySummary builds a deterministic whole-day digest from the day file:
+// type counts plus the most-touched directories, e.g.
+// "14 creates, 12 edits, 5 notes · research/neuroscience, research/clippings".
+func computeDaySummary(content string) string {
+	typeCounts := map[string]int{}
+	dirCounts := map[string]int{}
+
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "### ") {
+			parts := strings.SplitN(strings.TrimPrefix(line, "### "), " | ", 3)
+			if len(parts) >= 2 {
+				typeCounts[strings.TrimSpace(parts[1])]++
+			}
+		}
+		for _, m := range activityWikilinkRe.FindAllStringSubmatch(line, -1) {
+			target := m[1]
+			if i := strings.IndexByte(target, '|'); i >= 0 {
+				target = target[:i]
+			}
+			target = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(target), ".md"))
+			i := strings.LastIndexByte(target, '/')
+			if i < 0 {
+				continue // root-level page, no directory to attribute
+			}
+			dir := target[:i]
+			if dir == "" || strings.HasPrefix(dir, "meta/activity") {
+				continue
+			}
+			dirCounts[dir]++
+		}
+	}
+
+	typeStr := formatTypeCounts(typeCounts)
+	dirStr := topDirs(dirCounts, 3)
+	switch {
+	case typeStr != "" && dirStr != "":
+		return typeStr + " · " + dirStr
+	case typeStr != "":
+		return typeStr
+	case dirStr != "":
+		return dirStr
+	default:
+		return ""
+	}
+}
+
+// formatTypeCounts renders type tallies in conventional order, pluralized:
+// "14 creates, 1 edit, 5 notes".
+func formatTypeCounts(counts map[string]int) string {
+	var parts []string
+	for _, t := range activityTypeOrder {
+		n := counts[t]
+		if n == 0 {
+			continue
+		}
+		word := t
+		if n != 1 {
+			word += "s"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", n, word))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// topDirs returns the up-to-max most-referenced directories, highest first,
+// ties broken alphabetically.
+func topDirs(counts map[string]int, max int) string {
+	type dirCount struct {
+		dir string
+		n   int
+	}
+	ranked := make([]dirCount, 0, len(counts))
+	for d, n := range counts {
+		ranked = append(ranked, dirCount{d, n})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].n != ranked[j].n {
+			return ranked[i].n > ranked[j].n
+		}
+		return ranked[i].dir < ranked[j].dir
+	})
+	if len(ranked) > max {
+		ranked = ranked[:max]
+	}
+	dirs := make([]string, len(ranked))
+	for i, dc := range ranked {
+		dirs[i] = dc.dir
+	}
+	return strings.Join(dirs, ", ")
+}
+
+// setFrontmatterSummary returns content with the frontmatter `summary:` field
+// set to summary, replacing any existing top-level summary line. The value is
+// written as a double-quoted YAML scalar so colons and other punctuation stay
+// valid. If content has no frontmatter block, it is returned unchanged.
+func setFrontmatterSummary(content, summary string) string {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return content
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			end = i
+			break
+		}
+	}
+	if end == -1 {
+		return content
+	}
+
+	var fm []string
+	for i := 1; i < end; i++ {
+		l := lines[i]
+		// Drop any existing top-level summary key (leave indented list items
+		// belonging to other keys untouched).
+		if !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "\t") &&
+			strings.HasPrefix(strings.TrimSpace(l), "summary:") {
+			continue
+		}
+		fm = append(fm, l)
+	}
+	fm = append(fm, fmt.Sprintf("summary: %q", summary))
+
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, lines[0])
+	out = append(out, fm...)
+	out = append(out, lines[end:]...)
+	return strings.Join(out, "\n")
 }

@@ -35,14 +35,76 @@ const (
 	recentsMinPages = 8
 )
 
+// defaultNoRecentsDirs lists directories whose pages are kept out of every
+// "Recently Updated" section by default. meta/activity is append-heavy audit
+// log churn that would otherwise dominate vault-wide recents and break the
+// idempotent write-skip Generate relies on. Overridable via WithNoRecentsDirs.
+var defaultNoRecentsDirs = []string{"meta/activity"}
+
 // DirectoryService provides page catalog operations.
 type DirectoryService struct {
 	vault *vault.Vault
+	// noIndexDirs are directories that do not receive a generated index.md
+	// (beyond the vault-level exclusions). Empty by default — every directory,
+	// including meta/activity, gets an index.
+	noIndexDirs []string
+	// noRecentsDirs are directories whose pages never appear in any
+	// "Recently Updated" section. Defaults to defaultNoRecentsDirs.
+	noRecentsDirs []string
+}
+
+// DirectoryOption configures a DirectoryService.
+type DirectoryOption func(*DirectoryService)
+
+// WithIndexExcludeDirs sets the directories that should NOT receive a generated
+// index.md. Passing nil/empty (the default) generates an index for every
+// non-vault-excluded directory.
+func WithIndexExcludeDirs(dirs []string) DirectoryOption {
+	return func(s *DirectoryService) { s.noIndexDirs = normalizeDirList(dirs) }
+}
+
+// WithNoRecentsDirs sets the directories whose pages are excluded from every
+// "Recently Updated" section. Passing a non-nil slice overrides the default
+// (meta/activity); pass an empty non-nil slice to surface everything.
+func WithNoRecentsDirs(dirs []string) DirectoryOption {
+	return func(s *DirectoryService) { s.noRecentsDirs = normalizeDirList(dirs) }
 }
 
 // NewDirectoryService creates a DirectoryService for the given vault.
-func NewDirectoryService(v *vault.Vault) *DirectoryService {
-	return &DirectoryService{vault: v}
+func NewDirectoryService(v *vault.Vault, opts ...DirectoryOption) *DirectoryService {
+	s := &DirectoryService{
+		vault:         v,
+		noRecentsDirs: append([]string(nil), defaultNoRecentsDirs...),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// normalizeDirList trims and forward-slashes a directory list, dropping empties.
+// A non-nil-but-empty result is preserved so an explicit "exclude nothing"
+// override is distinguishable from "use the default".
+func normalizeDirList(dirs []string) []string {
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		d = filepath.ToSlash(strings.Trim(strings.TrimSpace(d), "/"))
+		if d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// underAny reports whether rel is one of dirs or nested beneath one.
+func underAny(dirs []string, rel string) bool {
+	rel = filepath.ToSlash(rel)
+	for _, d := range dirs {
+		if rel == d || strings.HasPrefix(rel, d+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // List returns wiki pages with their frontmatter metadata.
@@ -95,27 +157,20 @@ func (s *DirectoryService) List(prefix string) ([]DirectoryEntry, error) {
 	return result, nil
 }
 
-// directoryExcludedDirs are additional dirs excluded from directory index generation
-// beyond the vault-level exclusions.
-var directoryExcludedDirs = map[string]bool{
-	"meta/activity":  true,
-	"meta\\activity": true, // Windows
-}
-
-// isExcludedDir checks if a relative directory path should be excluded.
+// isExcludedDir checks if a relative directory path should be excluded from
+// index generation — either by the vault-level exclusions or the configured
+// noIndexDirs (empty by default).
 func (s *DirectoryService) isExcludedDir(rel string) bool {
 	if s.vault.IsExcluded(rel) {
 		return true
 	}
-	if directoryExcludedDirs[rel] {
-		return true
-	}
-	for excluded := range directoryExcludedDirs {
-		if strings.HasPrefix(rel, excluded+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
+	return underAny(s.noIndexDirs, filepath.ToSlash(rel))
+}
+
+// skipRecents reports whether a page at rel is excluded from "Recently
+// Updated" sections (configured noRecentsDirs).
+func (s *DirectoryService) skipRecents(rel string) bool {
+	return underAny(s.noRecentsDirs, filepath.ToSlash(rel))
 }
 
 // IsGeneratedIndex returns true if the given relative path is a generated index file.
@@ -224,7 +279,7 @@ func (s *DirectoryService) Generate() (string, int, error) {
 		}
 
 		// Write index for this surviving node.
-		content := renderIndex(node, pages, today)
+		content := renderIndex(node, pages, today, s.skipRecents)
 		indexPath := filepath.Join(s.vault.Dir, node.rel, "index.md")
 		if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
 			return false, err
@@ -403,7 +458,7 @@ type tagCount struct {
 }
 
 // renderIndex generates the markdown content for an index file.
-func renderIndex(node *dirNode, allPages []DirectoryEntry, today string) string {
+func renderIndex(node *dirNode, allPages []DirectoryEntry, today string, skip func(string) bool) string {
 	isRoot := node.rel == ""
 	hasChildren := len(node.children) > 0
 
@@ -431,22 +486,22 @@ func renderIndex(node *dirNode, allPages []DirectoryEntry, today string) string 
 	b.WriteString("---\n\n")
 
 	if isRoot {
-		renderRootIndex(&b, node, allPages)
+		renderRootIndex(&b, node, allPages, skip)
 	} else if hasChildren {
-		renderMidIndex(&b, node)
+		renderMidIndex(&b, node, skip)
 	} else {
-		renderLeafIndex(&b, node)
+		renderLeafIndex(&b, node, skip)
 	}
 
 	return b.String()
 }
 
-func renderRootIndex(b *strings.Builder, root *dirNode, allPages []DirectoryEntry) {
+func renderRootIndex(b *strings.Builder, root *dirNode, allPages []DirectoryEntry, skip func(string) bool) {
 	b.WriteString("A shared knowledge base — maintained by humans and AI agents.\n\n")
 	b.WriteString("See [[meta/schema]] for the operating manual. See [[meta/log]] for recent activity.\n")
 
 	// Recently updated (vault-wide)
-	renderRecents(b, root)
+	renderRecents(b, root, skip)
 
 	// Directory tree
 	b.WriteString("\n## Directory\n\n")
@@ -460,10 +515,10 @@ func renderRootIndex(b *strings.Builder, root *dirNode, allPages []DirectoryEntr
 	}
 }
 
-func renderMidIndex(b *strings.Builder, node *dirNode) {
+func renderMidIndex(b *strings.Builder, node *dirNode, skip func(string) bool) {
 	allBelow := collectPages(node)
 
-	renderRecents(b, node)
+	renderRecents(b, node, skip)
 
 	b.WriteString("\n## Directory\n\n")
 	renderSubdirTree(b, node, 0, 1)
@@ -476,8 +531,8 @@ func renderMidIndex(b *strings.Builder, node *dirNode) {
 	}
 }
 
-func renderLeafIndex(b *strings.Builder, node *dirNode) {
-	renderRecents(b, node)
+func renderLeafIndex(b *strings.Builder, node *dirNode, skip func(string) bool) {
+	renderRecents(b, node, skip)
 
 	b.WriteString("\n## Directory\n\n")
 	renderSubdirTree(b, node, 0, 0)
@@ -495,13 +550,19 @@ func renderLeafIndex(b *strings.Builder, node *dirNode) {
 // renders; on subtree indexes it's gated to subtrees larger than
 // recentsMinPages so small leaves don't just echo their own directory listing.
 //
-// The page set is collectPages(node), which excludes generated index.md files
-// and meta/activity/ (both filtered out before the tree is built). That
-// exclusion is what keeps Generate idempotent: writing an index never changes
-// any other index's recents, so the byte-equality write-skip holds and there's
-// no rebuild cascade when wired to the vault watcher.
-func renderRecents(b *strings.Builder, node *dirNode) {
-	pages := collectPages(node)
+// Pages under a noRecentsDirs entry (skip) are filtered out here — by default
+// that's meta/activity/, whose every-append mtime churn would otherwise
+// reorder recents on each log write and defeat the byte-equality write-skip
+// Generate relies on (a rebuild cascade when wired to the vault watcher).
+func renderRecents(b *strings.Builder, node *dirNode, skip func(string) bool) {
+	all := collectPages(node)
+	pages := make([]DirectoryEntry, 0, len(all))
+	for _, p := range all {
+		if skip != nil && skip(p.Path) {
+			continue
+		}
+		pages = append(pages, p)
+	}
 	if node.rel != "" && len(pages) <= recentsMinPages {
 		return
 	}
