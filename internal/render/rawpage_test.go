@@ -1,6 +1,8 @@
 package render
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -131,4 +133,59 @@ func TestBuildRawListing(t *testing.T) {
 			t.Errorf("root listing should not have a parent (..) row:\n%s", out)
 		}
 	})
+}
+
+func TestBuildRawExplorerNode(t *testing.T) {
+	dir := t.TempDir()
+	if buildRawExplorerNode(dir) != nil {
+		t.Fatal("expected nil when vault has no raw/ dir")
+	}
+	mk := func(parts ...string) string {
+		p := filepath.Join(append([]string{dir}, parts...)...)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	mk("raw", "clippings", "youtube", "clip.md")
+	mk("raw", "gists", "snippet.txt")
+	mk("raw", "top.png")
+
+	node := buildRawExplorerNode(dir)
+	if node == nil || node.Name != "Raw" || node.URL != "/raw/" || !node.IsFolder {
+		t.Fatalf("unexpected root node: %+v", node)
+	}
+	// Folders sort before files: Clippings, Gists, then top.png.
+	if len(node.Children) != 3 {
+		t.Fatalf("want 3 children, got %d", len(node.Children))
+	}
+	if node.Children[0].Name != "Clippings" || node.Children[0].URL != "/raw/clippings/" {
+		t.Errorf("child[0] = %+v, want Clippings /raw/clippings/", node.Children[0])
+	}
+	if node.Children[2].Name != "top.png" || node.Children[2].URL != "/raw/top.png" || node.Children[2].IsFolder {
+		t.Errorf("child[2] = %+v, want file top.png", node.Children[2])
+	}
+	// Deep file URL.
+	yt := node.Children[0].Children[0]
+	if yt.Name != "Youtube" || yt.Children[0].URL != "/raw/clippings/youtube/clip.md" {
+		t.Errorf("deep node wrong: %+v / %+v", yt, yt.Children[0])
+	}
+
+	// markActiveByURL marks the leaf and opens its ancestors.
+	roots := []*ExplorerNode{node}
+	if !markActiveByURL(roots, "/raw/clippings/youtube/clip.md") {
+		t.Fatal("expected markActiveByURL to match the clip")
+	}
+	if !node.IsOpen || !node.Children[0].IsOpen || !yt.IsOpen {
+		t.Error("ancestor folders should be open")
+	}
+	if !yt.Children[0].IsActive {
+		t.Error("clip.md leaf should be active")
+	}
+	if node.Children[1].IsOpen {
+		t.Error("sibling folder (Gists) should stay closed")
+	}
 }
