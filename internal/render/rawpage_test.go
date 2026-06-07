@@ -1,6 +1,8 @@
 package render
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -85,5 +87,105 @@ func TestIsHTTPURL(t *testing.T) {
 		if got := isHTTPURL(in); got != want {
 			t.Errorf("isHTTPURL(%q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+func TestBuildRawListing(t *testing.T) {
+	t.Run("images present → grid + list", func(t *testing.T) {
+		out := string(buildRawListing("/raw/clippings/", []RawDirEntry{
+			{Name: "youtube", IsDir: true},
+			{Name: "photo.png", IsDir: false},
+			{Name: "notes.txt", IsDir: false},
+		}))
+		if !strings.Contains(out, `class="raw-gallery"`) {
+			t.Errorf("expected image gallery section:\n%s", out)
+		}
+		// Image goes in the grid as a thumbnail...
+		if !strings.Contains(out, `<img loading="lazy" src="/raw/clippings/photo.png"`) {
+			t.Errorf("expected photo thumbnail:\n%s", out)
+		}
+		// ...folders and non-image files go in the list.
+		if !strings.Contains(out, `class="raw-list"`) {
+			t.Errorf("expected file list:\n%s", out)
+		}
+		if !strings.Contains(out, `/raw/clippings/youtube/`) || !strings.Contains(out, `/raw/clippings/notes.txt`) {
+			t.Errorf("expected folder + file rows:\n%s", out)
+		}
+		// Parent link present (not at root).
+		if !strings.Contains(out, `>..</span>`) {
+			t.Errorf("expected parent (..) row:\n%s", out)
+		}
+	})
+
+	t.Run("no images → list only, no gallery", func(t *testing.T) {
+		out := string(buildRawListing("/raw/", []RawDirEntry{
+			{Name: "clippings", IsDir: true},
+			{Name: "readme.txt", IsDir: false},
+		}))
+		if strings.Contains(out, "raw-gallery") {
+			t.Errorf("no images, but a gallery section was rendered:\n%s", out)
+		}
+		if !strings.Contains(out, `class="raw-list"`) {
+			t.Errorf("expected file list:\n%s", out)
+		}
+		// At /raw/ root there is no parent row.
+		if strings.Contains(out, `>..</span>`) {
+			t.Errorf("root listing should not have a parent (..) row:\n%s", out)
+		}
+	})
+}
+
+func TestBuildRawExplorerNode(t *testing.T) {
+	dir := t.TempDir()
+	if buildRawExplorerNode(dir) != nil {
+		t.Fatal("expected nil when vault has no raw/ dir")
+	}
+	mk := func(parts ...string) string {
+		p := filepath.Join(append([]string{dir}, parts...)...)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	mk("raw", "clippings", "youtube", "clip.md")
+	mk("raw", "gists", "snippet.txt")
+	mk("raw", "top.png")
+
+	node := buildRawExplorerNode(dir)
+	if node == nil || node.Name != "Raw" || node.URL != "/raw/" || !node.IsFolder {
+		t.Fatalf("unexpected root node: %+v", node)
+	}
+	// Folders sort before files: Clippings, Gists, then top.png.
+	if len(node.Children) != 3 {
+		t.Fatalf("want 3 children, got %d", len(node.Children))
+	}
+	if node.Children[0].Name != "Clippings" || node.Children[0].URL != "/raw/clippings/" {
+		t.Errorf("child[0] = %+v, want Clippings /raw/clippings/", node.Children[0])
+	}
+	if node.Children[2].Name != "top.png" || node.Children[2].URL != "/raw/top.png" || node.Children[2].IsFolder {
+		t.Errorf("child[2] = %+v, want file top.png", node.Children[2])
+	}
+	// Deep file URL.
+	yt := node.Children[0].Children[0]
+	if yt.Name != "Youtube" || yt.Children[0].URL != "/raw/clippings/youtube/clip.md" {
+		t.Errorf("deep node wrong: %+v / %+v", yt, yt.Children[0])
+	}
+
+	// markActiveByURL marks the leaf and opens its ancestors.
+	roots := []*ExplorerNode{node}
+	if !markActiveByURL(roots, "/raw/clippings/youtube/clip.md") {
+		t.Fatal("expected markActiveByURL to match the clip")
+	}
+	if !node.IsOpen || !node.Children[0].IsOpen || !yt.IsOpen {
+		t.Error("ancestor folders should be open")
+	}
+	if !yt.Children[0].IsActive {
+		t.Error("clip.md leaf should be active")
+	}
+	if node.Children[1].IsOpen {
+		t.Error("sibling folder (Gists) should stay closed")
 	}
 }

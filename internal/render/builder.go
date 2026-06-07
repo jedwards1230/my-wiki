@@ -285,6 +285,20 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 	// chain marked open / active — O(N) per page instead of re-running
 	// the full O(N log N) build.
 	explorerBase := BuildExplorerTree(all, "")
+	// raw/ is excluded from the page graph, so BuildExplorerTree never sees it.
+	// Surface it as a dynamically-walked top-level subtree (filesystem-driven,
+	// not hardcoded) so raw sources are browsable from the sidebar, then re-sort
+	// the top level so it lands in folder-alphabetical order.
+	if rawNode := buildRawExplorerNode(v.Dir); rawNode != nil {
+		explorerBase = append(explorerBase, rawNode)
+		sort.Slice(explorerBase, func(i, j int) bool {
+			a, b := explorerBase[i], explorerBase[j]
+			if a.IsFolder != b.IsFolder {
+				return a.IsFolder
+			}
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		})
+	}
 
 	for _, p := range all {
 		// Per-page explorer tree with this page's branch marked active.

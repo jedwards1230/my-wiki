@@ -11,7 +11,10 @@ package render
 import (
 	"html"
 	"html/template"
+	"os"
 	"path"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,18 +38,19 @@ type RawDirEntry struct {
 func (b *Builder) RenderRawIndex(urlDir string, entries []RawDirEntry) ([]byte, bool) {
 	b.mu.Lock()
 	r := b.lastRenderer
-	explorer := b.lastExplorer
+	explorer := cloneExplorerTree(b.lastExplorer)
 	b.mu.Unlock()
 	if r == nil {
 		return nil, false
 	}
+	markActiveByURL(explorer, urlDir)
 
 	p := &Page{
 		Title:           "Index of " + strings.TrimSuffix(strings.TrimPrefix(urlDir, "/"), "/"),
 		Description:     "Source files under " + urlDir,
 		RelativeURL:     urlDir,
 		BreadcrumbItems: rawBreadcrumb(urlDir),
-		ContentHTML:     buildRawGallery(urlDir, entries),
+		ContentHTML:     buildRawListing(urlDir, entries),
 		// Slug stays empty — suppresses graph / backlinks / view-source.
 	}
 	td := TemplateData{
@@ -63,44 +67,136 @@ func (b *Builder) RenderRawIndex(urlDir string, entries []RawDirEntry) ([]byte, 
 	return out, true
 }
 
-// buildRawGallery renders the directory entries as a tile grid. All names are
-// HTML-escaped; URLs are built from the already-clean urlDir + name.
-func buildRawGallery(urlDir string, entries []RawDirEntry) template.HTML {
-	var b strings.Builder
-	b.WriteString(`<ul class="raw-gallery">`)
+// buildRawListing renders a /raw/ directory as an autoindex: a file/folder
+// list (the default everywhere), preceded by an image thumbnail grid ONLY when
+// the directory actually contains images. No images → just the list. All names
+// are HTML-escaped; URLs are built from the already-clean urlDir + name.
+func buildRawListing(urlDir string, entries []RawDirEntry) template.HTML {
+	// Split images out so they can lead with a thumbnail grid; folders and
+	// non-image files stay in the list below.
+	var images, rest []RawDirEntry
+	for _, e := range entries {
+		if !e.IsDir && isImageExtension(e.Name) {
+			images = append(images, e)
+		} else {
+			rest = append(rest, e)
+		}
+	}
 
-	// Parent link, except at the /raw/ root.
+	var b strings.Builder
+
+	// Image gallery section — conditional on images being present.
+	if len(images) > 0 {
+		b.WriteString(`<section class="raw-images"><ul class="raw-gallery">`)
+		for _, e := range images {
+			href := html.EscapeString(urlDir + e.Name)
+			escName := html.EscapeString(e.Name)
+			b.WriteString(`<li class="raw-tile raw-tile-img"><a href="` + href +
+				`"><span class="raw-tile-thumb"><img loading="lazy" src="` + href + `" alt="` + escName +
+				`"></span><span class="raw-tile-name">` + escName + `</span></a></li>`)
+		}
+		b.WriteString(`</ul></section>`)
+	}
+
+	// File/folder list — the autoindex proper.
+	b.WriteString(`<ul class="raw-list">`)
 	if urlDir != "/raw/" {
 		parent := path.Dir(strings.TrimSuffix(urlDir, "/"))
 		if !strings.HasSuffix(parent, "/") {
 			parent += "/"
 		}
-		b.WriteString(`<li class="raw-tile raw-tile-dir"><a href="` + html.EscapeString(parent) +
-			`"><span class="raw-tile-icon" aria-hidden="true">&#8617;</span><span class="raw-tile-name">..</span></a></li>`)
+		b.WriteString(`<li class="raw-row raw-row-dir"><a href="` + html.EscapeString(parent) +
+			`"><span class="raw-row-icon" aria-hidden="true">&#8617;</span><span class="raw-row-name">..</span></a></li>`)
 	}
-
-	for _, e := range entries {
+	for _, e := range rest {
 		escName := html.EscapeString(e.Name)
-		switch {
-		case e.IsDir:
+		if e.IsDir {
 			href := html.EscapeString(urlDir + e.Name + "/")
-			b.WriteString(`<li class="raw-tile raw-tile-dir"><a href="` + href +
-				`"><span class="raw-tile-icon" aria-hidden="true">&#128193;</span><span class="raw-tile-name">` + escName + `/</span></a></li>`)
-		case isImageExtension(e.Name):
+			b.WriteString(`<li class="raw-row raw-row-dir"><a href="` + href +
+				`"><span class="raw-row-icon" aria-hidden="true">&#128193;</span><span class="raw-row-name">` + escName + `/</span></a></li>`)
+		} else {
 			href := html.EscapeString(urlDir + e.Name)
-			b.WriteString(`<li class="raw-tile raw-tile-img"><a href="` + href +
-				`"><span class="raw-tile-thumb"><img loading="lazy" src="` + href + `" alt="` + escName +
-				`"></span><span class="raw-tile-name">` + escName + `</span></a></li>`)
-		default:
-			href := html.EscapeString(urlDir + e.Name)
-			b.WriteString(`<li class="raw-tile raw-tile-file"><a href="` + href +
-				`"><span class="raw-tile-icon raw-tile-ext" aria-hidden="true">` + html.EscapeString(fileTypeLabel(e.Name)) +
-				`</span><span class="raw-tile-name">` + escName + `</span></a></li>`)
+			b.WriteString(`<li class="raw-row raw-row-file"><a href="` + href +
+				`"><span class="raw-row-ext" aria-hidden="true">` + html.EscapeString(fileTypeLabel(e.Name)) +
+				`</span><span class="raw-row-name">` + escName + `</span></a></li>`)
 		}
 	}
-
 	b.WriteString(`</ul>`)
 	return template.HTML(b.String()) //nolint:gosec // names escaped, URLs built from clean dir + name
+}
+
+// buildRawExplorerNode walks the vault's raw/ directory and returns a top-level
+// Explorer node mirroring its folder/file structure, so raw sources are
+// browsable from the sidebar. Returns nil when there is no raw/ directory.
+// Folders link to their /raw/ listing; files link to their /raw/ URL. This is
+// the one place raw/ enters the nav — its contents still stay out of search,
+// the page directory, and the backlink graph.
+func buildRawExplorerNode(vaultDir string) *ExplorerNode {
+	rawDir := filepath.Join(vaultDir, "raw")
+	info, err := os.Stat(rawDir)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	return &ExplorerNode{
+		Name:     humanizeSegment("raw"),
+		URL:      "/raw/",
+		IsFolder: true,
+		Children: rawDirChildren(rawDir, "/raw/"),
+	}
+}
+
+// rawDirChildren recursively builds Explorer nodes for a raw/ subdirectory.
+// fsDir is the filesystem path; urlPrefix is the /raw/ URL prefix (trailing
+// slash). Folders are humanized + linked to their listing; files keep their
+// literal name (extension visible) and link to the file URL.
+func rawDirChildren(fsDir, urlPrefix string) []*ExplorerNode {
+	entries, err := os.ReadDir(fsDir)
+	if err != nil {
+		return nil
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		di, dj := entries[i].IsDir(), entries[j].IsDir()
+		if di != dj {
+			return di
+		}
+		return entries[i].Name() < entries[j].Name()
+	})
+	var out []*ExplorerNode
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue // skip dotfiles (.obsidian, etc.)
+		}
+		if e.IsDir() {
+			out = append(out, &ExplorerNode{
+				Name:     humanizeSegment(name),
+				URL:      urlPrefix + name + "/",
+				IsFolder: true,
+				Children: rawDirChildren(filepath.Join(fsDir, name), urlPrefix+name+"/"),
+			})
+		} else {
+			out = append(out, &ExplorerNode{Name: name, URL: urlPrefix + name})
+		}
+	}
+	return out
+}
+
+// markActiveByURL marks the explorer node whose URL exactly matches url as
+// active and opens its ancestor folders. Used for raw pages, whose empty Slug
+// can't be matched by the slug-based markActive. Returns true once matched.
+func markActiveByURL(nodes []*ExplorerNode, url string) bool {
+	for _, n := range nodes {
+		if n.URL == url {
+			n.IsActive = true
+			n.IsOpen = n.IsFolder
+			return true
+		}
+		if markActiveByURL(n.Children, url) {
+			n.IsOpen = true
+			return true
+		}
+	}
+	return false
 }
 
 // fileTypeLabel returns a short uppercase extension badge for a filename, e.g.
@@ -125,11 +221,12 @@ func fileTypeLabel(name string) string {
 func (b *Builder) RenderRawPage(relPath string, source []byte, modTime time.Time, rawURL string) ([]byte, bool) {
 	b.mu.Lock()
 	r := b.lastRenderer
-	explorer := b.lastExplorer
+	explorer := cloneExplorerTree(b.lastExplorer)
 	b.mu.Unlock()
 	if r == nil {
 		return nil, false
 	}
+	markActiveByURL(explorer, rawURL)
 
 	p, err := r.RenderPage(relPath, source, modTime)
 	if err != nil {
