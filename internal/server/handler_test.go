@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/jedwards1230/my-wiki/internal/render"
 )
 
 // --- Static handler tests ---
@@ -288,12 +290,16 @@ func TestRawMdFallback(t *testing.T) {
 }
 
 // stubRawRenderer records the args it was called with and returns a sentinel
-// HTML body so tests can assert the render path was taken.
+// HTML body so tests can assert the render path was taken. When miss is set,
+// both methods report ok=false so the handler falls back to bytes / autoindex.
 type stubRawRenderer struct {
-	called   bool
-	gotRel   string
-	gotURL   string
-	gotBytes []byte
+	miss        bool
+	called      bool
+	indexCalled bool
+	gotRel      string
+	gotURL      string
+	gotIndexURL string
+	gotBytes    []byte
 }
 
 func (s *stubRawRenderer) RenderRawPage(relPath string, source []byte, _ time.Time, rawURL string) ([]byte, bool) {
@@ -301,7 +307,19 @@ func (s *stubRawRenderer) RenderRawPage(relPath string, source []byte, _ time.Ti
 	s.gotRel = relPath
 	s.gotURL = rawURL
 	s.gotBytes = source
+	if s.miss {
+		return nil, false
+	}
 	return []byte("<html>RENDERED</html>"), true
+}
+
+func (s *stubRawRenderer) RenderRawIndex(urlDir string, _ []render.RawDirEntry) ([]byte, bool) {
+	s.indexCalled = true
+	s.gotIndexURL = urlDir
+	if s.miss {
+		return nil, false
+	}
+	return []byte("<html>GALLERY</html>"), true
 }
 
 func TestRawMarkdownContentNegotiation(t *testing.T) {
@@ -355,10 +373,7 @@ func TestRawMarkdownContentNegotiation(t *testing.T) {
 // When the renderer reports a miss (ok=false), the handler must fall back to
 // serving verbatim bytes rather than erroring.
 func TestRawMarkdownRenderMissFallsBackToBytes(t *testing.T) {
-	missRenderer := rawRendererFunc(func(string, []byte, time.Time, string) ([]byte, bool) {
-		return nil, false
-	})
-	h := NewRawHandler(newRawFS(), missRenderer)
+	h := NewRawHandler(newRawFS(), &stubRawRenderer{miss: true})
 	r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md", nil)
 	r.Header.Set("Accept", "text/html")
 	w := httptest.NewRecorder()
@@ -375,10 +390,39 @@ func TestRawMarkdownRenderMissFallsBackToBytes(t *testing.T) {
 	}
 }
 
-type rawRendererFunc func(string, []byte, time.Time, string) ([]byte, bool)
-
-func (f rawRendererFunc) RenderRawPage(rel string, src []byte, mt time.Time, url string) ([]byte, bool) {
-	return f(rel, src, mt, url)
+// A browser browsing a /raw/ directory gets the rendered gallery; agents and
+// ?raw=1 get the plain autoindex.
+func TestRawIndexGalleryNegotiation(t *testing.T) {
+	t.Run("browser gets gallery", func(t *testing.T) {
+		stub := &stubRawRenderer{}
+		h := NewRawHandler(newRawFS(), stub)
+		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if !stub.indexCalled {
+			t.Fatal("expected gallery render path")
+		}
+		if stub.gotIndexURL != "/raw/somedir/" {
+			t.Fatalf("urlDir = %q, want /raw/somedir/", stub.gotIndexURL)
+		}
+		if !strings.Contains(w.Body.String(), "GALLERY") {
+			t.Fatalf("expected gallery body, got %q", w.Body.String())
+		}
+	})
+	t.Run("agent gets plain autoindex", func(t *testing.T) {
+		stub := &stubRawRenderer{}
+		h := NewRawHandler(newRawFS(), stub)
+		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil) // no Accept
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if stub.indexCalled {
+			t.Fatal("agent should get plain autoindex, not gallery")
+		}
+		if !strings.Contains(w.Body.String(), "file1.txt") {
+			t.Fatalf("expected plain autoindex, got %q", w.Body.String())
+		}
+	})
 }
 
 func TestRawAutoindex(t *testing.T) {

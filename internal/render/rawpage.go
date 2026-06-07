@@ -11,11 +11,107 @@ package render
 import (
 	"html"
 	"html/template"
+	"path"
 	"strings"
 	"time"
 
 	"github.com/jedwards1230/my-wiki/internal/version"
 )
+
+// RawDirEntry is one entry in a /raw/ directory listing, passed by the server's
+// raw handler to RenderRawIndex. Kept minimal — name + whether it's a folder is
+// all the gallery needs (image-vs-file is derived from the extension).
+type RawDirEntry struct {
+	Name  string
+	IsDir bool
+}
+
+// RenderRawIndex renders a /raw/ directory listing as a gallery page wrapped in
+// the wiki chrome: image entries get lazy-loaded thumbnails, other files get an
+// extension badge, folders get a folder icon. urlDir is the directory URL with
+// a trailing slash (e.g. "/raw/clippings/", or "/raw/" for the root). Returns
+// ok=false before the first build, so the handler falls back to the plain
+// autoindex.
+func (b *Builder) RenderRawIndex(urlDir string, entries []RawDirEntry) ([]byte, bool) {
+	b.mu.Lock()
+	r := b.lastRenderer
+	explorer := b.lastExplorer
+	b.mu.Unlock()
+	if r == nil {
+		return nil, false
+	}
+
+	p := &Page{
+		Title:           "Index of " + strings.TrimSuffix(strings.TrimPrefix(urlDir, "/"), "/"),
+		Description:     "Source files under " + urlDir,
+		RelativeURL:     urlDir,
+		BreadcrumbItems: rawBreadcrumb(urlDir),
+		ContentHTML:     buildRawGallery(urlDir, entries),
+		// Slug stays empty — suppresses graph / backlinks / view-source.
+	}
+	td := TemplateData{
+		Page:      p,
+		SiteTitle: b.cfg.SiteTitle,
+		Version:   version.Value,
+		BaseURL:   b.cfg.BaseURL,
+		Explorer:  explorer,
+	}
+	out, err := r.RenderToBytes(p, td)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// buildRawGallery renders the directory entries as a tile grid. All names are
+// HTML-escaped; URLs are built from the already-clean urlDir + name.
+func buildRawGallery(urlDir string, entries []RawDirEntry) template.HTML {
+	var b strings.Builder
+	b.WriteString(`<ul class="raw-gallery">`)
+
+	// Parent link, except at the /raw/ root.
+	if urlDir != "/raw/" {
+		parent := path.Dir(strings.TrimSuffix(urlDir, "/"))
+		if !strings.HasSuffix(parent, "/") {
+			parent += "/"
+		}
+		b.WriteString(`<li class="raw-tile raw-tile-dir"><a href="` + html.EscapeString(parent) +
+			`"><span class="raw-tile-icon" aria-hidden="true">&#8617;</span><span class="raw-tile-name">..</span></a></li>`)
+	}
+
+	for _, e := range entries {
+		escName := html.EscapeString(e.Name)
+		switch {
+		case e.IsDir:
+			href := html.EscapeString(urlDir + e.Name + "/")
+			b.WriteString(`<li class="raw-tile raw-tile-dir"><a href="` + href +
+				`"><span class="raw-tile-icon" aria-hidden="true">&#128193;</span><span class="raw-tile-name">` + escName + `/</span></a></li>`)
+		case isImageExtension(e.Name):
+			href := html.EscapeString(urlDir + e.Name)
+			b.WriteString(`<li class="raw-tile raw-tile-img"><a href="` + href +
+				`"><span class="raw-tile-thumb"><img loading="lazy" src="` + href + `" alt="` + escName +
+				`"></span><span class="raw-tile-name">` + escName + `</span></a></li>`)
+		default:
+			href := html.EscapeString(urlDir + e.Name)
+			b.WriteString(`<li class="raw-tile raw-tile-file"><a href="` + href +
+				`"><span class="raw-tile-icon raw-tile-ext" aria-hidden="true">` + html.EscapeString(fileTypeLabel(e.Name)) +
+				`</span><span class="raw-tile-name">` + escName + `</span></a></li>`)
+		}
+	}
+
+	b.WriteString(`</ul>`)
+	return template.HTML(b.String()) //nolint:gosec // names escaped, URLs built from clean dir + name
+}
+
+// fileTypeLabel returns a short uppercase extension badge for a filename, e.g.
+// "PDF", "MP4", or "FILE" when there's no extension.
+func fileTypeLabel(name string) string {
+	ext := fileExt(name)
+	if ext == "" {
+		return "FILE"
+	}
+	return strings.ToUpper(strings.TrimPrefix(ext, "."))
+}
 
 // RenderRawPage renders a raw/ markdown source as a full HTML page. relPath is
 // the vault-relative path (e.g. "raw/clippings/x.md"); rawURL is the canonical

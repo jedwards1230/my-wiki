@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jedwards1230/my-wiki/internal/render"
 	"github.com/jedwards1230/my-wiki/internal/service"
 )
 
@@ -152,12 +153,17 @@ func (h *MarkdownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// RawRenderer renders a raw/ markdown source into a full HTML page. The
-// native renderer's Builder implements it. relPath is vault-relative (e.g.
-// "raw/clippings/x.md"); rawURL is the canonical /raw/ URL. ok=false means no
-// renderer is available (pre-first-build) and the caller serves bytes instead.
+// RawRenderer renders raw/ content into full HTML pages wrapped in the wiki
+// chrome. The native renderer's Builder implements it. ok=false means no
+// renderer is available (pre-first-build) and the caller serves bytes / the
+// plain autoindex instead.
 type RawRenderer interface {
+	// RenderRawPage renders a markdown source. relPath is vault-relative
+	// (e.g. "raw/clippings/x.md"); rawURL is the canonical /raw/ URL.
 	RenderRawPage(relPath string, source []byte, modTime time.Time, rawURL string) ([]byte, bool)
+	// RenderRawIndex renders a directory listing as a gallery. urlDir is the
+	// directory URL with a trailing slash (e.g. "/raw/clippings/").
+	RenderRawIndex(urlDir string, entries []render.RawDirEntry) ([]byte, bool)
 }
 
 // RawHandler serves raw source files with native MIME types and directory listing.
@@ -307,6 +313,21 @@ func (h *RawHandler) serveAutoindex(w http.ResponseWriter, r *http.Request, dirP
 		if !strings.HasSuffix(urlDir, "/") {
 			urlDir += "/"
 		}
+	}
+
+	// Rendered gallery (wiki chrome + image thumbnails) for browsers. Agents,
+	// curl, and ?raw=1 still get the plain autoindex below.
+	if h.render != nil && wantsRenderedHTML(r) {
+		gallery := make([]render.RawDirEntry, len(entries))
+		for i, e := range entries {
+			gallery[i] = render.RawDirEntry{Name: e.Name(), IsDir: e.IsDir()}
+		}
+		if out, ok := h.render.RenderRawIndex(urlDir, gallery); ok {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(out)
+			return true
+		}
+		// Render miss → fall through to the plain autoindex.
 	}
 
 	escapedDir := html.EscapeString(urlDir)
