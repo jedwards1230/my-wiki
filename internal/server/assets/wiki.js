@@ -546,6 +546,9 @@
   // then keep idle. Click a node to navigate.
   let graphCache = null;
   let graphRaf = 0;
+  // Tears down the previous graph's theme listeners (MutationObserver +
+  // matchMedia) so SPA re-inits don't leak them. Set per init.
+  let graphThemeCleanup = null;
 
   // Persistent set of slugs the user has visited this session. Powers the
   // visited-vs-unvisited node coloring. Best-effort —
@@ -564,6 +567,7 @@
 
   function initGraph() {
     cancelAnimationFrame(graphRaf);
+    if (graphThemeCleanup) { graphThemeCleanup(); graphThemeCleanup = null; }
     const cv = document.querySelector(".graph-canvas[data-graph-src]");
     if (!cv) return;
     const slug = cv.getAttribute("data-slug");
@@ -607,12 +611,10 @@
         adj.get(l.source).add(l.target);
         adj.get(l.target).add(l.source);
       });
-      const keep = new Set([slug]);
-      (adj.get(slug) || new Set()).forEach(id => keep.add(id));
 
-      // Count site-wide links per node — drives node radius so hub pages
-      // visually stand out (`2 + sqrt(numLinks)`, capped at 7 so a node
-      // never dominates the small right-rail canvas).
+      // Count site-wide links per node — drives both node radius (so hub
+      // pages visually stand out) and neighbour ranking when we have to
+      // trim a crowded neighbourhood.
       const siteLinkCount = new Map();
       g.nodes.forEach(n => siteLinkCount.set(n.id, 0));
       (g.links || []).forEach(function (l) {
@@ -621,15 +623,38 @@
       });
       const nodeRadius = id => Math.min(7, 2 + Math.sqrt(siteLinkCount.get(id) || 0));
 
-      const nodes = g.nodes.filter(n => keep.has(n.id)).map(function (n, i) {
+      // Trim the neighbourhood. The canvas is tiny (≈280×200); a hub page
+      // with dozens of links can't lay out legibly and the force sim never
+      // settles (nodes pin to the walls and jitter). Keep the current page
+      // plus its most-connected neighbours, ranked by site-wide degree so
+      // the structurally important pages survive the cut. Hidden neighbours
+      // surface as a "+N more" hint rather than a hairball.
+      const MAX_NEIGHBORS = 24;
+      const allNbrs = [...(adj.get(slug) || new Set())]
+        .sort((a, b) => (siteLinkCount.get(b) || 0) - (siteLinkCount.get(a) || 0));
+      const hiddenCount = Math.max(0, allNbrs.length - MAX_NEIGHBORS);
+      const shownNbrs = allNbrs.slice(0, MAX_NEIGHBORS);
+      const keep = new Set([slug, ...shownNbrs]);
+
+      // Seed positions deterministically: current page pinned at centre,
+      // neighbours spread evenly on a ring. Even spacing means the very
+      // first sim step starts near-equilibrium, so forces stay small and
+      // there's no initial "explosion" to animate away.
+      const cx = W / 2, cy = H / 2;
+      const ringR = Math.min(W, H) * 0.34;
+      const ringNodes = g.nodes.filter(n => keep.has(n.id) && n.id !== slug);
+      const nodes = g.nodes.filter(n => keep.has(n.id)).map(function (n) {
+        const here = n.id === slug;
+        const idx = here ? -1 : ringNodes.indexOf(n);
+        const ang = (2 * Math.PI * idx) / Math.max(1, ringNodes.length);
         return {
           id: n.id,
           title: n.title || n.id,
           url: n.url || ("/" + n.id + "/"),
-          x: W / 2 + 40 * Math.cos(i),
-          y: H / 2 + 40 * Math.sin(i),
+          x: here ? cx : cx + ringR * Math.cos(ang),
+          y: here ? cy : cy + ringR * Math.sin(ang),
           vx: 0, vy: 0,
-          here: n.id === slug,
+          here: here,
           visited: visited.has(n.id),
           r: nodeRadius(n.id),
         };
@@ -655,12 +680,19 @@
       cv.onmousemove = function (e) {
         const r = cv.getBoundingClientRect();
         const mx = e.clientX - r.left, my = e.clientY - r.top;
+        const prev = hover;
         hover = null;
         for (const n of nodes) {
           const dx = n.x - mx, dy = n.y - my;
           if (dx * dx + dy * dy < (n.r + 4) * (n.r + 4)) { hover = n; break; }
         }
         cv.style.cursor = hover ? "pointer" : "default";
+        // Once the layout has settled the sim loop is no longer running, so
+        // repaint on demand to reflect hover dimming.
+        if (hover !== prev && !graphRaf) draw();
+      };
+      cv.onmouseleave = function () {
+        if (hover) { hover = null; if (!graphRaf) draw(); }
       };
       cv.onclick = function () {
         if (!hover) return;
@@ -669,31 +701,73 @@
         const v = loadVisited(); v.add(hover.id); saveVisited(v);
         window.location.href = hover.url;
       };
-      // force layout — short fixed iteration budget
-      let iter = 0;
-      const maxIter = 400;
-      const cs = getComputedStyle(document.documentElement);
-      const colEdge = cs.getPropertyValue("--graph-edge").trim() || "#a8b5bd";
-      const colNode = cs.getPropertyValue("--graph-node").trim() || "#284b63";
-      const colHere = cs.getPropertyValue("--graph-node-active").trim() || "#0b4a6f";
-      const colVisited = cs.getPropertyValue("--graph-node-visited").trim() || "#84a59d";
-      const colLabel = cs.getPropertyValue("--text").trim() || "#000";
+
+      // Palette pulled from CSS custom properties. Re-read on theme changes
+      // (see the theme listeners below) so a live light/dark toggle repaints
+      // in the new colours without a navigation. colBg matches the canvas
+      // background (var(--light)) so the label pill reads as a clean cut-out
+      // over the edges/nodes behind the text.
+      let colEdge, colNode, colHere, colVisited, colLabel, colMuted, colBg;
+      function readColors() {
+        const cs = getComputedStyle(document.documentElement);
+        colEdge = cs.getPropertyValue("--graph-edge").trim() || "#a8b5bd";
+        colNode = cs.getPropertyValue("--graph-node").trim() || "#284b63";
+        colHere = cs.getPropertyValue("--graph-node-active").trim() || "#0b4a6f";
+        colVisited = cs.getPropertyValue("--graph-node-visited").trim() || "#84a59d";
+        colLabel = cs.getPropertyValue("--text").trim() || "#000";
+        colMuted = cs.getPropertyValue("--gray").trim() || "#888";
+        colBg = cs.getPropertyValue("--light").trim() || "#faf8f8";
+      }
+      readColors();
       function drawLabel(n) {
         const t = n.title;
         const tw = ctx.measureText(t).width;
         const tx = Math.min(W - tw - 4, Math.max(4, n.x + n.r + 2));
         const ty = Math.max(12, n.y - n.r - 2);
+        // Pill behind the text for contrast — without it labels get lost in
+        // the edge tangle. 11px font: ~9px ascent above the baseline, ~2 below.
+        const padX = 3, padY = 1;
+        const rx = tx - padX, ry = ty - 9 - padY;
+        const rw = tw + padX * 2, rh = 11 + padY * 2;
+        const prevAlpha = ctx.globalAlpha;
+        ctx.globalAlpha = Math.min(prevAlpha, 0.9);
+        ctx.fillStyle = colBg;
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(rx, ry, rw, rh, 3); ctx.fill(); }
+        else { ctx.fillRect(rx, ry, rw, rh); }
+        ctx.globalAlpha = prevAlpha;
+        ctx.fillStyle = colLabel;
         ctx.fillText(t, tx, ty);
       }
-      function step() {
+
+      // Force-layout tuning. The cooling factor (alpha) scales every force
+      // and decays each step, so motion eases smoothly to a stop instead of
+      // oscillating; the per-node velocity clamp caps how far any node can
+      // move in one frame, which is what kills the "spaz". Values picked so
+      // a crowded hub settles in well under a second without feeling slow.
+      const REPULSE = 800;   // coulomb-ish charge
+      const MIN_D2 = 120;    // softening — avoids huge force when overlapping
+      const SPRING = 0.05;   // edge stiffness
+      const LINK_LEN = 46;   // natural edge length
+      const CENTER = 0.012;  // pull toward canvas centre
+      const DAMP = 0.82;     // velocity decay (friction)
+      const VMAX = 6;        // max px a node may move per step
+      const MARGIN = 12;     // keep nodes off the canvas edge
+      let alpha = 1;         // cooling: forces fade as this decays
+      const COOL = 0.96;
+      let iter = 0;
+      const maxIter = 400;   // hard safety cap (early-exit usually hits first)
+
+      // Advance the simulation one step. Returns the largest single-node
+      // displacement this step, used to detect when the layout has settled.
+      function simulate() {
         for (let i = 0; i < nodes.length; i++) {
           const a = nodes[i];
           if (a.here) continue;
           for (let j = i + 1; j < nodes.length; j++) {
             const b = nodes[j];
             let dx = a.x - b.x, dy = a.y - b.y;
-            const d2 = Math.max(50, dx * dx + dy * dy);
-            const force = 1200 / d2;
+            const d2 = Math.max(MIN_D2, dx * dx + dy * dy);
+            const force = (REPULSE / d2) * alpha;
             const d = Math.sqrt(d2);
             dx /= d; dy /= d;
             a.vx += dx * force; a.vy += dy * force;
@@ -704,19 +778,28 @@
           const a = byId.get(l.source), b = byId.get(l.target);
           const dx = b.x - a.x, dy = b.y - a.y;
           const d = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-          const target = 60;
-          const k = 0.04 * (d - target);
+          const k = SPRING * (d - LINK_LEN) * alpha;
           a.vx += (dx / d) * k; a.vy += (dy / d) * k;
           b.vx -= (dx / d) * k; b.vy -= (dy / d) * k;
         }
+        let maxDisp = 0;
         for (const n of nodes) {
-          n.vx += (W / 2 - n.x) * 0.01;
-          n.vy += (H / 2 - n.y) * 0.01;
-          n.vx *= 0.85; n.vy *= 0.85;
-          n.x += n.vx; n.y += n.vy;
-          n.x = Math.max(10, Math.min(W - 10, n.x));
-          n.y = Math.max(10, Math.min(H - 10, n.y));
+          if (n.here) continue; // current page anchored at centre
+          n.vx += (cx - n.x) * CENTER * alpha;
+          n.vy += (cy - n.y) * CENTER * alpha;
+          n.vx *= DAMP; n.vy *= DAMP;
+          const sp = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+          if (sp > VMAX) { n.vx = (n.vx / sp) * VMAX; n.vy = (n.vy / sp) * VMAX; }
+          const ox = n.x, oy = n.y;
+          n.x = Math.max(MARGIN, Math.min(W - MARGIN, n.x + n.vx));
+          n.y = Math.max(MARGIN, Math.min(H - MARGIN, n.y + n.vy));
+          const dd = Math.sqrt((n.x - ox) * (n.x - ox) + (n.y - oy) * (n.y - oy));
+          if (dd > maxDisp) maxDisp = dd;
         }
+        return maxDisp;
+      }
+
+      function draw() {
         ctx.clearRect(0, 0, W, H);
 
         // Links — dim non-neighbours of the hovered node so the active
@@ -754,11 +837,54 @@
         } else if (hover) {
           drawLabel(hover);
         }
-        if (++iter < maxIter || hover) {
-          graphRaf = requestAnimationFrame(step);
+
+        // "+N more" hint when the neighbourhood was trimmed.
+        if (hiddenCount > 0) {
+          ctx.font = "10px ui-sans-serif, system-ui, sans-serif";
+          ctx.fillStyle = colMuted;
+          ctx.globalAlpha = 0.8;
+          const t = "+" + hiddenCount + " more";
+          ctx.fillText(t, 4, H - 5);
+          ctx.globalAlpha = 1;
         }
       }
-      graphRaf = requestAnimationFrame(step);
+
+      function frame() {
+        const disp = simulate();
+        draw();
+        alpha *= COOL;
+        // Stop once cooled and effectively still, or at the safety cap.
+        if ((alpha < 0.025 && disp < 0.4) || ++iter >= maxIter) {
+          graphRaf = 0;
+          return;
+        }
+        graphRaf = requestAnimationFrame(frame);
+      }
+
+      // React to live theme changes. The app toggles light/dark by setting
+      // [data-theme] on <html> (no navigation), and "auto" mode follows the
+      // OS via prefers-color-scheme — neither re-runs initGraph, so without
+      // this the canvas keeps painting the palette captured at init. Re-read
+      // the colours and repaint; if the sim is still running it'll pick the
+      // new values up on its next frame, so we only force a draw when idle.
+      const onThemeChange = function () {
+        readColors();
+        // Repaint immediately. We don't gate on graphRaf: if the sim is
+        // still running its next frame would repaint anyway, but an extra
+        // draw is cheap and guarantees the canvas updates even when the
+        // loop is throttled (e.g. background tab) or already idle.
+        draw();
+      };
+      const themeObserver = new MutationObserver(onThemeChange);
+      themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+      const schemeMq = window.matchMedia("(prefers-color-scheme: dark)");
+      schemeMq.addEventListener("change", onThemeChange);
+      graphThemeCleanup = function () {
+        themeObserver.disconnect();
+        schemeMq.removeEventListener("change", onThemeChange);
+      };
+
+      graphRaf = requestAnimationFrame(frame);
     }).catch(function () { /* graph unavailable — leave canvas blank */ });
   }
 
