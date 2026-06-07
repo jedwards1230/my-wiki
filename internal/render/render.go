@@ -108,6 +108,7 @@ func newMarkdown(slugs map[string]string, transcludes *TranscludeSource) goldmar
 				),
 			),
 			&obsidianExtension{},
+			&mediaEmbedExtension{},
 			newWikilinkExtender(slugs, transcludes),
 			// Mermaid: client-side passthrough — ```mermaid``` blocks are
 			// emitted as <pre class="mermaid"> for mermaid.min.js to pick

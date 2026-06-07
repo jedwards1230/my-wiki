@@ -907,6 +907,18 @@ func (r *transcludeRenderer) render(w util.BufWriter, src []byte, node ast.Node,
 		return ast.WalkSkipChildren, nil
 	}
 
+	// Media file embeds — video/audio/PDF live in raw/ like images. Resolve
+	// to /raw/ and emit the matching native element instead of falling
+	// through to page transclusion (which would render a broken embed).
+	if n.Embed && (isVideoExtension(target) || isAudioExtension(target) || isPDFExtension(target)) {
+		dest, err := r.resolver.ResolveWikilink(n)
+		if err != nil || len(dest) == 0 {
+			return ast.WalkContinue, nil
+		}
+		writeFileEmbed(w, target, dest)
+		return ast.WalkSkipChildren, nil
+	}
+
 	// Non-image embed → transclusion of another vault page.
 	if n.Embed && target != "" {
 		return r.renderTransclude(w, target, frag)
