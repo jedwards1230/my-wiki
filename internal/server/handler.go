@@ -277,12 +277,18 @@ func (h *RawHandler) serveRawFile(w http.ResponseWriter, r *http.Request, name s
 	return true
 }
 
-// wantsRenderedHTML reports whether a raw markdown request should be rendered
-// to HTML rather than served as bytes. Browsers send Accept: text/html; the
-// explicit ?raw=1 escape hatch forces bytes for anyone (including browsers).
+// wantsRenderedHTML reports whether a raw request should be rendered to an HTML
+// page (markdown → page, directory → gallery) rather than served as bytes / the
+// plain autoindex. Browsers send Accept: text/html. htmx (hx-boost) navigations
+// send HX-Request: true with Accept: */* — they MUST get the chrome page too, or
+// the response lacks the #main element hx-select swaps into and the click lands
+// on a blank pane. The explicit ?raw=1 escape hatch forces bytes for anyone.
 func wantsRenderedHTML(r *http.Request) bool {
 	if r.URL.Query().Get("raw") == "1" {
 		return false
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		return true
 	}
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }

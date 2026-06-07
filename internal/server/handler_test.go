@@ -327,13 +327,18 @@ func TestRawMarkdownContentNegotiation(t *testing.T) {
 		name       string
 		url        string
 		accept     string
+		hxRequest  bool
 		wantRender bool
 		wantCType  string
 	}{
-		{"browser renders", "/raw/notes/hello.md", "text/html,*/*", true, "text/html"},
-		{"agent gets bytes", "/raw/notes/hello.md", "", false, "text/plain"},
-		{"raw=1 forces bytes", "/raw/notes/hello.md?raw=1", "text/html", false, "text/plain"},
-		{"non-md untouched", "/raw/image.png", "text/html", false, "image/png"},
+		{"browser renders", "/raw/notes/hello.md", "text/html,*/*", false, true, "text/html"},
+		{"agent gets bytes", "/raw/notes/hello.md", "", false, false, "text/plain"},
+		{"raw=1 forces bytes", "/raw/notes/hello.md?raw=1", "text/html", false, false, "text/plain"},
+		{"non-md untouched", "/raw/image.png", "text/html", false, false, "image/png"},
+		// htmx (hx-boost) sends HX-Request but Accept: */* — must still render
+		// the chrome page so the swap target #main exists (else blank pane).
+		{"htmx renders", "/raw/notes/hello.md", "*/*", true, true, "text/html"},
+		{"htmx but raw=1 → bytes", "/raw/notes/hello.md?raw=1", "*/*", true, false, "text/plain"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -342,6 +347,9 @@ func TestRawMarkdownContentNegotiation(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, c.url, nil)
 			if c.accept != "" {
 				r.Header.Set("Accept", c.accept)
+			}
+			if c.hxRequest {
+				r.Header.Set("HX-Request", "true")
 			}
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
@@ -408,6 +416,20 @@ func TestRawIndexGalleryNegotiation(t *testing.T) {
 		}
 		if !strings.Contains(w.Body.String(), "GALLERY") {
 			t.Fatalf("expected gallery body, got %q", w.Body.String())
+		}
+	})
+	t.Run("htmx click gets gallery (chrome with #main)", func(t *testing.T) {
+		// hx-boost: HX-Request true, Accept */* — must render so the swap
+		// response carries #main. This is the blank-pane regression.
+		stub := &stubRawRenderer{}
+		h := NewRawHandler(newRawFS(), stub)
+		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil)
+		r.Header.Set("Accept", "*/*")
+		r.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if !stub.indexCalled {
+			t.Fatal("htmx navigation must render the gallery, not the plain autoindex")
 		}
 	})
 	t.Run("agent gets plain autoindex", func(t *testing.T) {
