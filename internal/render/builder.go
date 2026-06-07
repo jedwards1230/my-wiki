@@ -41,10 +41,11 @@ type Builder struct {
 	cfg          BuilderConfig
 	logger       *slog.Logger
 	backlinkIdx  *BacklinkIndex
-	mu           sync.Mutex // guards lastSnapshot / lastPages / lastRenderer
+	mu           sync.Mutex // guards lastSnapshot / lastPages / lastRenderer / lastExplorer
 	lastSnapshot *memfs.Snapshot
 	lastPages    map[string]*Page
 	lastRenderer *Renderer
+	lastExplorer []*ExplorerNode
 }
 
 // NewBuilder constructs a Builder. BaseURL is normalized; SiteTitle
@@ -393,6 +394,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 	b.lastSnapshot = snap
 	b.lastPages = pageMap
 	b.lastRenderer = r
+	b.lastExplorer = explorerBase
 	b.mu.Unlock()
 
 	b.logger.Info("native renderer build complete",

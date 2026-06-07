@@ -10,7 +10,9 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/jedwards1230/my-wiki/internal/render"
 	"github.com/jedwards1230/my-wiki/internal/service"
 )
 
@@ -151,14 +153,31 @@ func (h *MarkdownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// RawHandler serves raw source files with native MIME types and directory listing.
-type RawHandler struct {
-	fsys fs.FS
+// RawRenderer renders raw/ content into full HTML pages wrapped in the wiki
+// chrome. The native renderer's Builder implements it. ok=false means no
+// renderer is available (pre-first-build) and the caller serves bytes / the
+// plain autoindex instead.
+type RawRenderer interface {
+	// RenderRawPage renders a markdown source. relPath is vault-relative
+	// (e.g. "raw/clippings/x.md"); rawURL is the canonical /raw/ URL.
+	RenderRawPage(relPath string, source []byte, modTime time.Time, rawURL string) ([]byte, bool)
+	// RenderRawIndex renders a directory listing as a gallery. urlDir is the
+	// directory URL with a trailing slash (e.g. "/raw/clippings/").
+	RenderRawIndex(urlDir string, entries []render.RawDirEntry) ([]byte, bool)
 }
 
-// NewRawHandler creates a handler serving raw files from the vault's raw/ directory.
-func NewRawHandler(fsys fs.FS) *RawHandler {
-	return &RawHandler{fsys: fsys}
+// RawHandler serves raw source files with native MIME types and directory listing.
+type RawHandler struct {
+	fsys   fs.FS
+	render RawRenderer // optional — when set, markdown is rendered for browsers
+}
+
+// NewRawHandler creates a handler serving raw files from the vault's raw/
+// directory. render is optional: when non-nil, markdown files requested by a
+// browser (Accept: text/html, no ?raw=1) are rendered as HTML pages instead of
+// served as text/plain. Agents and scripts still get verbatim bytes.
+func NewRawHandler(fsys fs.FS, render RawRenderer) *RawHandler {
+	return &RawHandler{fsys: fsys, render: render}
 }
 
 // Custom MIME types matching the nginx config.
@@ -235,6 +254,17 @@ func (h *RawHandler) serveRawFile(w http.ResponseWriter, r *http.Request, name s
 		return false
 	}
 
+	// Render markdown source docs as HTML pages for browsers, keeping verbatim
+	// bytes for agents/scripts (Accept without text/html) and explicit ?raw=1.
+	if h.render != nil && strings.HasSuffix(name, ".md") && wantsRenderedHTML(r) {
+		if out, ok := h.render.RenderRawPage("raw/"+name, data, stat.ModTime(), "/raw/"+name); ok {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(out)
+			return true
+		}
+		// Render miss (e.g. pre-first-build) → fall through to plain bytes.
+	}
+
 	ext := path.Ext(name)
 	ct, ok := rawMIMETypes[ext]
 	if !ok {
@@ -245,6 +275,16 @@ func (h *RawHandler) serveRawFile(w http.ResponseWriter, r *http.Request, name s
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(data)
 	return true
+}
+
+// wantsRenderedHTML reports whether a raw markdown request should be rendered
+// to HTML rather than served as bytes. Browsers send Accept: text/html; the
+// explicit ?raw=1 escape hatch forces bytes for anyone (including browsers).
+func wantsRenderedHTML(r *http.Request) bool {
+	if r.URL.Query().Get("raw") == "1" {
+		return false
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
 func (h *RawHandler) serveAutoindex(w http.ResponseWriter, r *http.Request, dirPath string) bool {
@@ -273,6 +313,21 @@ func (h *RawHandler) serveAutoindex(w http.ResponseWriter, r *http.Request, dirP
 		if !strings.HasSuffix(urlDir, "/") {
 			urlDir += "/"
 		}
+	}
+
+	// Rendered gallery (wiki chrome + image thumbnails) for browsers. Agents,
+	// curl, and ?raw=1 still get the plain autoindex below.
+	if h.render != nil && wantsRenderedHTML(r) {
+		gallery := make([]render.RawDirEntry, len(entries))
+		for i, e := range entries {
+			gallery[i] = render.RawDirEntry{Name: e.Name(), IsDir: e.IsDir()}
+		}
+		if out, ok := h.render.RenderRawIndex(urlDir, gallery); ok {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(out)
+			return true
+		}
+		// Render miss → fall through to the plain autoindex.
 	}
 
 	escapedDir := html.EscapeString(urlDir)

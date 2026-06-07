@@ -25,6 +25,7 @@ func renderMD(t *testing.T, src string, slugs map[string]string) string {
 		goldmark.WithExtensions(
 			extension.GFM,
 			&obsidianExtension{},
+			&mediaEmbedExtension{},
 			newWikilinkExtender(slugs, nil),
 		),
 		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
