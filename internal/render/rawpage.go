@@ -46,7 +46,7 @@ func (b *Builder) RenderRawIndex(urlDir string, entries []RawDirEntry) ([]byte, 
 		Description:     "Source files under " + urlDir,
 		RelativeURL:     urlDir,
 		BreadcrumbItems: rawBreadcrumb(urlDir),
-		ContentHTML:     buildRawGallery(urlDir, entries),
+		ContentHTML:     buildRawListing(urlDir, entries),
 		// Slug stays empty — suppresses graph / backlinks / view-source.
 	}
 	td := TemplateData{
@@ -63,42 +63,60 @@ func (b *Builder) RenderRawIndex(urlDir string, entries []RawDirEntry) ([]byte, 
 	return out, true
 }
 
-// buildRawGallery renders the directory entries as a tile grid. All names are
-// HTML-escaped; URLs are built from the already-clean urlDir + name.
-func buildRawGallery(urlDir string, entries []RawDirEntry) template.HTML {
-	var b strings.Builder
-	b.WriteString(`<ul class="raw-gallery">`)
+// buildRawListing renders a /raw/ directory as an autoindex: a file/folder
+// list (the default everywhere), preceded by an image thumbnail grid ONLY when
+// the directory actually contains images. No images → just the list. All names
+// are HTML-escaped; URLs are built from the already-clean urlDir + name.
+func buildRawListing(urlDir string, entries []RawDirEntry) template.HTML {
+	// Split images out so they can lead with a thumbnail grid; folders and
+	// non-image files stay in the list below.
+	var images, rest []RawDirEntry
+	for _, e := range entries {
+		if !e.IsDir && isImageExtension(e.Name) {
+			images = append(images, e)
+		} else {
+			rest = append(rest, e)
+		}
+	}
 
-	// Parent link, except at the /raw/ root.
+	var b strings.Builder
+
+	// Image gallery section — conditional on images being present.
+	if len(images) > 0 {
+		b.WriteString(`<section class="raw-images"><ul class="raw-gallery">`)
+		for _, e := range images {
+			href := html.EscapeString(urlDir + e.Name)
+			escName := html.EscapeString(e.Name)
+			b.WriteString(`<li class="raw-tile raw-tile-img"><a href="` + href +
+				`"><span class="raw-tile-thumb"><img loading="lazy" src="` + href + `" alt="` + escName +
+				`"></span><span class="raw-tile-name">` + escName + `</span></a></li>`)
+		}
+		b.WriteString(`</ul></section>`)
+	}
+
+	// File/folder list — the autoindex proper.
+	b.WriteString(`<ul class="raw-list">`)
 	if urlDir != "/raw/" {
 		parent := path.Dir(strings.TrimSuffix(urlDir, "/"))
 		if !strings.HasSuffix(parent, "/") {
 			parent += "/"
 		}
-		b.WriteString(`<li class="raw-tile raw-tile-dir"><a href="` + html.EscapeString(parent) +
-			`"><span class="raw-tile-icon" aria-hidden="true">&#8617;</span><span class="raw-tile-name">..</span></a></li>`)
+		b.WriteString(`<li class="raw-row raw-row-dir"><a href="` + html.EscapeString(parent) +
+			`"><span class="raw-row-icon" aria-hidden="true">&#8617;</span><span class="raw-row-name">..</span></a></li>`)
 	}
-
-	for _, e := range entries {
+	for _, e := range rest {
 		escName := html.EscapeString(e.Name)
-		switch {
-		case e.IsDir:
+		if e.IsDir {
 			href := html.EscapeString(urlDir + e.Name + "/")
-			b.WriteString(`<li class="raw-tile raw-tile-dir"><a href="` + href +
-				`"><span class="raw-tile-icon" aria-hidden="true">&#128193;</span><span class="raw-tile-name">` + escName + `/</span></a></li>`)
-		case isImageExtension(e.Name):
+			b.WriteString(`<li class="raw-row raw-row-dir"><a href="` + href +
+				`"><span class="raw-row-icon" aria-hidden="true">&#128193;</span><span class="raw-row-name">` + escName + `/</span></a></li>`)
+		} else {
 			href := html.EscapeString(urlDir + e.Name)
-			b.WriteString(`<li class="raw-tile raw-tile-img"><a href="` + href +
-				`"><span class="raw-tile-thumb"><img loading="lazy" src="` + href + `" alt="` + escName +
-				`"></span><span class="raw-tile-name">` + escName + `</span></a></li>`)
-		default:
-			href := html.EscapeString(urlDir + e.Name)
-			b.WriteString(`<li class="raw-tile raw-tile-file"><a href="` + href +
-				`"><span class="raw-tile-icon raw-tile-ext" aria-hidden="true">` + html.EscapeString(fileTypeLabel(e.Name)) +
-				`</span><span class="raw-tile-name">` + escName + `</span></a></li>`)
+			b.WriteString(`<li class="raw-row raw-row-file"><a href="` + href +
+				`"><span class="raw-row-ext" aria-hidden="true">` + html.EscapeString(fileTypeLabel(e.Name)) +
+				`</span><span class="raw-row-name">` + escName + `</span></a></li>`)
 		}
 	}
-
 	b.WriteString(`</ul>`)
 	return template.HTML(b.String()) //nolint:gosec // names escaped, URLs built from clean dir + name
 }

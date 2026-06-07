@@ -87,3 +87,48 @@ func TestIsHTTPURL(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildRawListing(t *testing.T) {
+	t.Run("images present → grid + list", func(t *testing.T) {
+		out := string(buildRawListing("/raw/clippings/", []RawDirEntry{
+			{Name: "youtube", IsDir: true},
+			{Name: "photo.png", IsDir: false},
+			{Name: "notes.txt", IsDir: false},
+		}))
+		if !strings.Contains(out, `class="raw-gallery"`) {
+			t.Errorf("expected image gallery section:\n%s", out)
+		}
+		// Image goes in the grid as a thumbnail...
+		if !strings.Contains(out, `<img loading="lazy" src="/raw/clippings/photo.png"`) {
+			t.Errorf("expected photo thumbnail:\n%s", out)
+		}
+		// ...folders and non-image files go in the list.
+		if !strings.Contains(out, `class="raw-list"`) {
+			t.Errorf("expected file list:\n%s", out)
+		}
+		if !strings.Contains(out, `/raw/clippings/youtube/`) || !strings.Contains(out, `/raw/clippings/notes.txt`) {
+			t.Errorf("expected folder + file rows:\n%s", out)
+		}
+		// Parent link present (not at root).
+		if !strings.Contains(out, `>..</span>`) {
+			t.Errorf("expected parent (..) row:\n%s", out)
+		}
+	})
+
+	t.Run("no images → list only, no gallery", func(t *testing.T) {
+		out := string(buildRawListing("/raw/", []RawDirEntry{
+			{Name: "clippings", IsDir: true},
+			{Name: "readme.txt", IsDir: false},
+		}))
+		if strings.Contains(out, "raw-gallery") {
+			t.Errorf("no images, but a gallery section was rendered:\n%s", out)
+		}
+		if !strings.Contains(out, `class="raw-list"`) {
+			t.Errorf("expected file list:\n%s", out)
+		}
+		// At /raw/ root there is no parent row.
+		if strings.Contains(out, `>..</span>`) {
+			t.Errorf("root listing should not have a parent (..) row:\n%s", out)
+		}
+	})
+}
