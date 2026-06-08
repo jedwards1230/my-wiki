@@ -227,6 +227,10 @@ spec:
             - name: WIKI_INDEX_NORECENTS_DIRS
               value: {{ join "," .Values.indexing.noRecentsDirs | quote }}
             {{- end }}
+            {{- if .Values.indexing.rootDescription }}
+            - name: WIKI_ROOT_DESCRIPTION
+              value: {{ .Values.indexing.rootDescription | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080
