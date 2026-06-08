@@ -15,15 +15,15 @@ func setupDirectoryVault(t *testing.T) *vault.Vault {
 	t.Helper()
 	dir := t.TempDir()
 
-	for _, sub := range []string{"home/homelab", "meta", "research/aerospace"} {
+	for _, sub := range []string{"projects/research", "meta", "research/aerospace"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	files := map[string]string{
-		"home/note.md":               "---\ntitle: Home Note\ntags: home\n---\n\nBody.\n",
-		"home/homelab/cluster.md":    "---\ntitle: Cluster\ntags: homelab\ndescription: k3s cluster\n---\n\nBody.\n",
+		"projects/note.md":           "---\ntitle: Projects Note\ntags: projects\n---\n\nBody.\n",
+		"projects/research/paper.md": "---\ntitle: Paper\ntags: research\ndescription: Academic research\n---\n\nBody.\n",
 		"meta/schema.md":             "---\ntitle: Schema\ntags: meta\n---\n\nBody.\n",
 		"research/aerospace/nasa.md": "---\ntitle: NASA\ntags: research\n---\n\nBody.\n",
 	}
@@ -52,8 +52,8 @@ func TestDirectoryService_Generate(t *testing.T) {
 	// Root and each directory containing pages should have an index.md.
 	for _, rel := range []string{
 		"index.md",
-		"home/index.md",
-		"home/homelab/index.md",
+		"projects/index.md",
+		"projects/research/index.md",
 		"meta/index.md",
 		"research/index.md",
 		"research/aerospace/index.md",
@@ -112,8 +112,8 @@ func TestDirectoryService_Generate_Idempotent(t *testing.T) {
 
 	indexFiles := []string{
 		"index.md",
-		"home/index.md",
-		"home/homelab/index.md",
+		"projects/index.md",
+		"projects/research/index.md",
 		"meta/index.md",
 		"research/index.md",
 		"research/aerospace/index.md",
@@ -151,11 +151,11 @@ func TestDirectoryService_Generate_WritesOnContentChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	homeIndex := filepath.Join(v.Dir, "home/index.md")
-	stamped := stampPast(t, homeIndex)
+	projectsIndex := filepath.Join(v.Dir, "projects/index.md")
+	stamped := stampPast(t, projectsIndex)
 
-	// Add a new page under home/ — the home/index.md should be rewritten.
-	newPage := filepath.Join(v.Dir, "home/new-page.md")
+	// Add a new page under projects/ — the projects/index.md should be rewritten.
+	newPage := filepath.Join(v.Dir, "projects/new-page.md")
 	if err := os.WriteFile(newPage, []byte("---\ntitle: New Page\n---\n\nBody.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -164,20 +164,20 @@ func TestDirectoryService_Generate_WritesOnContentChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := os.Stat(homeIndex)
+	info, err := os.Stat(projectsIndex)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.ModTime().Equal(stamped) {
-		t.Error("home/index.md mtime unchanged after adding a new page — fix is too aggressive")
+		t.Error("projects/index.md mtime unchanged after adding a new page — fix is too aggressive")
 	}
 
-	data, err := os.ReadFile(homeIndex)
+	data, err := os.ReadFile(projectsIndex)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(data), "new-page") {
-		t.Error("home/index.md does not reference the newly added page")
+		t.Error("projects/index.md does not reference the newly added page")
 	}
 }
 
@@ -404,7 +404,7 @@ func TestDirectoryService_Generate_RecentsSection(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "research/aerospace"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "home/homelab"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "projects/docs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -426,8 +426,8 @@ func TestDirectoryService_Generate_RecentsSection(t *testing.T) {
 	}
 
 	// A small subtree (1 page) that must NOT get a recents section.
-	smallPage := filepath.Join(dir, "home/homelab/cluster.md")
-	if err := os.WriteFile(smallPage, []byte("---\ntitle: Cluster\ntags: homelab\n---\n\nBody.\n"), 0o644); err != nil {
+	smallPage := filepath.Join(dir, "projects/docs/intro.md")
+	if err := os.WriteFile(smallPage, []byte("---\ntitle: Introduction\ntags: docs\n---\n\nBody.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -476,7 +476,7 @@ func TestDirectoryService_Generate_RecentsSection(t *testing.T) {
 	}
 
 	// Small subtree index must be gated out.
-	smallData, err := os.ReadFile(filepath.Join(dir, "home/homelab/index.md"))
+	smallData, err := os.ReadFile(filepath.Join(dir, "projects/docs/index.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

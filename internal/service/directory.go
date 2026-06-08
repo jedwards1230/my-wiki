@@ -466,7 +466,11 @@ func renderIndex(node *dirNode, allPages []DirectoryEntry, today string, skip fu
 
 	// Frontmatter
 	title := "My Wiki"
-	desc := "Shared knowledge base for the Edwards homelab"
+	rootDesc := os.Getenv("WIKI_ROOT_DESCRIPTION") // see internal/cli.EnvRootDescription
+	if rootDesc == "" {
+		rootDesc = "Shared knowledge base"
+	}
+	desc := rootDesc
 	if !isRoot {
 		title = titleCase(filepath.Base(node.rel))
 		desc = fmt.Sprintf("Index of %s", node.rel)

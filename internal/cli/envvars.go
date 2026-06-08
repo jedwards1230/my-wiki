@@ -82,6 +82,13 @@ const EnvIndexExcludeDirs = "WIKI_INDEX_EXCLUDE_DIRS"
 // and the `directory` CLI.
 const EnvIndexNoRecentsDirs = "WIKI_INDEX_NORECENTS_DIRS"
 
+// EnvRootDescription is the description written into the root index.md
+// frontmatter by `directory --generate`.
+//
+// Default: "Shared knowledge base". Override to brand the generated index for
+// a specific deployment (e.g. "Team knowledge base for Acme Corp").
+const EnvRootDescription = "WIKI_ROOT_DESCRIPTION"
+
 // ---------------------------------------------------------------------------
 // MCP server
 // ---------------------------------------------------------------------------
