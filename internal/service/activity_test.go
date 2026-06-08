@@ -87,7 +87,7 @@ func TestActivityService_AppendPreservesAliasedWikilink(t *testing.T) {
 		Type:    "edit",
 		Title:   "Created service pages",
 		Time:    "22:50",
-		Summary: "Created [[home/homelab/services/tdarr|Tdarr]] with a `helmfile.yaml` config.",
+		Summary: "Created [[docs/guides/setup|Setup Guide]] with a `config.yaml` file.",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -97,10 +97,10 @@ func TestActivityService_AppendPreservesAliasedWikilink(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(dir, "meta", "activity", entries[0].Name()))
 	content := string(data)
 
-	if !strings.Contains(content, "[[home/homelab/services/tdarr|Tdarr]]") {
+	if !strings.Contains(content, "[[docs/guides/setup|Setup Guide]]") {
 		t.Errorf("expected aliased wikilink preserved in body, got:\n%s", content)
 	}
-	if !strings.Contains(content, "`helmfile.yaml`") {
+	if !strings.Contains(content, "`config.yaml`") {
 		t.Errorf("expected backticks preserved in body, got:\n%s", content)
 	}
 	// The pipe-delimited header is still protected — the title line has exactly

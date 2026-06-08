@@ -161,6 +161,11 @@ indexing:
   # Directories whose pages are excluded from every "Recently Updated"
   # section (server default when unset: meta/activity).
   noRecentsDirs: []
+  # Description text for the generated root index.md frontmatter.
+  # Left empty, the var is not set and the server applies its default
+  # ("Shared knowledge base"). Override to brand the index for a specific
+  # deployment (e.g. "Team knowledge base for Acme Corp").
+  rootDescription: ""
 
 # Webhook dispatcher: consumer-agnostic surface for delivering signed
 # envelopes when inbox/ content changes. Disabled by default.
