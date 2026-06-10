@@ -19,6 +19,10 @@ jobs:
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     with:
+      extra_plugins: |
+        plugin-dev@claude-plugins-official
+      extra_plugin_marketplaces: |
+        https://github.com/anthropics/claude-plugins-official.git
       focus: |
         wiki-server is a Go HTTP service rendering an Obsidian vault to HTML.
         - Path traversal: request paths reaching filepath.Join / file reads (the
@@ -31,4 +35,5 @@ jobs:
           unchecked type assertions, missing defer Close).
         - Code↔chart drift: a new WIKI_* env var / flag / port must be exposed in
           the Helm chart under deploy/helm/my-wiki/.
+        - For plugin files (manifest, hooks, skills, agents, commands), use plugin-dev's plugin-validator / skill-reviewer agents.
         Do NOT re-flag gofmt/go vet/golangci-lint — CI owns those.
