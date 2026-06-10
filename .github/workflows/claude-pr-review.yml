@@ -21,6 +21,8 @@ jobs:
     with:
       extra_plugins: |
         plugin-dev@claude-plugins-official
+      extra_plugin_marketplaces: |
+        https://github.com/anthropics/claude-plugins-official.git
       focus: |
         wiki-server is a Go HTTP service rendering an Obsidian vault to HTML.
         - Path traversal: request paths reaching filepath.Join / file reads (the
