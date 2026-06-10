@@ -19,6 +19,8 @@ jobs:
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     with:
+      extra_plugins: |
+        plugin-dev@claude-plugins-official
       focus: |
         wiki-server is a Go HTTP service rendering an Obsidian vault to HTML.
         - Path traversal: request paths reaching filepath.Join / file reads (the
