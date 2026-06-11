@@ -278,8 +278,10 @@ func (s *PageService) List(opts ListOptions) ([]PageInfo, error) {
 			return nil
 		}
 
-		// Exclude meta/activity/ from modified-sorted listings (same as old recent behavior).
-		if sortByMtime && (strings.HasPrefix(rel, "meta/activity/") || strings.HasPrefix(rel, filepath.Join("meta", "activity")+string(filepath.Separator))) {
+		// Exclude meta/activity/ and the auto-regenerated meta/log.md index from
+		// modified-sorted listings (same as old recent behavior). Both bump mtime
+		// on every `wiki-server log` run and would otherwise dominate recents.
+		if sortByMtime && (strings.HasPrefix(rel, "meta/activity/") || strings.HasPrefix(rel, filepath.Join("meta", "activity")+string(filepath.Separator)) || rel == "meta/log.md" || rel == filepath.Join("meta", "log.md")) {
 			return nil
 		}
 
