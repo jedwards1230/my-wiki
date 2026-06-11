@@ -403,6 +403,12 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// synthesize an inbox.changed event for any existing inbox/*.md files
 	// so consumers pick up the backlog on boot.
 	if pipeline != nil && pipeline.cfg.ReconcileOnStart {
+		// Rename any unsafe inbox filenames to their canonical slug first, so
+		// the reconcile (and the agent it triggers) only ever sees addressable
+		// names.
+		if n := normalizeInboxFilenames(vaultDir, logger); n > 0 {
+			logger.Info("reconcile on start normalized inbox filenames", "renamed", n)
+		}
 		paths := scanInboxForReconcile(vaultDir, logger)
 		if len(paths) > 0 {
 			logger.Info("reconcile on start found pending inbox items", "count", len(paths))
