@@ -484,3 +484,63 @@ func TestDirectoryService_Generate_RecentsSection(t *testing.T) {
 		t.Errorf("small subtree should not get Recently Updated:\n%s", string(smallData))
 	}
 }
+
+// The auto-regenerated meta/log.md index bumps mtime on every log run, so it
+// must never appear in a "Recently Updated" section even when it is the single
+// newest file in the vault.
+func TestDirectoryService_Generate_RecentsExcludesLogIndex(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(dir, "research/aerospace"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "meta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// Enough pages to trigger a recents section, older than the log index.
+	for i := 0; i < recentsMinPages+2; i++ {
+		name := filepath.Join(dir, "research/aerospace", fmt.Sprintf("page-%02d.md", i))
+		content := fmt.Sprintf("---\ntitle: Page %02d\ntags: research\n---\n\nBody.\n", i)
+		if err := os.WriteFile(name, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mt := base.Add(time.Duration(i) * time.Hour)
+		if err := os.Chtimes(name, mt, mt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// meta/log.md is the newest file by mtime — it would top recents if listed.
+	logIndex := filepath.Join(dir, "meta", "log.md")
+	if err := os.WriteFile(logIndex, []byte("---\ntitle: Log\ntags: meta\n---\n\nActivity index.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newest := base.Add(72 * time.Hour)
+	if err := os.Chtimes(logIndex, newest, newest); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewDirectoryService(vault.New(dir))
+	if _, _, err := svc.Generate(); err != nil {
+		t.Fatal(err)
+	}
+
+	rootData, err := os.ReadFile(filepath.Join(dir, "index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := string(rootData)
+	if !strings.Contains(root, "## Recently Updated") {
+		t.Fatalf("root index missing Recently Updated section:\n%s", root)
+	}
+	recentsBlock := root[strings.Index(root, "## Recently Updated"):]
+	if end := strings.Index(recentsBlock, "## Directory"); end >= 0 {
+		recentsBlock = recentsBlock[:end]
+	}
+	if strings.Contains(recentsBlock, "meta/log") {
+		t.Errorf("auto-updated log index must be excluded from recents, got:\n%s", recentsBlock)
+	}
+}

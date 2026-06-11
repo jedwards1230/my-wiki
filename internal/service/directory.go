@@ -41,6 +41,12 @@ const (
 // idempotent write-skip Generate relies on. Overridable via WithNoRecentsDirs.
 var defaultNoRecentsDirs = []string{"meta/activity"}
 
+// logIndexRel is the auto-regenerated activity log index (meta/log.md). Its
+// mtime bumps on every `wiki-server log` run, so it would permanently top every
+// "Recently Updated" section — exclude it the same as the meta/activity churn.
+// Kept separate from noRecentsDirs because that list is directory-scoped.
+const logIndexRel = "meta/log.md"
+
 // DirectoryService provides page catalog operations.
 type DirectoryService struct {
 	vault *vault.Vault
@@ -168,9 +174,14 @@ func (s *DirectoryService) isExcludedDir(rel string) bool {
 }
 
 // skipRecents reports whether a page at rel is excluded from "Recently
-// Updated" sections (configured noRecentsDirs).
+// Updated" sections — the auto-regenerated log index or any configured
+// noRecentsDirs.
 func (s *DirectoryService) skipRecents(rel string) bool {
-	return underAny(s.noRecentsDirs, filepath.ToSlash(rel))
+	rel = filepath.ToSlash(rel)
+	if rel == logIndexRel {
+		return true
+	}
+	return underAny(s.noRecentsDirs, rel)
 }
 
 // IsGeneratedIndex returns true if the given relative path is a generated index file.
