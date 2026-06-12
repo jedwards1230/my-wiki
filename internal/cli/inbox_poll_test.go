@@ -26,11 +26,18 @@ func (f *fakeRecorder) RecordInboxFSChange(path string, action notify.ChangeKind
 // writeInboxFile writes content to vault/inbox/<rel> and stamps its mtime.
 func writeInboxFile(t *testing.T, vault, rel string, mtime time.Time) {
 	t.Helper()
+	writeInboxFileContent(t, vault, rel, "x", mtime)
+}
+
+// writeInboxFileContent is writeInboxFile with explicit content, so a test can
+// vary file size while pinning mtime (exercising the size leg of the diff).
+func writeInboxFileContent(t *testing.T, vault, rel, content string, mtime time.Time) {
+	t.Helper()
 	abs := filepath.Join(vault, "inbox", filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(abs, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", rel, err)
 	}
 	if err := os.Chtimes(abs, mtime, mtime); err != nil {
@@ -38,7 +45,7 @@ func writeInboxFile(t *testing.T, vault, rel string, mtime time.Time) {
 	}
 }
 
-func TestScanInboxMtimes(t *testing.T) {
+func TestScanInboxSnapshot(t *testing.T) {
 	vault := t.TempDir()
 	base := time.Unix(1_700_000_000, 0)
 	writeInboxFile(t, vault, "clippings/a.md", base)
@@ -50,7 +57,7 @@ func TestScanInboxMtimes(t *testing.T) {
 		t.Fatalf("write txt: %v", err)
 	}
 
-	got, err := scanInboxMtimes(vault)
+	got, err := scanInboxSnapshot(vault)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -72,8 +79,8 @@ func TestScanInboxMtimes(t *testing.T) {
 	}
 }
 
-func TestScanInboxMtimesNoInbox(t *testing.T) {
-	got, err := scanInboxMtimes(t.TempDir())
+func TestScanInboxSnapshotNoInbox(t *testing.T) {
+	got, err := scanInboxSnapshot(t.TempDir())
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -130,6 +137,26 @@ func TestInboxPollerModify(t *testing.T) {
 	p.poll()
 	if len(rec.calls) != 0 {
 		t.Fatalf("unchanged file must not re-dispatch; got %v", rec.calls)
+	}
+}
+
+// TestInboxPollerModifySameMtimeDifferentSize covers the NFS 1s-resolution
+// delete-recreate case: the file is replaced with identical mtime but a
+// different byte count. mtime alone would miss it; the size leg of the
+// signature catches it.
+func TestInboxPollerModifySameMtimeDifferentSize(t *testing.T) {
+	vault := t.TempDir()
+	mtime := time.Unix(1_700_000_000, 0)
+	writeInboxFileContent(t, vault, "a.md", "short", mtime)
+
+	rec := &fakeRecorder{}
+	p := newInboxPoller(vault, rec, time.Minute, discardLogger())
+
+	writeInboxFileContent(t, vault, "a.md", "a much longer body", mtime) // same mtime, larger
+	p.poll()
+
+	if len(rec.calls) != 1 || rec.calls[0] != (recordedChange{"inbox/a.md", notify.ChangeModified}) {
+		t.Fatalf("want one ChangeModified for same-mtime size change, got %v", rec.calls)
 	}
 }
 

@@ -33,19 +33,31 @@ type inboxChangeRecorder interface {
 // periodic mtime diff reliably catches the Obsidian-Sync clipper drops the
 // watcher never sees.
 //
-// Diffing on mtime (not mere presence) means an inbox file the agent leaves in
-// place is dispatched exactly once — on first detection — so the poller cannot
-// reintroduce the ghost-file re-dispatch loop. Changes funnel through the same
-// router entry point as fsnotify (RecordInboxFSChange), so API-mutation
-// dedupe, per-consumer path filters, debouncing, and skipAllDeletes
-// suppression all apply unchanged.
+// Diffing on a (mtime, size) signature rather than mere presence means an inbox
+// file the agent leaves in place is dispatched exactly once — on first
+// detection — so the poller cannot reintroduce the ghost-file re-dispatch loop.
+// Changes funnel through the same router entry point as fsnotify
+// (RecordInboxFSChange), so API-mutation dedupe, per-consumer path filters,
+// debouncing, and skipAllDeletes suppression all apply unchanged.
 type inboxPoller struct {
 	vaultDir string
 	router   inboxChangeRecorder
 	interval time.Duration
 	logger   *slog.Logger
 
-	seen map[string]time.Time // vault-relative path -> last-seen modtime
+	seen map[string]fileSig // vault-relative path -> last-seen signature
+}
+
+// fileSig is the change-detection signature for an inbox file. mtime alone is
+// ambiguous on NFS (1s resolution): a delete-then-recreate within the same
+// second keeps the same mtime, so a content swap could slip past unseen.
+// Pairing mtime with size catches that case for any recreate that changes the
+// byte count — which a real clipper re-drop almost always does. A replacement
+// with identical mtime AND identical size is content-equivalent, so treating it
+// as unchanged is correct, not a miss.
+type fileSig struct {
+	mtime time.Time
+	size  int64
 }
 
 // newInboxPoller seeds its baseline from the current inbox state so the
@@ -57,9 +69,9 @@ func newInboxPoller(vaultDir string, router inboxChangeRecorder, interval time.D
 		router:   router,
 		interval: interval,
 		logger:   logger,
-		seen:     map[string]time.Time{},
+		seen:     map[string]fileSig{},
 	}
-	if snap, err := scanInboxMtimes(vaultDir); err == nil {
+	if snap, err := scanInboxSnapshot(vaultDir); err == nil {
 		p.seen = snap
 	} else {
 		logger.Warn("inbox poll: initial scan failed; starting from empty baseline", "error", err)
@@ -86,18 +98,21 @@ func (p *inboxPoller) Run(ctx context.Context) {
 // snapshot so the next tick re-diffs cleanly rather than treating a failed
 // scan as a mass deletion.
 func (p *inboxPoller) poll() {
-	current, err := scanInboxMtimes(p.vaultDir)
+	current, err := scanInboxSnapshot(p.vaultDir)
 	if err != nil {
 		p.logger.Warn("inbox poll: scan failed, keeping previous snapshot", "error", err)
 		return
 	}
 	var created, modified, deleted int
-	for path, mt := range current {
+	for path, sig := range current {
 		switch prev, ok := p.seen[path]; {
 		case !ok:
 			p.router.RecordInboxFSChange(path, notify.ChangeCreated)
 			created++
-		case mt.After(prev):
+		case sig.mtime.After(prev.mtime) || sig.size != prev.size:
+			// Newer mtime is the common edit signal; a size change with an
+			// equal (or even older, e.g. restore-from-backup) mtime catches a
+			// same-second delete-recreate that mtime alone would miss.
 			p.router.RecordInboxFSChange(path, notify.ChangeModified)
 			modified++
 		}
@@ -115,19 +130,19 @@ func (p *inboxPoller) poll() {
 	}
 }
 
-// scanInboxMtimes returns a map of vault-relative .md path -> modtime for every
-// markdown file under inbox/. A missing inbox/ yields an empty map and no
-// error. Per-entry walk errors are skipped (best-effort), matching
-// scanInboxForReconcile's tolerance.
+// scanInboxSnapshot returns a map of vault-relative .md path -> (mtime, size)
+// signature for every markdown file under inbox/. A missing inbox/ yields an
+// empty map and no error. Per-entry walk errors are skipped (best-effort),
+// matching scanInboxForReconcile's tolerance.
 //
 // It skips inbox/review-needed/ (human-curated, excluded from dispatch) and the
 // generated index.md, mirroring normalizeInboxFilenames and the consumer's
 // path-filter excludes. index.md is regenerated on every rebuild, so tracking
-// its churning mtime would emit a ChangeModified each tick that the router only
-// drops at filter time — wasted work and noisy logs.
-func scanInboxMtimes(vaultDir string) (map[string]time.Time, error) {
+// its churning signature would emit a ChangeModified each tick that the router
+// only drops at filter time — wasted work and noisy logs.
+func scanInboxSnapshot(vaultDir string) (map[string]fileSig, error) {
 	inbox := filepath.Join(vaultDir, "inbox")
-	out := map[string]time.Time{}
+	out := map[string]fileSig{}
 	if _, err := os.Stat(inbox); err != nil {
 		if os.IsNotExist(err) {
 			return out, nil
@@ -155,7 +170,7 @@ func scanInboxMtimes(vaultDir string) (map[string]time.Time, error) {
 		if err != nil {
 			return nil
 		}
-		out[filepath.ToSlash(rel)] = info.ModTime()
+		out[filepath.ToSlash(rel)] = fileSig{mtime: info.ModTime(), size: info.Size()}
 		return nil
 	})
 	return out, err
