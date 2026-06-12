@@ -239,7 +239,7 @@ func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify
 		pagePath := strings.TrimSuffix(evt.Path, ".md")
 		entry := service.ActivityEntry{
 			Type:       string(evt.Kind),
-			Title:      fmt.Sprintf("[[%s]]", pagePath),
+			Title:      activityTitle(evt.Kind, pagePath),
 			AutoLogged: true,
 		}
 		mu.Lock()
@@ -254,6 +254,19 @@ func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify
 		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "activity", today+".md"), notify.ChangeModified)
 		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "log.md"), notify.ChangeModified)
 	}
+}
+
+// activityTitle formats the auto-logged activity entry's title for a mutation.
+// Non-delete mutations link to the live page via a wikilink. A delete's target
+// no longer exists, so a [[wikilink]] can never resolve — it renders as plain
+// text that reads like a broken link. Strikethrough is both semantically
+// correct ("this page was removed") and survives the activity-log Sanitize pass,
+// which strips '|' and '`' but not '~'.
+func activityTitle(kind service.MutationKind, pagePath string) string {
+	if kind == service.MutationDelete {
+		return fmt.Sprintf("~~%s~~", pagePath)
+	}
+	return fmt.Sprintf("[[%s]]", pagePath)
 }
 
 func runServeHTTP(cmd *cobra.Command, _ []string) error {
