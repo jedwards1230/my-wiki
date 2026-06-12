@@ -583,3 +583,42 @@ func TestPageService_PatchDeniedReturnsSentinel(t *testing.T) {
 		t.Errorf("Patch(private) err = %v, want ErrPathDenied", err)
 	}
 }
+
+func TestPageService_WriteSlugifiesDestination(t *testing.T) {
+	storage, dir := setupPagesVault(t)
+	svc := NewPageService(storage)
+
+	// An agent-supplied path with smart punctuation and spaces must land on a
+	// server-assigned slug, not the raw name.
+	content := "---\ntitle: Murati\ntags:\n  - research\ndate: 2026-06-11\n---\n\nBody.\n"
+	if err := svc.Write("research/clippings/Thinking Machines’ Murati on AI’s Next Chapter.md", content); err != nil {
+		t.Fatal(err)
+	}
+
+	wantRel := "research/clippings/thinking-machines-murati-on-ais-next-chapter.md"
+	if _, err := os.Stat(filepath.Join(dir, wantRel)); err != nil {
+		t.Fatalf("expected slugified file at %s: %v", wantRel, err)
+	}
+	// The raw name must not exist on disk.
+	if _, err := os.Stat(filepath.Join(dir, "research/clippings/Thinking Machines’ Murati on AI’s Next Chapter.md")); !os.IsNotExist(err) {
+		t.Fatalf("raw filename should not exist, got err=%v", err)
+	}
+	// And it is addressable by the slug.
+	if _, err := svc.Read(wantRel); err != nil {
+		t.Fatalf("slugified page not readable: %v", err)
+	}
+}
+
+func TestPageService_MoveSlugifiesDestination(t *testing.T) {
+	storage, dir := setupPagesVault(t)
+	svc := NewPageService(storage)
+
+	if err := svc.Move("project/alpha.md", "research/clippings/Staff Archetypes.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	wantRel := "research/clippings/staff-archetypes.md"
+	if _, err := os.Stat(filepath.Join(dir, wantRel)); err != nil {
+		t.Fatalf("expected slugified destination at %s: %v", wantRel, err)
+	}
+}

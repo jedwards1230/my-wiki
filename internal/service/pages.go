@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jedwards1230/my-wiki/internal/slug"
 	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
@@ -141,7 +142,11 @@ func (s *PageService) Write(relPath, content string) error {
 		return err
 	}
 
-	relPath = ensureMD(relPath)
+	// The server owns the on-disk filename: callers provide intent, not an
+	// authoritative path. Slugifying the final segment guarantees a stable,
+	// addressable name regardless of how the caller spelled it (smart quotes,
+	// double spaces, case). It is idempotent on already-clean paths.
+	relPath = slug.NormalizePath(ensureMD(relPath))
 
 	// Check existence before writing to distinguish create vs edit.
 	existed := false
@@ -346,7 +351,9 @@ func (s *PageService) Move(src, dst string) error {
 		return ErrPathDenied
 	}
 	src = ensureMD(src)
-	dst = ensureMD(dst)
+	// src is matched against an existing file as-is; the destination filename
+	// is server-assigned so a move always lands on a stable, addressable slug.
+	dst = slug.NormalizePath(ensureMD(dst))
 
 	if _, err := s.storage.Stat(src); os.IsNotExist(err) {
 		return fmt.Errorf("source page not found: %s", src)
