@@ -76,16 +76,28 @@ func normalizeInboxFilenames(vaultDir string, logger *slog.Logger) int {
 
 // uniqueInboxTarget returns target, or target with a "-N" suffix before the
 // extension if target already exists on disk (a genuine duplicate clip).
+//
+// The search is bounded and treats any non-IsNotExist Stat error (permission,
+// I/O) as "can't safely probe this slot" — returning the original target
+// rather than spinning. The caller's os.Rename then surfaces the real error
+// instead of the loop hanging startup.
 func uniqueInboxTarget(vaultDir, target string) string {
+	const maxAttempts = 1000
 	if _, err := os.Stat(filepath.Join(vaultDir, filepath.FromSlash(target))); os.IsNotExist(err) {
 		return target
 	}
 	ext := path.Ext(target)
 	base := strings.TrimSuffix(target, ext)
-	for i := 2; ; i++ {
+	for i := 2; i <= maxAttempts; i++ {
 		cand := fmt.Sprintf("%s-%d%s", base, i, ext)
-		if _, err := os.Stat(filepath.Join(vaultDir, filepath.FromSlash(cand))); os.IsNotExist(err) {
+		_, err := os.Stat(filepath.Join(vaultDir, filepath.FromSlash(cand)))
+		if os.IsNotExist(err) {
 			return cand
 		}
+		if err != nil {
+			// Stat failed for a reason other than "not exist" — don't spin.
+			return target
+		}
 	}
+	return target
 }
