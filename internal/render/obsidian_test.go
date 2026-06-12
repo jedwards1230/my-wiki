@@ -145,9 +145,9 @@ func TestWikilinkResolution(t *testing.T) {
 		{"resolved", "See [[alpha]].", `href="/notes/alpha/"`, ""},
 		{"alias", "See [[alpha|Custom]].", `>Custom<`, ""},
 		{"heading frag", "See [[alpha#Heading One]].", `href="/notes/alpha/#heading-one"`, ""},
-		// broken link: resolver returns nil → contents render plain, the
-		// abhg renderer drops the link tags entirely.
-		{"broken", "See [[doesnotexist]].", "doesnotexist", `href="/doesnotexist`},
+		// broken link: resolver returns nil → emit a class="broken" anchor
+		// (no href) so the link renders muted, not as bare text.
+		{"broken", "See [[doesnotexist]].", `<a class="broken">doesnotexist</a>`, `href=`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
