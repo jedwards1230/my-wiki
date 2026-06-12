@@ -187,6 +187,18 @@ func runMCP(ctx context.Context, vaultDir string, cfg mcpRunConfig, logger *slog
 		}
 	}
 
+	// Periodic inbox poll: a stat()/mtime fallback that catches inbox writes
+	// the fsnotify watcher misses across an NFS (RWX) volume, where inotify is
+	// blind to writes made on another node. Gated on the dispatcher being
+	// enabled — without it there is nothing to feed.
+	if pipeline != nil {
+		if interval := inboxPollIntervalFromEnv(logger); interval > 0 {
+			poller := newInboxPoller(vaultDir, pipeline.router, interval, logger)
+			go poller.Run(ctx)
+			logger.Info("inbox poller started", "interval", interval.String())
+		}
+	}
+
 	mcpSrv := buildMCPServer(v, searchSvc, notifier, pageSvc, cfg.InstanceName)
 
 	switch cfg.Transport {

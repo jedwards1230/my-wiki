@@ -158,3 +158,16 @@ const EnvAuthReads = "WIKI_AUTH_READS"
 //   - valid config → dispatcher wired, inbox.changed events fire on
 //     filesystem changes and API/MCP mutations
 const EnvWebhooksConfig = "WIKI_WEBHOOKS_CONFIG"
+
+// EnvInboxPollInterval is the cadence of the periodic inbox poll — a
+// stat()/mtime fallback that dispatches inbox.changed events for filesystem
+// writes the fsnotify watcher misses. This matters when wiki-server and the
+// Obsidian-Sync writer run on different kernels sharing an NFS (RWX) volume:
+// inotify delivers no cross-client events, but stat mtimes still propagate, so
+// a periodic mtime diff catches clipper drops the watcher never sees.
+//
+// Format: a Go duration (e.g. "60s", "2m"). Default: 60s. A non-positive
+// duration ("0", "-1s") disables polling. Only active when the webhook
+// dispatch pipeline is enabled (WIKI_WEBHOOKS_CONFIG); without a dispatcher
+// there is nothing to feed.
+const EnvInboxPollInterval = "WIKI_INBOX_POLL_INTERVAL"

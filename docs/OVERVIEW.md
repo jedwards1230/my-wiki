@@ -13,7 +13,7 @@ A single Go binary (`wiki-server`) that turns an Obsidian vault into an agent-ac
 
 The binary doesn't know which shape it runs in — it's all flag/subcommand selection. See [SERVER-MODES.md](SERVER-MODES.md) for the per-mode feature matrix.
 
-- **Home (K8s, long-lived):** one pod runs `serve --mcp-port=8081` alongside obsidian-headless (Obsidian Sync). HTTP, REST, embedded MCP, OIDC auth, webhooks, and the TF-IDF index all enabled. Longhorn PVC, deployed via Helm.
+- **Home (K8s, long-lived):** `serve --mcp-port=8081` — HTTP, REST, embedded MCP, OIDC auth, webhooks, and the TF-IDF index all enabled. Deployed via Helm. wiki-server and obsidian-headless (Obsidian Sync) run as **separate Deployments sharing one NFS (RWX) PVC** — not co-located. Because they can land on different nodes, the fsnotify watcher in wiki-server cannot see the sync container's writes (inotify does not cross NFS clients), so inbox-change dispatch relies on a periodic mtime poll (`WIKI_INBOX_POLL_INTERVAL`, default 60s) in addition to fsnotify.
 - **Work (laptop, on-demand):** `serve mcp stdio`, invoked per session by an MCP client (Claude Code) against a local vault. No HTTP or auth — just markdown reads/writes over the same MCP tools. A LaunchAgent runs `lint` daily.
 
 ## Design choices

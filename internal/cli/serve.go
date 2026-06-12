@@ -444,6 +444,20 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
+	// Periodic inbox poll: a stat()/mtime fallback that catches inbox writes
+	// the fsnotify watcher misses. Required because the Obsidian-Sync writer
+	// and wiki-server run in separate pods on separate nodes over an NFS (RWX)
+	// volume, where inotify is blind; stat mtimes propagate over NFS, so a
+	// periodic diff reliably sees clipper drops. Gated on the dispatcher being
+	// enabled — without it there is nothing to feed.
+	if pipeline != nil {
+		if interval := inboxPollIntervalFromEnv(logger); interval > 0 {
+			poller := newInboxPoller(vaultDir, pipeline.router, interval, logger)
+			go poller.Run(ctx)
+			logger.Info("inbox poller started", "interval", interval.String())
+		}
+	}
+
 	// Start periodic search index rebuild (only if registered)
 	if len(engines) > 1 {
 		idx.StartAutoRebuild(ctx, 5*time.Minute)
