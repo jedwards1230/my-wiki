@@ -66,11 +66,9 @@ func (r *SlugResolver) ResolveWikilink(n *wikilink.Node) ([]byte, error) {
 	key := strings.ToLower(target)
 	canonical, ok := r.Slugs[key]
 	if !ok {
-		// Broken link — leave as plain text. The abhg renderer wraps it
-		// in a class="broken" span when destination is nil; we instead
-		// return an empty href that the template's CSS styles distinctly.
-		// Returning (nil, nil) renders the contents only — broken links
-		// show as plain text.
+		// Unresolved target. Returning (nil, nil) signals "no destination";
+		// the renderer then emits a class="broken" anchor (no href) so the
+		// link renders muted via wiki.css rather than as bare literal text.
 		return nil, nil
 	}
 	// "index" is the home page — emit "/" instead of "/index/".
@@ -930,7 +928,13 @@ func (r *transcludeRenderer) render(w util.BufWriter, src []byte, node ast.Node,
 		return ast.WalkStop, err
 	}
 	if len(dest) == 0 {
-		// Broken link — render contents only (abhg behavior).
+		// Broken link — no resolvable target. Emit a class="broken" anchor
+		// (no href) so unresolved wikilinks render muted (see a.broken in
+		// wiki.css) rather than as bare text that reads like a broken link.
+		// Covers both forward-reference stubs and dead staging refs (inbox/*).
+		// The exit pass closes the </a> via hasDestKeys, same as a real link.
+		hasDestKeys.Store(n, struct{}{})
+		_, _ = w.WriteString(`<a class="broken">`)
 		return ast.WalkContinue, nil
 	}
 	hasDestKeys.Store(n, struct{}{})
