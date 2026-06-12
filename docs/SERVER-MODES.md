@@ -24,6 +24,7 @@ One binary, four runtime surfaces. They share the same vault, services, and MCP 
 | OIDC auth (Authentik) | ✅ | ✅ | ✅ | ❌ |
 | Webhook dispatch | ✅ | ✅ | ✅ | ❌ |
 | Filesystem watcher (fsnotify) | ✅ | ✅ | ✅ | ❌ |
+| Inbox poll (mtime fallback) | ✅ | ✅ | ✅ | ❌ |
 | Search MCP tool | n/a | ✅ (TF-IDF + substring) | ✅ (substring) | ✅ (substring) |
 | TF-IDF search index | ✅ | ✅ | ❌ | ❌ |
 | Activity auto-logging on mutations | ✅ | ✅ | ✅ | ✅ |
