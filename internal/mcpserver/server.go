@@ -230,6 +230,7 @@ func registerTools(
 			mcp.WithNumber("limit",
 				mcp.Description("Maximum pages to return. Default: unlimited. Useful with sort_by='modified' to get recent pages."),
 			),
+			mcp.WithOutputSchema[ListResponse](),
 		),
 		listHandler(pages, directory),
 	)
@@ -255,6 +256,7 @@ func registerTools(
 					mcp.Enum("substring", "index", "all"),
 					mcp.Description("Search engine: 'substring' (default, walks files), 'index' (inverted index with TF-IDF), 'all' (run both, compare timing)."),
 				),
+				mcp.WithOutputSchema[service.SearchResponse](),
 			),
 			searchHandler(searchSvc),
 		)
@@ -311,6 +313,7 @@ func registerTools(
 				mcp.Description("Which check to run. Default: all."),
 				mcp.Enum("all", "frontmatter", "tags", "links", "orphans", "size", "log"),
 			),
+			mcp.WithOutputSchema[service.LintReport](),
 		),
 		lintHandler(lint),
 	)
@@ -324,6 +327,7 @@ func registerTools(
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithOutputSchema[service.TagReport](),
 		),
 		tagsHandler(tags),
 	)
@@ -337,6 +341,7 @@ func registerTools(
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithOutputSchema[ServerInfo](),
 		),
 		whoamiHandler(vaultDir, instanceName),
 	)
