@@ -1161,3 +1161,98 @@ func TestNewCreatesServer_WithInstanceName(t *testing.T) {
 	// is the round-trip. This case asserts construction succeeds with the
 	// option set.
 }
+
+// --- structured output ---
+
+// TestWhoamiHandler_StructuredContent verifies the whoami tool returns a typed
+// ServerInfo as structuredContent (not just a text block), and that the
+// fallback text mirror is still present for back-compat.
+func TestWhoamiHandler_StructuredContent(t *testing.T) {
+	v := setupTestVault(t)
+	handler := whoamiHandler(v.Dir, "work-wiki")
+
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.StructuredContent == nil {
+		t.Fatal("expected structuredContent to be present")
+	}
+	info, ok := result.StructuredContent.(ServerInfo)
+	if !ok {
+		t.Fatalf("expected structuredContent to be ServerInfo, got %T", result.StructuredContent)
+	}
+	if info.Name != "my-wiki" {
+		t.Errorf("expected name my-wiki, got %q", info.Name)
+	}
+	if info.InstanceName != "work-wiki" {
+		t.Errorf("expected instance_name work-wiki, got %q", info.InstanceName)
+	}
+	// Fallback text mirror must still be present.
+	if !strings.Contains(getTextContent(result), `"name": "my-wiki"`) {
+		t.Errorf("expected fallback text mirror, got:\n%s", getTextContent(result))
+	}
+}
+
+// TestLintHandler_StructuredContent verifies the lint tool returns a typed
+// *LintReport as structuredContent alongside the text fallback.
+func TestLintHandler_StructuredContent(t *testing.T) {
+	v := setupTestVault(t)
+	logSvc := service.NewLogService(v.Storage)
+	lint := service.NewLintService(v, logSvc)
+	handler := lintHandler(lint)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{"check": "links"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.StructuredContent == nil {
+		t.Fatal("expected structuredContent to be present")
+	}
+	if _, ok := result.StructuredContent.(*service.LintReport); !ok {
+		t.Fatalf("expected structuredContent to be *service.LintReport, got %T", result.StructuredContent)
+	}
+}
+
+// TestListHandler_StructuredContent verifies the list tool wraps its array
+// result in a ListResponse object for structuredContent (simple + detail).
+func TestListHandler_StructuredContent(t *testing.T) {
+	v := setupTestVault(t)
+	pageSvc := service.NewPageService(v.Storage)
+	dirSvc := service.NewDirectoryService(v)
+	handler := listHandler(pageSvc, dirSvc)
+
+	// Simple mode.
+	result, err := handler(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, ok := result.StructuredContent.(ListResponse)
+	if !ok {
+		t.Fatalf("expected ListResponse, got %T", result.StructuredContent)
+	}
+	if resp.Detail {
+		t.Error("expected Detail=false in simple mode")
+	}
+	if len(resp.Pages) == 0 {
+		t.Error("expected pages in simple mode")
+	}
+
+	// Detail mode.
+	detailResult, err := handler(context.Background(), makeReq(map[string]any{"detail": true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detailResp, ok := detailResult.StructuredContent.(ListResponse)
+	if !ok {
+		t.Fatalf("expected ListResponse, got %T", detailResult.StructuredContent)
+	}
+	if !detailResp.Detail {
+		t.Error("expected Detail=true in detail mode")
+	}
+	if len(detailResp.Entries) == 0 {
+		t.Error("expected entries in detail mode")
+	}
+}

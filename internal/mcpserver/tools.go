@@ -166,7 +166,7 @@ func lintHandler(lint *service.LintService) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		return mcp.NewToolResultText(toJSON(report)), nil
+		return mcp.NewToolResultStructured(report, toJSON(report)), nil
 	}
 }
 
@@ -176,30 +176,48 @@ func tagsHandler(svc *service.TagService) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(toJSON(report)), nil
+		return mcp.NewToolResultStructured(report, toJSON(report)), nil
 	}
+}
+
+// ServerInfo is the structured response from the whoami tool. It is also the
+// type the whoami tool's outputSchema is generated from. The optional User
+// field is populated only when the request carries authenticated identity.
+type ServerInfo struct {
+	Name         string          `json:"name"`
+	Version      string          `json:"version"`
+	VaultDir     string          `json:"vault_dir"`
+	GoVersion    string          `json:"go_version"`
+	InstanceName string          `json:"instance_name,omitempty"`
+	User         *ServerUserInfo `json:"user,omitempty"`
+}
+
+// ServerUserInfo is the authenticated-user portion of the whoami response.
+type ServerUserInfo struct {
+	Username string   `json:"username"`
+	Email    string   `json:"email"`
+	Name     string   `json:"name"`
+	Groups   []string `json:"groups"`
 }
 
 func whoamiHandler(vaultDir, instanceName string) server.ToolHandlerFunc {
 	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		info := map[string]any{
-			"name":       "my-wiki",
-			"version":    version.Value,
-			"vault_dir":  filepath.Base(vaultDir),
-			"go_version": runtime.Version(),
-		}
-		if instanceName != "" {
-			info["instance_name"] = instanceName
+		info := ServerInfo{
+			Name:         "my-wiki",
+			Version:      version.Value,
+			VaultDir:     filepath.Base(vaultDir),
+			GoVersion:    runtime.Version(),
+			InstanceName: instanceName,
 		}
 		if u := middleware.UserFromContext(ctx); u != nil {
-			info["user"] = map[string]any{
-				"username": u.Username,
-				"email":    u.Email,
-				"name":     u.Name,
-				"groups":   u.Groups,
+			info.User = &ServerUserInfo{
+				Username: u.Username,
+				Email:    u.Email,
+				Name:     u.Name,
+				Groups:   u.Groups,
 			}
 		}
-		return mcp.NewToolResultText(toJSON(info)), nil
+		return mcp.NewToolResultStructured(info, toJSON(info)), nil
 	}
 }
 
@@ -345,6 +363,17 @@ func editHandler(s *server.MCPServer, svc *service.PageService, lint *service.Li
 	}
 }
 
+// ListResponse is the structured response from the list tool. The MCP spec
+// requires structuredContent to be a JSON object, so the two underlying array
+// shapes are wrapped here. Exactly one of Pages (simple mode) or Entries
+// (detail mode) is populated per call; the other is omitted. The fallback text
+// block continues to carry the bare array for backwards compatibility.
+type ListResponse struct {
+	Detail  bool                     `json:"detail"`
+	Pages   []service.PageInfo       `json:"pages,omitempty"`
+	Entries []service.DirectoryEntry `json:"entries,omitempty"`
+}
+
 func listHandler(pageSvc *service.PageService, dirSvc *service.DirectoryService) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		prefix := getStringArg(req, "prefix")
@@ -357,7 +386,11 @@ func listHandler(pageSvc *service.PageService, dirSvc *service.DirectoryService)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultText(toJSON(entries)), nil
+			// Fallback text keeps the bare array shape for back-compat.
+			return mcp.NewToolResultStructured(
+				ListResponse{Detail: true, Entries: entries},
+				toJSON(entries),
+			), nil
 		}
 
 		pages, err := pageSvc.List(service.ListOptions{
@@ -368,7 +401,10 @@ func listHandler(pageSvc *service.PageService, dirSvc *service.DirectoryService)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(toJSON(pages)), nil
+		return mcp.NewToolResultStructured(
+			ListResponse{Detail: false, Pages: pages},
+			toJSON(pages),
+		), nil
 	}
 }
 
@@ -394,7 +430,7 @@ func searchHandler(svc *service.SearchService) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		return mcp.NewToolResultText(toJSON(resp)), nil
+		return mcp.NewToolResultStructured(resp, toJSON(resp)), nil
 	}
 }
 
