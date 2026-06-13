@@ -57,6 +57,11 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
 		server.WithLogging(),
+		// Server identity metadata surfaced to MCP clients on initialize.
+		// Icons are intentionally omitted — the wiki ships no icon asset.
+		server.WithTitle("Home Wiki"),
+		server.WithDescription("Read and edit the home wiki — an Obsidian-backed knowledge base served at wiki.lilbro.cloud."),
+		server.WithWebsiteURL("https://wiki.lilbro.cloud"),
 		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete/move mutations are auto-logged as compact audit entries — do NOT call activity for individual page changes. Use activity only for narrative summaries of multi-page work sessions or non-page activities (lint, note, migrate)."),
 	)
 
