@@ -18,6 +18,7 @@ type options struct {
 	notifier     *notify.RebuildNotifier
 	pages        *service.PageService
 	instanceName string
+	baseURL      string
 }
 
 // WithRebuildNotifier sets a notifier called after successful vault mutations.
@@ -44,6 +45,16 @@ func WithInstanceName(name string) Option {
 	}
 }
 
+// WithBaseURL sets the canonical external base URL of the deployment (e.g.
+// from WIKI_BASE_URL). When set, it is surfaced as the server's websiteUrl in
+// the MCP initialize response. When empty (the default), the websiteUrl is
+// omitted so no deployment-specific domain is baked in.
+func WithBaseURL(url string) Option {
+	return func(o *options) {
+		o.baseURL = url
+	}
+}
+
 // New creates a configured MCP server with all wiki tools registered.
 // searchSvc may be nil if search is not configured.
 func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *server.MCPServer {
@@ -51,13 +62,29 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 	for _, o := range opts {
 		o(&cfg)
 	}
-	s := server.NewMCPServer(
-		"my-wiki",
-		version.Value,
+	// Server identity metadata surfaced to MCP clients on initialize. The
+	// title and websiteUrl are deployment-specific, so they are sourced from
+	// config (WIKI_INSTANCE_NAME / WIKI_BASE_URL, threaded in via Options) and
+	// only included when non-empty — nothing deployment-specific is hardcoded.
+	// The description is generic and Icons are omitted (no icon asset ships).
+	serverOpts := []server.ServerOption{
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
 		server.WithLogging(),
+		server.WithDescription("Read and edit a wiki backed by an Obsidian vault."),
 		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete/move mutations are auto-logged as compact audit entries — do NOT call activity for individual page changes. Use activity only for narrative summaries of multi-page work sessions or non-page activities (lint, note, migrate)."),
+	}
+	if cfg.instanceName != "" {
+		serverOpts = append(serverOpts, server.WithTitle(cfg.instanceName))
+	}
+	if cfg.baseURL != "" {
+		serverOpts = append(serverOpts, server.WithWebsiteURL(cfg.baseURL))
+	}
+
+	s := server.NewMCPServer(
+		"my-wiki",
+		version.Value,
+		serverOpts...,
 	)
 
 	logSvc := service.NewLogService(v.Storage)

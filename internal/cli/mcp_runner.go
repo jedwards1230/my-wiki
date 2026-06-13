@@ -58,6 +58,7 @@ func buildMCPServer(
 ) *server.MCPServer {
 	opts := []mcpserver.Option{
 		mcpserver.WithInstanceName(instanceName),
+		mcpserver.WithBaseURL(os.Getenv(EnvBaseURL)),
 	}
 	if notifier != nil {
 		opts = append(opts, mcpserver.WithRebuildNotifier(notifier))

@@ -1162,6 +1162,21 @@ func TestNewCreatesServer_WithInstanceName(t *testing.T) {
 	// option set.
 }
 
+// TestNewCreatesServer_WithBaseURL verifies the server constructs with the
+// WithBaseURL option (sourced from WIKI_BASE_URL) set and, separately, with it
+// empty — the empty case must not panic or fail, since the websiteUrl option
+// is conditionally omitted.
+func TestNewCreatesServer_WithBaseURL(t *testing.T) {
+	v := setupTestVault(t)
+
+	if s := New(v, nil, WithBaseURL("https://wiki.example.test")); s == nil {
+		t.Fatal("expected non-nil MCP server with base URL set")
+	}
+	if s := New(v, nil, WithBaseURL("")); s == nil {
+		t.Fatal("expected non-nil MCP server with empty base URL")
+	}
+}
+
 // --- structured output ---
 
 // TestWhoamiHandler_StructuredContent verifies the whoami tool returns a typed
