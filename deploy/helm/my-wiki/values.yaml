@@ -10,9 +10,14 @@ imagePullSecrets: []
 timezone: "UTC"
 
 # Canonical external base URL (e.g. "https://wiki.example.com"). Used by the
-# native renderer for sitemap, RSS, and canonical/OpenGraph links.
-# Empty = relative links only.
+# native renderer for sitemap, RSS, and canonical/OpenGraph links, and
+# surfaced as the MCP server's websiteUrl. Empty = relative links only and no
+# websiteUrl advertised.
 baseURL: ""
+
+# Human-readable identifier for this wiki instance (e.g. "work-wiki"). Surfaced
+# via the whoami MCP tool and as the MCP server's title. Empty = omitted.
+instanceName: ""
 
 service:
   type: ClusterIP
