@@ -29,17 +29,11 @@ gofmt -w .
 ./wiki-server serve --vault /path/to/vault --port 8080
 ./wiki-server serve mcp http --vault /path/to/vault --port 8081
 ./wiki-server serve mcp stdio --vault /path/to/vault --instance-name work-wiki
-
-# CLI subcommands operate on the vault directly: lint, directory, log, activity
-./wiki-server lint --vault /path/to/vault
-
-# macOS LaunchAgent for daily lint
-./wiki-server --vault /path/to/vault --instance-name work-wiki launchd install
-./wiki-server --instance-name work-wiki launchd status
-./wiki-server --instance-name work-wiki launchd uninstall
 ```
 
 `serve mcp stdio` logs to stderr (stdout is reserved for JSON-RPC) and skips HTTP, OIDC, webhooks, and the TF-IDF index. Bare `serve mcp` (no transport) is deprecated — it prints a deprecation message and falls through to help, it does NOT start a server.
+
+CLI subcommands (`lint`, `directory`, `log`, `activity`) and the macOS LaunchAgent are documented in [README.md](README.md).
 
 See [docs/OVERVIEW.md](docs/OVERVIEW.md) (architecture), [docs/SERVER-MODES.md](docs/SERVER-MODES.md) (feature matrix), [docs/RENDERER.md](docs/RENDERER.md) (native renderer pipeline).
 
@@ -96,7 +90,7 @@ Assets are embedded via `//go:embed` in `internal/server/assets/assets.go`, serv
 
 ## Build & Release
 
-- **Docker**: multi-stage — Go binary built in `golang:1.25-alpine`, copied into `node:24-alpine` (obsidian-headless).
+- **Docker**: multi-stage — Go binary built in `golang:1.25.6-alpine`, copied into `node:24-alpine` (obsidian-headless).
 - **Helm**: `deploy/helm/my-wiki/`, published to `oci://ghcr.io/jedwards1230/charts/my-wiki`. Chart version auto-bumped by the release workflow.
 - **CI** (`.github/workflows/ci.yml`): test (race + coverage), lint (go vet + golangci-lint + mod tidy), build.
 - **Release** (`.github/workflows/release.yml`): auto-semver on push to main (PR labels `semver:patch|minor|major`), builds image to GHCR, publishes Helm OCI chart, creates GitHub release.

@@ -55,6 +55,8 @@ A macOS LaunchAgent for daily lint (`--instance-name` is appended to the plist l
 
 Helm chart: `oci://ghcr.io/jedwards1230/charts/my-wiki`. Images: `ghcr.io/jedwards1230/my-wiki`. Both released by `release.yml` on push to `main` (semver via `semver:patch|minor|major` PR labels).
 
+Key Helm values (see `deploy/helm/my-wiki/values.yaml` for the full list): `instanceName` sets `WIKI_INSTANCE_NAME` and is surfaced by the `whoami` MCP tool so agents can distinguish multiple wiki instances. `obsidianSync.standalone: true` moves obsidian-headless to a separate Deployment (requires an RWX PVC).
+
 ## Documentation
 
 - [docs/OVERVIEW.md](docs/OVERVIEW.md) — architecture and design choices
