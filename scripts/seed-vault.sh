@@ -19,6 +19,8 @@
 #   rendering/math.md            inline $x$ + block $$…$$ (KaTeX)
 #   rendering/diagrams.md        ```mermaid flowchart + sequence
 #   rendering/obsidian.md        ==highlight==, %%comment%%, ^block-id, #tags
+#   rendering/embeds.md          markdown images, YouTube/Vimeo provider embeds,
+#                                native file embeds (audio/pdf/video)
 #   wikilinks/source.md          [[target]], [[target|alias]], [[target#h]],
 #                                [[target#^block]] — drives backlinks on target
 #   wikilinks/target.md          headings + ^block-id; links back to source
@@ -47,6 +49,14 @@ page() {
 	local dest="$VAULT/$1"
 	mkdir -p "$(dirname "$dest")"
 	cat >"$dest"
+}
+
+# b64file <relative/path> base64-decodes stdin into a binary file under $VAULT.
+# Used for the small valid media fixtures (wav) that drive native file embeds.
+b64file() {
+	local dest="$VAULT/$1"
+	mkdir -p "$(dirname "$dest")"
+	base64 -d >"$dest"
 }
 
 # --- (re)create the vault --------------------------------------------------
@@ -178,6 +188,7 @@ Each page below isolates one rendering feature.
 - [[rendering/math]] — KaTeX
 - [[rendering/diagrams]] — Mermaid
 - [[rendering/obsidian]] — Obsidian-flavored extras
+- [[rendering/embeds]] — images, provider (YouTube/Vimeo) + file embeds
 EOF
 
 # ---------------------------------------------------------------------------
@@ -379,6 +390,60 @@ Inline tags are recognized too: #demo #rendering — they link to tag pages.
 EOF
 
 # ---------------------------------------------------------------------------
+# Embeds — images, provider (YouTube/Vimeo) embeds, native file embeds
+# ---------------------------------------------------------------------------
+page rendering/embeds.md <<'EOF'
+---
+title: Embeds
+tags: [rendering, reference]
+date: 2026-01-08
+---
+
+# Embeds
+
+## Images
+
+A standard Markdown image (served from `raw/`, renders offline):
+
+![A labeled SVG sample](/raw/diagram.svg)
+
+The Obsidian `![[...]]` embed form for an image renders an `<img>` too:
+
+![[raw/diagram.svg]]
+
+## Provider embeds (markdown image syntax → iframe)
+
+A YouTube URL in image syntax becomes a privacy-friendly iframe. (The iframe
+may render blank under a restrictive network policy — the embed *container* and
+aspect-ratio chrome are what visual verification checks.)
+
+![YouTube demo](https://www.youtube.com/watch?v=dQw4w9WgXcQ)
+
+YouTube with a start timestamp (`?t=1m30s` → `?start=90`):
+
+![YouTube at 1m30s](https://youtu.be/dQw4w9WgXcQ?t=1m30s)
+
+Vimeo works the same way:
+
+![Vimeo demo](https://vimeo.com/76979871)
+
+## Native file embeds
+
+`![[file.ext]]` for a media file in `raw/` renders the matching native element.
+
+Audio (`<audio controls>`):
+
+![[raw/sample.wav]]
+
+PDF (inline `<iframe>` viewer):
+
+![[raw/sample.pdf]]
+
+Video uses the same mechanism for `.mp4/.webm/.mov/...` (`<video controls>`); it
+behaves exactly like the audio embed above with a video container.
+EOF
+
+# ---------------------------------------------------------------------------
 # Wikilinks + backlinks (source ↔ target)
 # ---------------------------------------------------------------------------
 page wikilinks/source.md <<'EOF'
@@ -519,6 +584,48 @@ page raw/script.sh <<'EOF'
 #!/usr/bin/env bash
 # raw shell script served verbatim under /raw/
 echo "not executed — just served as source"
+EOF
+
+# Media fixtures for the embeds page (also surface in the /raw gallery).
+# diagram.svg is a real, visible, text-based image (.svg is a recognized image
+# type). sample.wav is a valid 44-byte zero-length WAV; sample.pdf is a minimal
+# valid single-page PDF. All render offline with no external dependencies.
+page raw/diagram.svg <<'EOF'
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120" viewBox="0 0 240 120" role="img" aria-label="Sample diagram">
+  <rect width="240" height="120" rx="10" fill="#2563eb"/>
+  <circle cx="60" cy="60" r="28" fill="#ffffff" opacity="0.9"/>
+  <rect x="110" y="38" width="100" height="44" rx="6" fill="#ffffff" opacity="0.9"/>
+  <text x="120" y="105" font-family="sans-serif" font-size="14" fill="#ffffff" text-anchor="middle">seed-vault.sh</text>
+</svg>
+EOF
+
+page raw/sample.pdf <<'EOF'
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 58 >>
+stream
+BT /F1 18 Tf 20 70 Td (Seed vault sample PDF) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+trailer
+<< /Root 1 0 R >>
+%%EOF
+EOF
+
+b64file raw/sample.wav <<'EOF'
+UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=
 EOF
 
 # ---------------------------------------------------------------------------
