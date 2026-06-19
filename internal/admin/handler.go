@@ -151,9 +151,12 @@ func New(ctx context.Context, o Options) (*Handler, error) {
 	}, nil
 }
 
-// RegisterRoutes mounts the admin routes on mux. Auth-flow routes (login,
-// authorize, callback) are unauthenticated and registered only in OIDC mode;
-// everything under /_/admin/ is wrapped by the session gate.
+// RegisterRoutes mounts the admin routes on mux. Each gated route is registered
+// with an explicit method+path so it is strictly more specific than the
+// server's catch-all "GET /{path...}" — a method-agnostic subtree handler would
+// conflict with the catch-all and panic at registration. Auth-flow routes
+// (login, authorize, callback) are unauthenticated and registered only in OIDC
+// mode.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	if h.oidc != nil {
 		mux.HandleFunc("GET "+adminPathPrefix+"/login", h.handleLogin)
@@ -161,13 +164,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET "+adminPathPrefix+"/callback", h.handleCallback)
 	}
 
-	gated := http.NewServeMux()
-	gated.HandleFunc("GET "+adminPathPrefix+"/{$}", h.handleDashboard)
-	gated.HandleFunc("POST "+adminPathPrefix+"/logout", h.handleLogout)
+	gate := func(fn http.HandlerFunc) http.Handler { return h.auth.middleware(fn) }
 
-	// Subtree handler. A bare /_/admin (no trailing slash) is 301'd here by
-	// ServeMux. More specific patterns above (login/etc.) take precedence.
-	mux.Handle(adminPathPrefix+"/", h.auth.middleware(gated))
+	// Bare /_/admin → /_/admin/.
+	mux.HandleFunc("GET "+adminPathPrefix, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, adminRoot, http.StatusMovedPermanently)
+	})
+	mux.Handle("GET "+adminPathPrefix+"/{$}", gate(h.handleDashboard))
+	mux.Handle("POST "+adminPathPrefix+"/logout", gate(h.handleLogout))
 }
 
 // --- auth-flow routes (OIDC only) -------------------------------------------

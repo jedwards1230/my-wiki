@@ -64,6 +64,27 @@ func TestNewDevInsecure(t *testing.T) {
 	}
 }
 
+func TestRegisterRoutesNoCatchAllConflict(t *testing.T) {
+	// The real server registers a catch-all "GET /{path...}". Admin routes must
+	// be strictly more specific so registration doesn't panic.
+	h, _ := New(context.Background(), devOptions())
+	mux := http.NewServeMux()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("route registration panicked alongside catch-all: %v", r)
+		}
+	}()
+	h.RegisterRoutes(mux)
+	mux.HandleFunc("GET /{path...}", func(http.ResponseWriter, *http.Request) {})
+
+	// Bare /_/admin redirects to the trailing-slash form.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/_/admin", nil))
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("bare /_/admin status = %d, want 301", rec.Code)
+	}
+}
+
 func TestDashboardRendersDevMode(t *testing.T) {
 	h, err := New(context.Background(), devOptions())
 	if err != nil {
