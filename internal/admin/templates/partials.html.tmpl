@@ -7,24 +7,64 @@
 <title>{{.Title}} — Admin</title>
 <link rel="stylesheet" href="/_/static/wiki.css?v={{.Version}}">
 <style>
+  /* Admin-local surface tone: a near-bg raised card and a hairline tint,
+     both derived from --darkgray so they invert correctly between themes. */
+  :root {
+    --admin-surface: rgba(78, 78, 78, .035);   /* --darkgray @ low alpha */
+    --admin-hairline: rgba(78, 78, 78, .12);
+    --admin-ok: #1a7f37;
+    --admin-ok-tint: rgba(26, 127, 55, .12);
+  }
+  html[data-theme="dark"] {
+    --admin-surface: rgba(255, 255, 255, .035);
+    --admin-hairline: rgba(255, 255, 255, .12);
+    --admin-ok: #4ac26b;
+    --admin-ok-tint: rgba(74, 194, 107, .14);
+  }
+  @media (prefers-color-scheme: dark) {
+    html:not([data-theme="light"]) {
+      --admin-surface: rgba(255, 255, 255, .035);
+      --admin-hairline: rgba(255, 255, 255, .12);
+      --admin-ok: #4ac26b;
+      --admin-ok-tint: rgba(74, 194, 107, .14);
+    }
+  }
+
   body { margin: 0; background: var(--light); color: var(--text); }
-  .admin-wrap { max-width: 760px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
-  .admin-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--lightgray); padding-bottom: 1rem; margin-bottom: 1.5rem; }
-  .admin-header h1 { font-family: var(--font-header); font-size: 1.4rem; margin: 0; }
-  .admin-id { color: var(--gray); font-size: .85rem; margin-top: .15rem; }
-  .admin-card { border: 1px solid var(--lightgray); border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 1.25rem; }
-  .admin-card h2 { font-family: var(--font-header); font-size: 1rem; margin: 0 0 .75rem; }
-  dl.admin-kv { margin: 0; display: grid; grid-template-columns: minmax(8rem, 13rem) 1fr; gap: .45rem 1rem; }
-  dl.admin-kv dt { color: var(--gray); font-size: .85rem; }
-  dl.admin-kv dd { margin: 0; font-family: var(--font-code); font-size: .85rem; word-break: break-word; }
-  .badge { display: inline-block; font-size: .72rem; padding: .08rem .5rem; border-radius: 999px; border: 1px solid var(--lightgray); }
-  .badge-ok { color: #1a7f37; border-color: rgba(26,127,55,.35); }
+  .admin-wrap { max-width: 760px; margin: 0 auto; padding: 2.5rem 1.25rem 3rem; }
+
+  .admin-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding-bottom: 1.25rem; margin-bottom: 2rem; border-bottom: 1px solid var(--admin-hairline); }
+  .admin-header h1 { font-family: var(--font-header); font-size: 1.5rem; font-weight: 600; letter-spacing: -.01em; margin: 0; }
+  .admin-id { color: var(--gray); font-size: .85rem; margin-top: .25rem; }
+
+  .admin-card { background: var(--admin-surface); border-radius: var(--radius); padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+  .admin-card h2 { font-family: var(--font-header); font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--gray); margin: 0 0 1rem; }
+
+  dl.admin-kv { margin: 0; display: grid; grid-template-columns: minmax(8rem, 13rem) 1fr; gap: 0 1rem; }
+  dl.admin-kv dt, dl.admin-kv dd { padding: .5rem 0; border-top: 1px solid var(--admin-hairline); }
+  dl.admin-kv dt:first-of-type, dl.admin-kv dd:nth-of-type(1) { border-top: 0; }
+  dl.admin-kv dt { color: var(--gray); font-size: .85rem; align-self: center; }
+  dl.admin-kv dd { margin: 0; font-family: var(--font-code); font-size: .85rem; word-break: break-word; align-self: center; }
+
+  .badge { display: inline-block; font-size: .72rem; line-height: 1.4; padding: .1rem .55rem; border-radius: 999px; border: 1px solid var(--admin-hairline); color: var(--darkgray); }
+  .badge-ok { color: var(--admin-ok); background: var(--admin-ok-tint); border-color: transparent; }
   .badge-off { color: var(--gray); }
-  .admin-actions { margin: 1.25rem 0 0; }
-  button.admin-btn, a.admin-btn { font: inherit; cursor: pointer; display: inline-block; text-decoration: none; background: var(--secondary); color: #fff; border: 0; border-radius: var(--radius); padding: .5rem 1rem; }
-  .admin-note { color: var(--gray); font-size: .85rem; }
+
+  .admin-actions { margin: 1.5rem 0 0; }
+
+  /* Shared button base. */
+  .admin-btn { font: inherit; cursor: pointer; display: inline-block; text-decoration: none; border-radius: var(--radius); padding: .5rem 1.1rem; line-height: 1.4; border: 1px solid transparent; transition: background-color .12s ease, border-color .12s ease, color .12s ease; }
+  /* Primary CTA (sign in) — stays prominent. */
+  .admin-btn-primary { background: var(--secondary); color: var(--light); border-color: var(--secondary); }
+  .admin-btn-primary:hover { filter: brightness(1.08); }
+  /* Secondary / ghost (sign out, back) — muted outline, low visual weight,
+     readable in both themes since it uses the theme's own text tones. */
+  .admin-btn-secondary { background: transparent; color: var(--darkgray); border-color: var(--admin-hairline); }
+  .admin-btn-secondary:hover { background: var(--admin-surface); border-color: var(--gray); color: var(--text); }
+
+  .admin-note { color: var(--gray); font-size: .9rem; }
   .admin-error { color: #cf222e; font-size: .9rem; margin-top: 0; }
-  .admin-foot { max-width: 760px; margin: 0 auto; padding: 0 1.25rem 2rem; color: var(--gray); font-size: .8rem; }
+  .admin-foot { max-width: 760px; margin: 2rem auto 0; padding: 1.25rem 1.25rem 2rem; color: var(--gray); font-size: .8rem; border-top: 1px solid var(--admin-hairline); }
 </style>
 </head>
 <body>

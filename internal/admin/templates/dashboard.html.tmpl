@@ -6,7 +6,7 @@
   </div>
   <form method="POST" action="/_/admin/logout">
     <input type="hidden" name="csrf_token" value="{{with .User}}{{.CSRF}}{{end}}">
-    <button class="admin-btn" type="submit">Sign out</button>
+    <button class="admin-btn admin-btn-secondary" type="submit">Sign out</button>
   </form>
 </header>
 
