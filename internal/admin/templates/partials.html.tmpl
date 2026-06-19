@@ -1,0 +1,39 @@
+{{define "head"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{.Title}} — Admin</title>
+<link rel="stylesheet" href="/_/static/wiki.css?v={{.Version}}">
+<style>
+  body { margin: 0; background: var(--light); color: var(--text); }
+  .admin-wrap { max-width: 760px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+  .admin-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--lightgray); padding-bottom: 1rem; margin-bottom: 1.5rem; }
+  .admin-header h1 { font-family: var(--font-header); font-size: 1.4rem; margin: 0; }
+  .admin-id { color: var(--gray); font-size: .85rem; margin-top: .15rem; }
+  .admin-card { border: 1px solid var(--lightgray); border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 1.25rem; }
+  .admin-card h2 { font-family: var(--font-header); font-size: 1rem; margin: 0 0 .75rem; }
+  dl.admin-kv { margin: 0; display: grid; grid-template-columns: minmax(8rem, 13rem) 1fr; gap: .45rem 1rem; }
+  dl.admin-kv dt { color: var(--gray); font-size: .85rem; }
+  dl.admin-kv dd { margin: 0; font-family: var(--font-code); font-size: .85rem; word-break: break-word; }
+  .badge { display: inline-block; font-size: .72rem; padding: .08rem .5rem; border-radius: 999px; border: 1px solid var(--lightgray); }
+  .badge-ok { color: #1a7f37; border-color: rgba(26,127,55,.35); }
+  .badge-off { color: var(--gray); }
+  .admin-actions { margin: 1.25rem 0 0; }
+  button.admin-btn, a.admin-btn { font: inherit; cursor: pointer; display: inline-block; text-decoration: none; background: var(--secondary); color: #fff; border: 0; border-radius: var(--radius); padding: .5rem 1rem; }
+  .admin-note { color: var(--gray); font-size: .85rem; }
+  .admin-error { color: #cf222e; font-size: .9rem; margin-top: 0; }
+  .admin-foot { max-width: 760px; margin: 0 auto; padding: 0 1.25rem 2rem; color: var(--gray); font-size: .8rem; }
+</style>
+</head>
+<body>
+<main class="admin-wrap">
+{{end}}
+
+{{define "foot"}}
+</main>
+<footer class="admin-foot">my-wiki admin · v{{.Version}}</footer>
+</body>
+</html>
+{{end}}

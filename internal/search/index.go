@@ -44,6 +44,31 @@ type indexSnapshot struct {
 type IndexSearcher struct {
 	snapshot atomic.Pointer[indexSnapshot]
 	vault    *vault.Vault
+
+	// lastBuilt holds the Unix-nanosecond timestamp of the most recent
+	// successful Build(), or 0 if Build() has never completed. Read via
+	// Stats() for the admin dashboard.
+	lastBuilt atomic.Int64
+}
+
+// Stats is a point-in-time snapshot of the index's state, surfaced by the
+// admin dashboard.
+type Stats struct {
+	// DocCount is the number of documents in the current index snapshot.
+	DocCount int
+	// LastBuilt is the time of the last successful Build, or the zero time
+	// if Build has never completed.
+	LastBuilt time.Time
+}
+
+// Stats reports the current document count and last successful build time.
+// Safe for concurrent use.
+func (s *IndexSearcher) Stats() Stats {
+	st := Stats{DocCount: s.snapshot.Load().docCount}
+	if ns := s.lastBuilt.Load(); ns != 0 {
+		st.LastBuilt = time.Unix(0, ns)
+	}
+	return st
 }
 
 // NewIndexSearcher creates an IndexSearcher for the given vault.
@@ -150,6 +175,7 @@ func (s *IndexSearcher) Build() error {
 
 	snap.docCount = len(snap.docs)
 	s.snapshot.Store(snap)
+	s.lastBuilt.Store(time.Now().UnixNano())
 	return nil
 }
 

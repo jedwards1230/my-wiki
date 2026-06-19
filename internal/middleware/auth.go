@@ -203,7 +203,7 @@ func newAuthHandler(
 				return
 			}
 
-			if len(allowedGroups) > 0 && !hasAllowedGroup(claims.Groups, allowedGroups) {
+			if len(allowedGroups) > 0 && !HasAllowedGroup(claims.Groups, allowedGroups) {
 				writeForbidden(w)
 				return
 			}
@@ -241,7 +241,10 @@ func validateIssuerScheme(issuer string) error {
 	}
 }
 
-func hasAllowedGroup(userGroups, allowed []string) bool {
+// HasAllowedGroup reports whether userGroups contains at least one entry from
+// allowed. Exported so the admin panel can reuse the exact group-membership
+// semantics the JWT middleware applies.
+func HasAllowedGroup(userGroups, allowed []string) bool {
 	for _, g := range userGroups {
 		for _, a := range allowed {
 			if g == a {

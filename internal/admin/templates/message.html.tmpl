@@ -1,0 +1,7 @@
+{{define "message"}}{{template "head" .}}
+<header class="admin-header"><h1>{{.Heading}}</h1></header>
+<section class="admin-card">
+  <p>{{.Message}}</p>
+  <p class="admin-actions"><a class="admin-btn" href="/">Back to wiki</a></p>
+</section>
+{{template "foot" .}}{{end}}

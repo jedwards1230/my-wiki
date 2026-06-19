@@ -1,0 +1,42 @@
+{{define "dashboard"}}{{template "head" .}}
+<header class="admin-header">
+  <div>
+    <h1>Admin</h1>
+    <div class="admin-id">Signed in as {{with .User}}{{or .Name .Username .Subject}}{{end}}</div>
+  </div>
+  <form method="POST" action="/_/admin/logout">
+    <input type="hidden" name="csrf_token" value="{{with .User}}{{.CSRF}}{{end}}">
+    <button class="admin-btn" type="submit">Sign out</button>
+  </form>
+</header>
+
+<section class="admin-card">
+  <h2>Server</h2>
+  <dl class="admin-kv">
+    <dt>Version</dt><dd>{{.Version}}</dd>
+    <dt>Vault directory</dt><dd>{{.VaultDir}}</dd>
+    <dt>HTTP port</dt><dd>{{.Port}}</dd>
+    <dt>Base URL</dt><dd>{{if .BaseURL}}{{.BaseURL}}{{else}}—{{end}}</dd>
+    <dt>Filesystem watcher</dt><dd>{{if .WatchEnabled}}<span class="badge badge-ok">enabled</span>{{else}}<span class="badge badge-off">disabled</span>{{end}}</dd>
+  </dl>
+</section>
+
+<section class="admin-card">
+  <h2>Authentication</h2>
+  <dl class="admin-kv">
+    <dt>Mode</dt><dd>{{.AuthMode}}</dd>
+    <dt>Issuer</dt><dd>{{if .AuthIssuer}}{{.AuthIssuer}}{{else}}—{{end}}</dd>
+    <dt>Admin groups</dt><dd>{{range $i, $g := .AdminGroups}}{{if $i}}, {{end}}{{$g}}{{else}}—{{end}}</dd>
+  </dl>
+</section>
+
+<section class="admin-card">
+  <h2>Content</h2>
+  <dl class="admin-kv">
+    <dt>Wiki pages</dt><dd>{{.PageCount}}</dd>
+    <dt>Search index</dt><dd>{{if .IndexRegistered}}<span class="badge badge-ok">active (TF-IDF)</span>{{else}}<span class="badge badge-off">substring fallback</span>{{end}}</dd>
+    <dt>Indexed documents</dt><dd>{{.IndexDocCount}}</dd>
+    <dt>Index last built</dt><dd>{{.IndexLastBuilt}}</dd>
+  </dl>
+</section>
+{{template "foot" .}}{{end}}

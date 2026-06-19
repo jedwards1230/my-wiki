@@ -1,0 +1,8 @@
+{{define "login"}}{{template "head" .}}
+<header class="admin-header"><h1>Admin sign-in</h1></header>
+<section class="admin-card">
+  {{if .Error}}<p class="admin-error">{{.Error}}</p>{{end}}
+  <p class="admin-note">Sign in with your organization account to manage this wiki.</p>
+  <p class="admin-actions"><a class="admin-btn" href="/_/admin/authorize?return={{.Return}}">Sign in with SSO</a></p>
+</section>
+{{template "foot" .}}{{end}}

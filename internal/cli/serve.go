@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jedwards1230/my-wiki/internal/admin"
 	"github.com/jedwards1230/my-wiki/internal/api"
 	"github.com/jedwards1230/my-wiki/internal/dispatch"
 	"github.com/jedwards1230/my-wiki/internal/mcpserver"
@@ -439,9 +440,45 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	}
 	apiHandler := api.NewHandler(v, searchSvc, apiOpts...)
 
-	srv := server.New(cfg, publicFS, vaultFS, logger,
-		server.WithAPIRoutes(apiHandler.RegisterRoutes),
-	)
+	// Admin panel (/_/admin). Opt-in via WIKI_AUTH_ADMIN_GROUPS when auth is
+	// enabled, or via WIKI_ADMIN_DEV_INSECURE for local dev when auth is off.
+	// admin.New encapsulates that truth table and returns a nil handler when
+	// the panel should not be mounted.
+	adminHandler, err := admin.New(context.Background(), admin.Options{
+		VaultDir:     vaultDir,
+		Port:         port,
+		BaseURL:      os.Getenv(EnvBaseURL),
+		Version:      version,
+		WatchEnabled: watchEnabled,
+		IssuerURL:    os.Getenv(EnvAuthIssuer),
+		ClientID:     os.Getenv(EnvAuthClientID),
+		ClientSecret: os.Getenv(EnvAuthClientSecret),
+		AdminGroups:  splitCSV(os.Getenv(EnvAuthAdminGroups)),
+		SessionKeys:  splitCSV(os.Getenv(EnvAdminSessionKey)),
+		DevInsecure:  envOrBool(EnvAdminDevInsecure, false),
+		IndexStats: func() (int, time.Time, bool) {
+			st := idx.Stats()
+			return st.DocCount, st.LastBuilt, len(engines) > 1
+		},
+		PageCount: func() int {
+			pages, perr := v.FindWikiPages()
+			if perr != nil {
+				return 0
+			}
+			return len(pages)
+		},
+		Logger: logger,
+	})
+	if err != nil {
+		return fmt.Errorf("admin panel setup: %w", err)
+	}
+
+	serverOpts := []server.Option{server.WithAPIRoutes(apiHandler.RegisterRoutes)}
+	if adminHandler != nil {
+		serverOpts = append(serverOpts, server.WithAPIRoutes(adminHandler.RegisterRoutes))
+	}
+
+	srv := server.New(cfg, publicFS, vaultFS, logger, serverOpts...)
 
 	// Graceful shutdown on SIGTERM/SIGINT
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)

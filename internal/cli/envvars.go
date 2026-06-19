@@ -147,6 +147,60 @@ const EnvAuthResourceMetadataURL = "WIKI_AUTH_RESOURCE_METADATA_URL"
 const EnvAuthReads = "WIKI_AUTH_READS"
 
 // ---------------------------------------------------------------------------
+// Admin panel (/_/admin) — browser OIDC login
+// ---------------------------------------------------------------------------
+
+// EnvAuthAdminGroups is a comma-separated list of group names authorized to
+// use the admin panel (/_/admin). It is a SEPARATE, narrower allow-list from
+// EnvAuthAllowedGroups: a token's `groups` claim must contain at least one of
+// these to reach any admin route.
+//
+// Required when the admin login gate is active (i.e. EnvAuthIssuer is set).
+// Empty → the admin panel is not registered and every /_/admin/* path 404s.
+const EnvAuthAdminGroups = "WIKI_AUTH_ADMIN_GROUPS"
+
+// EnvAuthClientID is the OAuth2 client ID of the confidential WEB client used
+// by the admin panel's browser login (Authorization Code + PKCE). It is the
+// expected `aud` of the ID token minted for the browser session.
+//
+// This is distinct from EnvAuthAudience, which is the access-token audience
+// validated for the Bearer-authenticated REST API and MCP surfaces. If you
+// reuse a single OAuth client for both, set this to that client's ID.
+//
+// Required when the admin login gate is active. Default: empty.
+const EnvAuthClientID = "WIKI_AUTH_CLIENT_ID"
+
+// EnvAuthClientSecret is the OAuth2 client secret paired with EnvAuthClientID,
+// used to exchange the authorization code for tokens at the IdP's token
+// endpoint. Required when the admin login gate is active. Default: empty.
+const EnvAuthClientSecret = "WIKI_AUTH_CLIENT_SECRET"
+
+// EnvAdminSessionKey is the secret used to authenticate-and-encrypt the admin
+// session cookie (AES-256-GCM; the AES key is SHA-256(secret)). Each key must
+// be at least 32 bytes.
+//
+// To rotate without logging everyone out, provide a comma-separated list:
+// new cookies are signed with the FIRST key, and decryption is attempted
+// against every key in order. Required when the admin login gate is active;
+// an empty or too-short key fails closed at startup. Must be identical across
+// replicas (put it in the shared Helm secret).
+const EnvAdminSessionKey = "WIKI_ADMIN_SESSION_KEY"
+
+// EnvAdminDevInsecure, when truthy (1/true — case-insensitive), registers the
+// admin panel WITHOUT the OIDC login gate, but ONLY when auth is otherwise
+// disabled (EnvAuthIssuer unset). It synthesizes a local "dev-admin" identity
+// so the panel renders for local development and visual verification without
+// standing up an IdP, and logs a prominent warning at startup.
+//
+// Truth table (auth = EnvAuthIssuer set; opt-in = this var truthy):
+//   - auth on,  opt-in ignored → admin registered WITH OIDC login gate
+//   - auth off, opt-in absent  → admin NOT registered (all /_/admin/* 404)
+//   - auth off, opt-in present → admin registered WITHOUT gate (dev only)
+//
+// Never set this on a network-facing deployment. Default: false.
+const EnvAdminDevInsecure = "WIKI_ADMIN_DEV_INSECURE"
+
+// ---------------------------------------------------------------------------
 // Webhook dispatch pipeline
 // ---------------------------------------------------------------------------
 
