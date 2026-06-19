@@ -70,8 +70,11 @@ For CSS/template/rendered-output changes, verify visually before a PR (skip for 
 go build -o wiki-server ./cmd/wiki-server
 mkdir -p /tmp/wiki-test-vault
 printf -- '---\ntitle: Test\n---\n# Test\nContent (code blocks, tables, callouts).\n' > /tmp/wiki-test-vault/test.md
-./wiki-server serve --vault /tmp/wiki-test-vault --port 9876
+# WIKI_AUTH_DISABLED=true is required: the HTTP server fails closed and refuses
+# to start without either an OIDC issuer or an explicit opt-out (see Auth, below).
+WIKI_AUTH_DISABLED=true ./wiki-server serve --vault /tmp/wiki-test-vault --port 9876
 # Use Playwright (MCP): navigate to http://localhost:9876/test/, screenshot light + dark.
+# Save screenshots under .playwright-mcp/ (gitignored) so they don't get committed.
 # Dark mode: document.documentElement.setAttribute('data-theme', 'dark')
 ```
 
