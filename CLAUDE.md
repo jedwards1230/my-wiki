@@ -47,7 +47,9 @@ internal/
   api/         REST handler on /api/* — delegates to services
   mcpserver/   MCP server (mcp-go) — bare-name tools (read, write, edit, list, search, delete, move, lint, tags, whoami, activity), streamable-http
   service/     Business logic — one service per domain (lint, pages, search, ...)
+  render/      Native Go renderer — goldmark + Obsidian extensions → site tree (HTML, listings, sitemap.xml, RSS, 404) into a memfs.Snapshot
   vault/       Vault filesystem ops — page discovery, frontmatter, wikilinks
+  slug/        Deterministic, filesystem-safe slug derivation (server owns on-disk filenames)
   search/      Searcher interface; SubstringSearcher + IndexSearcher (TF-IDF)
   notify/      Filesystem change debouncer
   middleware/  gzip, logging, Prometheus metrics, cache headers
@@ -68,12 +70,27 @@ For CSS/template/rendered-output changes, verify visually before a PR (skip for 
 
 ```bash
 go build -o wiki-server ./cmd/wiki-server
-mkdir -p /tmp/wiki-test-vault
-printf -- '---\ntitle: Test\n---\n# Test\nContent (code blocks, tables, callouts).\n' > /tmp/wiki-test-vault/test.md
-./wiki-server serve --vault /tmp/wiki-test-vault --port 9876
-# Use Playwright (MCP): navigate to http://localhost:9876/test/, screenshot light + dark.
+# Seed a vault that exercises every renderer feature (callouts, code, math,
+# diagrams, wikilinks/backlinks, transclusion, raw/, private/ exclusion, …).
+# Defaults to /tmp/wiki-test-vault; pass a path to override.
+scripts/seed-vault.sh /tmp/wiki-test-vault
+# WIKI_AUTH_DISABLED=true is required: the HTTP server fails closed and refuses
+# to start without either an OIDC issuer or an explicit opt-out (see Auth, below).
+WIKI_AUTH_DISABLED=true ./wiki-server serve --vault /tmp/wiki-test-vault --port 9876
+# Use Playwright (MCP): navigate to http://localhost:9876/ and the feature pages
+# (e.g. /rendering/callouts/, /transclusion/a/), screenshot light + dark.
+# Save screenshots under .playwright-mcp/ (gitignored) so they don't get committed.
 # Dark mode: document.documentElement.setAttribute('data-theme', 'dark')
 ```
+
+`scripts/seed-vault.sh` is the canonical fixture for visual checks — each page
+isolates a feature, so screenshots cover the whole render surface. Extend it
+when you add a rendering feature.
+
+The Playwright MCP server is declared in `.mcp.json` (`--browser firefox`). On
+Claude Code on the web, `.claude/hooks/session-start.sh` installs the firefox
+browser binary so `browser_navigate` works without manual setup; locally, run
+`npx playwright install firefox` once.
 
 ## Native Renderer Frontend
 
