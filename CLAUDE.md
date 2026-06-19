@@ -75,6 +75,11 @@ printf -- '---\ntitle: Test\n---\n# Test\nContent (code blocks, tables, callouts
 # Dark mode: document.documentElement.setAttribute('data-theme', 'dark')
 ```
 
+The Playwright MCP server is declared in `.mcp.json` (`--browser firefox`). On
+Claude Code on the web, `.claude/hooks/session-start.sh` installs the firefox
+browser binary so `browser_navigate` works without manual setup; locally, run
+`npx playwright install firefox` once.
+
 ## Native Renderer Frontend
 
 The renderer uses goldmark + a single-page app with htmx + Alpine.js:
