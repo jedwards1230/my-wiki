@@ -47,7 +47,9 @@ internal/
   api/         REST handler on /api/* — delegates to services
   mcpserver/   MCP server (mcp-go) — bare-name tools (read, write, edit, list, search, delete, move, lint, tags, whoami, activity), streamable-http
   service/     Business logic — one service per domain (lint, pages, search, ...)
+  render/      Native Go renderer — goldmark + Obsidian extensions → site tree (HTML, listings, sitemap.xml, RSS, 404) into a memfs.Snapshot
   vault/       Vault filesystem ops — page discovery, frontmatter, wikilinks
+  slug/        Deterministic, filesystem-safe slug derivation (server owns on-disk filenames)
   search/      Searcher interface; SubstringSearcher + IndexSearcher (TF-IDF)
   notify/      Filesystem change debouncer
   middleware/  gzip, logging, Prometheus metrics, cache headers
