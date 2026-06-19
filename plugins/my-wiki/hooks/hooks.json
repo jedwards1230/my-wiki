@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "Is there anything from this turn worth capturing in your wiki (your knowledge base)? Answer ok:true if nothing worth capturing. Answer ok:true with a brief note if something is worth capturing."
+            "model": "haiku",
+            "prompt": "Evaluate ONLY the most recent turn for a durable, reusable fact worth saving to the wiki knowledge base — a decision, gotcha, config detail, or finding that is NOT obvious from code/git history and is NOT already captured. Respond with JSON only, no prose.\n\nReturn {\"ok\": true} (this is the common case, most turns) when: the turn is trivial, conversational, exploratory, or routine; work is still in progress or subagents are still running; the finding is already saved; or you have already suggested a wiki capture earlier in this conversation.\n\nReturn {\"ok\": false, \"reason\": \"Suggest to the user that this be saved to the wiki, and ask before writing: <one concise fact>\"} ONLY when the turn produced a clearly capture-worthy, durable fact. Be conservative — the large majority of turns must return ok:true."
           }
         ]
       }
