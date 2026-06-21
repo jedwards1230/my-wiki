@@ -13,7 +13,7 @@ import (
 )
 
 // DefaultExcludedDirs are directories excluded from wiki page discovery by default.
-var DefaultExcludedDirs = []string{".obsidian", "raw", "private"}
+var DefaultExcludedDirs = []string{".obsidian", "raw"}
 
 // Vault provides operations on a wiki vault directory.
 type Vault struct {
@@ -63,7 +63,7 @@ func (v *Vault) IsExcluded(rel string) bool {
 }
 
 // FindWikiPages returns all .md files, excluding directories listed in
-// ExcludedDirs (default: .obsidian/, raw/, private/).
+// ExcludedDirs (default: .obsidian/, raw/).
 func (v *Vault) FindWikiPages() ([]string, error) {
 	var pages []string
 	err := v.Storage.WalkDir("", func(rel string, d fs.DirEntry, err error) error {
@@ -310,7 +310,6 @@ func removeInlineCode(s string) string {
 // even though they are not wiki pages.
 var slugExcludedDirs = map[string]bool{
 	".obsidian": true,
-	"private":   true,
 }
 
 // BuildSlugIndex builds a map of lowercase slug → canonical relative path
@@ -318,7 +317,7 @@ var slugExcludedDirs = map[string]bool{
 // basename and the full relative path (without .md) are inserted as keys
 // so wikilinks can be resolved by short name or by full path.
 //
-// Excludes .obsidian/ and private/. Note: raw/ is intentionally included
+// Excludes .obsidian/. Note: raw/ is intentionally included
 // because raw files can be wikilink targets.
 //
 // The value is the canonical relative path (no extension) so the native

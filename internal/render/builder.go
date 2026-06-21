@@ -151,7 +151,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		return nil, fmt.Errorf("new renderer: %w", err)
 	}
 
-	// 3. Enumerate vault pages (filters out raw/ private/ .obsidian/).
+	// 3. Enumerate vault pages (filters out raw/ .obsidian/).
 	pages, err := v.FindWikiPages()
 	if err != nil {
 		return nil, fmt.Errorf("find wiki pages: %w", err)

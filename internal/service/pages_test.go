@@ -19,11 +19,12 @@ func setupPagesVault(t *testing.T) (vault.Storage, string) {
 	}
 
 	files := map[string]string{
-		"index.md":          "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\nWelcome.\n",
-		"meta/schema.md":    "---\ntitle: Schema\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nSchema content.\n",
-		"project/alpha.md":  "---\ntitle: Alpha\ntags:\n  - project\ndate: 2026-02-01\n---\n\nAlpha content.\n",
-		"private/secret.md": "---\ntitle: Secret\n---\n\nPrivate.\n",
-		"raw/source.md":     "---\ntitle: Source\n---\n\nRaw.\n",
+		"index.md":                 "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\nWelcome.\n",
+		"meta/schema.md":           "---\ntitle: Schema\ntags:\n  - meta\ndate: 2026-01-01\n---\n\nSchema content.\n",
+		"project/alpha.md":         "---\ntitle: Alpha\ntags:\n  - project\ndate: 2026-02-01\n---\n\nAlpha content.\n",
+		"private/secret.md":        "---\ntitle: Secret\n---\n\nPrivate.\n",
+		"raw/source.md":            "---\ntitle: Source\n---\n\nRaw.\n",
+		".obsidian/workspace.json": "{}\n",
 	}
 
 	for name, content := range files {
@@ -152,7 +153,7 @@ func TestPageService_List(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should include wiki pages but not raw/ or private/ or .obsidian/
+	// Should include wiki pages (including private/) but not raw/ or .obsidian/
 	paths := map[string]bool{}
 	for _, p := range pages {
 		paths[p.Path] = true
@@ -164,8 +165,8 @@ func TestPageService_List(t *testing.T) {
 	if !paths["meta/schema.md"] {
 		t.Error("expected meta/schema.md")
 	}
-	if paths["private/secret.md"] {
-		t.Error("should not include private/")
+	if !paths["private/secret.md"] {
+		t.Error("expected private/secret.md — private/ is no longer special")
 	}
 	if paths["raw/source.md"] {
 		t.Error("should not include raw/")
@@ -489,22 +490,23 @@ func TestPageService_CallbackNotCalledOnError(t *testing.T) {
 	}
 }
 
-// --- Security: API/HTTP/MCP denylist (private/, .obsidian/) ---
+// --- Security: API/HTTP/MCP denylist (.obsidian/) ---
 
 func TestIsAPIDenied(t *testing.T) {
 	denied := []string{
-		"private", "private/secret", "private/secret.md",
-		"private/nested/deep.md", ".obsidian", ".obsidian/workspace.json",
-		"./private/secret.md", "private/../private/secret.md",
+		".obsidian", ".obsidian/workspace.json", ".obsidian/nested/deep.json",
+		"./.obsidian/workspace.json", ".obsidian/../.obsidian/workspace.json",
 	}
 	for _, p := range denied {
 		if !IsAPIDenied(p) {
 			t.Errorf("IsAPIDenied(%q) = false, want true", p)
 		}
 	}
+	// private/ is no longer special — it is a normal, served directory.
 	allowed := []string{
 		"index.md", "meta/schema.md", "project/alpha.md",
-		"raw", "raw/source.md", "privateer/notes.md", "raw/private/x.md",
+		"private", "private/secret", "private/secret.md", "private/nested/deep.md",
+		"raw", "raw/source.md",
 	}
 	for _, p := range allowed {
 		if IsAPIDenied(p) {
@@ -517,7 +519,7 @@ func TestPageService_ReadDeniedReturnsSentinel(t *testing.T) {
 	storage, _ := setupPagesVault(t)
 	svc := NewPageService(storage)
 
-	for _, p := range []string{"private/secret.md", "private/secret", ".obsidian/workspace.json"} {
+	for _, p := range []string{".obsidian/workspace.json", ".obsidian"} {
 		if _, err := svc.Read(p); !errors.Is(err, ErrPathDenied) {
 			t.Errorf("Read(%q) err = %v, want ErrPathDenied", p, err)
 		}
@@ -534,17 +536,27 @@ func TestPageService_ReadRawStillAllowed(t *testing.T) {
 	}
 }
 
+func TestPageService_ReadPrivateNowAllowed(t *testing.T) {
+	storage, _ := setupPagesVault(t)
+	svc := NewPageService(storage)
+
+	// private/ is a normal directory now — it must be readable.
+	if _, err := svc.Read("private/secret.md"); err != nil {
+		t.Errorf("Read(private/secret.md) err = %v, want nil", err)
+	}
+}
+
 func TestPageService_WriteDeniedReturnsSentinel(t *testing.T) {
 	storage, dir := setupPagesVault(t)
 	svc := NewPageService(storage)
 
 	content := "---\ntitle: X\ntags:\n  - t\ndate: 2026-01-01\n---\n\nbody\n"
-	if err := svc.Write("private/new.md", content); !errors.Is(err, ErrPathDenied) {
-		t.Fatalf("Write(private/new.md) err = %v, want ErrPathDenied", err)
+	if err := svc.Write(".obsidian/new.md", content); !errors.Is(err, ErrPathDenied) {
+		t.Fatalf("Write(.obsidian/new.md) err = %v, want ErrPathDenied", err)
 	}
 	// Ensure no file was actually written.
-	if _, err := os.Stat(filepath.Join(dir, "private", "new.md")); err == nil {
-		t.Error("private/new.md was written despite denial")
+	if _, err := os.Stat(filepath.Join(dir, ".obsidian", "new.md")); err == nil {
+		t.Error(".obsidian/new.md was written despite denial")
 	}
 }
 
@@ -552,12 +564,12 @@ func TestPageService_DeleteDeniedReturnsSentinel(t *testing.T) {
 	storage, dir := setupPagesVault(t)
 	svc := NewPageService(storage)
 
-	if err := svc.Delete("private/secret.md"); !errors.Is(err, ErrPathDenied) {
-		t.Fatalf("Delete(private/secret.md) err = %v, want ErrPathDenied", err)
+	if err := svc.Delete(".obsidian/workspace.json"); !errors.Is(err, ErrPathDenied) {
+		t.Fatalf("Delete(.obsidian/workspace.json) err = %v, want ErrPathDenied", err)
 	}
 	// File must still exist.
-	if _, err := os.Stat(filepath.Join(dir, "private", "secret.md")); err != nil {
-		t.Error("private/secret.md was deleted despite denial")
+	if _, err := os.Stat(filepath.Join(dir, ".obsidian", "workspace.json")); err != nil {
+		t.Error(".obsidian/workspace.json was deleted despite denial")
 	}
 }
 
@@ -566,12 +578,12 @@ func TestPageService_MoveDeniedBothEnds(t *testing.T) {
 	svc := NewPageService(storage)
 
 	// Denied source.
-	if err := svc.Move("private/secret.md", "project/leaked.md"); !errors.Is(err, ErrPathDenied) {
-		t.Errorf("Move(private src) err = %v, want ErrPathDenied", err)
+	if err := svc.Move(".obsidian/workspace.json", "project/leaked.md"); !errors.Is(err, ErrPathDenied) {
+		t.Errorf("Move(.obsidian src) err = %v, want ErrPathDenied", err)
 	}
 	// Denied destination.
-	if err := svc.Move("index.md", "private/exfil.md"); !errors.Is(err, ErrPathDenied) {
-		t.Errorf("Move(private dst) err = %v, want ErrPathDenied", err)
+	if err := svc.Move("index.md", ".obsidian/exfil.md"); !errors.Is(err, ErrPathDenied) {
+		t.Errorf("Move(.obsidian dst) err = %v, want ErrPathDenied", err)
 	}
 }
 
@@ -579,8 +591,8 @@ func TestPageService_PatchDeniedReturnsSentinel(t *testing.T) {
 	storage, _ := setupPagesVault(t)
 	svc := NewPageService(storage)
 
-	if _, err := svc.Patch("private/secret.md", []PatchOp{{Find: "Private", Replace: "Leaked"}}); !errors.Is(err, ErrPathDenied) {
-		t.Errorf("Patch(private) err = %v, want ErrPathDenied", err)
+	if _, err := svc.Patch(".obsidian/workspace.json", []PatchOp{{Find: "{}", Replace: "[]"}}); !errors.Is(err, ErrPathDenied) {
+		t.Errorf("Patch(.obsidian) err = %v, want ErrPathDenied", err)
 	}
 }
 

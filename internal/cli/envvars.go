@@ -61,9 +61,8 @@ const EnvWatch = "WIKI_WATCH"
 // EnvWatchExcludeDirs is a comma-separated list of top-level vault
 // subdirectories the filesystem watcher skips.
 //
-// Default: ".obsidian,raw,private" (Obsidian metadata, raw byte storage,
-// device-only private folder). Whitespace or a lone comma disables
-// exclusions entirely; empty/unset uses the default.
+// Default: ".obsidian,raw" (Obsidian metadata, raw byte storage). Whitespace
+// or a lone comma disables exclusions entirely; empty/unset uses the default.
 const EnvWatchExcludeDirs = "WIKI_WATCH_EXCLUDE_DIRS"
 
 // EnvIndexExcludeDirs is a comma-separated list of vault directories that do
