@@ -86,7 +86,7 @@ func TestExcludeDirsFromEnv(t *testing.T) {
 	}{
 		{"empty uses defaults", "", defaultWatchExcludeDirs},
 		{"override single", "ephemeral", []string{"ephemeral"}},
-		{"override multi", ".obsidian,raw,private,trash", []string{".obsidian", "raw", "private", "trash"}},
+		{"override multi", ".obsidian,raw,drafts,trash", []string{".obsidian", "raw", "drafts", "trash"}},
 		{"trims whitespace", " foo , bar ,baz", []string{"foo", "bar", "baz"}},
 		{"skips blank entries", "foo,,bar,", []string{"foo", "bar"}},
 		{"whitespace-only disables exclusions", "  ", []string{}},

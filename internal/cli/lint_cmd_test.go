@@ -11,7 +11,7 @@ func setupLintVault(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	dirs := []string{"private", ".obsidian", "meta", "project"}
+	dirs := []string{".obsidian", "meta", "project"}
 	for _, d := range dirs {
 		_ = os.MkdirAll(filepath.Join(dir, d), 0o755)
 	}
