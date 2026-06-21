@@ -1,7 +1,7 @@
 # Claude PR review — calls the shared reusable workflow in
 # jedwards1230/release-workflows (claude-code-action@v1, Haiku, with the public
 # jedwards1230-plugins marketplace + review-team plugin + github_ci by default).
-name: Claude PR Review
+name: PR Review
 
 on:
   pull_request:
@@ -37,3 +37,17 @@ jobs:
           the Helm chart under deploy/helm/my-wiki/.
         - For plugin files (manifest, hooks, skills, agents, commands), use plugin-dev's plugin-validator / skill-reviewer agents.
         Do NOT re-flag gofmt/go vet/golangci-lint — CI owns those.
+
+  pr-review:
+    name: PR Review
+    if: always()
+    needs: [review]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check review result
+        run: |
+          result="${{ needs.review.result }}"
+          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
+            echo "PR Review passed (result: $result)"; exit 0
+          fi
+          echo "PR Review failed (result: $result)"; exit 1
