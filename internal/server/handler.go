@@ -108,10 +108,10 @@ func NewMarkdownHandler(fsys fs.FS) *MarkdownHandler {
 func (h *MarkdownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 
-	// Deny confidential/editor-config directories (private/, .obsidian/) on the
-	// markdown surface, reusing the same predicate the page API enforces. 404
-	// (not 403) so we don't confirm existence. raw/ is intentionally NOT denied
-	// here — it is served by the dedicated /raw/ handler.
+	// Deny the editor-config directory (.obsidian/) on the markdown surface,
+	// reusing the same predicate the page API enforces. 404 (not 403) so we
+	// don't confirm existence. raw/ is intentionally NOT denied here — it is
+	// served by the dedicated /raw/ handler.
 	if service.IsAPIDenied(p) {
 		http.NotFound(w, r)
 		return

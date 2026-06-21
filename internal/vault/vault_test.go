@@ -126,12 +126,13 @@ func TestFindWikiPages(t *testing.T) {
 	}
 	sort.Strings(rels)
 
-	// Should include wiki pages, not raw/, private/, .obsidian/
+	// Should include wiki pages (including private/), not raw/ or .obsidian/
 	expected := []string{
 		"index.md",
 		"meta/schema.md",
 		"no-frontmatter.md",
 		"orphan.md",
+		"private/secret.md",
 		"project/alpha.md",
 	}
 
@@ -548,8 +549,8 @@ func TestCustomExcludedDirs(t *testing.T) {
 		}
 	}
 
-	// BuildSlugIndex uses its own narrower exclusion list (only .obsidian and
-	// private) so that raw/ and other custom-excluded dirs remain linkable.
+	// BuildSlugIndex uses its own narrower exclusion list (only .obsidian) so
+	// that raw/ and other custom-excluded dirs remain linkable.
 	slugs, err := v.BuildSlugIndex()
 	if err != nil {
 		t.Fatal(err)
@@ -589,6 +590,9 @@ func TestBuildSlugIndex(t *testing.T) {
 		"project/alpha": "project/alpha",
 		"source1":       "raw/source1",
 		"raw/source1":   "raw/source1",
+		// private/ is a normal directory — its pages are slug-indexed.
+		"secret":         "private/secret",
+		"private/secret": "private/secret",
 	}
 	for slug, wantPath := range cases {
 		got, ok := slugs[slug]
@@ -601,8 +605,8 @@ func TestBuildSlugIndex(t *testing.T) {
 		}
 	}
 
-	// Should NOT include private or .obsidian
-	for _, slug := range []string{"secret", "config"} {
+	// Should NOT include .obsidian
+	for _, slug := range []string{"config"} {
 		if _, ok := slugs[slug]; ok {
 			t.Errorf("unexpected slug %q (should be excluded)", slug)
 		}
@@ -632,7 +636,7 @@ func TestWithStorage_MemStorage(t *testing.T) {
 		}
 		sort.Strings(rels)
 
-		expected := []string{"index.md", "notes/hello.md"}
+		expected := []string{"index.md", "notes/hello.md", "private/secret.md"}
 		if len(rels) != len(expected) {
 			t.Fatalf("expected %d pages, got %d: %v", len(expected), len(rels), rels)
 		}
@@ -649,14 +653,10 @@ func TestWithStorage_MemStorage(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		for _, slug := range []string{"index", "hello", "notes/hello", "source", "raw/source"} {
+		for _, slug := range []string{"index", "hello", "notes/hello", "source", "raw/source", "secret", "private/secret"} {
 			if _, ok := slugs[slug]; !ok {
 				t.Errorf("missing slug %q", slug)
 			}
-		}
-		// private and .obsidian should be excluded
-		if _, ok := slugs["secret"]; ok {
-			t.Error("unexpected slug 'secret' (should be excluded)")
 		}
 	})
 

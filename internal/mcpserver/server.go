@@ -239,7 +239,7 @@ func registerTools(
 	s.AddTool(
 		mcp.NewTool("list",
 			mcp.WithTitleAnnotation("List Pages"),
-			mcp.WithDescription("List wiki pages (excludes raw/, private/, .obsidian/). With detail=false (default), returns {path, title, has_meta} per page. With detail=true, returns rich entries with {path, title, description, tags} from frontmatter. Use sort_by='modified' with limit to get recently changed pages."),
+			mcp.WithDescription("List wiki pages (excludes raw/, .obsidian/). With detail=false (default), returns {path, title, has_meta} per page. With detail=true, returns rich entries with {path, title, description, tags} from frontmatter. Use sort_by='modified' with limit to get recently changed pages."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
