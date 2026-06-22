@@ -4,9 +4,8 @@
       {
         "hooks": [
           {
-            "type": "prompt",
-            "model": "claude-haiku-4-5-20251001",
-            "prompt": "Evaluate only the most recent turn (fresh each time): did it produce a fact that should be saved to the wiki? The wiki is a shared, cross-machine, multi-reader knowledge base — not your notebook for this session. Respond with JSON only, no prose.\n\nThe test is PORTABILITY: a fact qualifies only if it would still matter to a reader who has no access to this repo, working tree, machine, or the tool you are currently using. Facts useful only while working in a specific codebase or tool — build/run commands, CLI or tool flags, library/framework or plugin/editor authoring idioms, linter quirks, local file paths, dependency versions — are local lore. They belong in that repo's own docs or in machine-local memory, NEVER the wiki, no matter how durable or non-obvious they are.\n\nReturn {\"ok\": true} — the common case for the large majority of turns — when: the turn is trivial, conversational, exploratory, or routine; work is still in progress or subagents are still running; the candidate fact is local lore (fails the portability test); the fact is already captured; or you already suggested a wiki capture earlier in this conversation.\n\nReturn {\"ok\": false, \"reason\": \"Suggest saving this to the wiki and ask before writing: <one concise portable fact>\"} ONLY when the turn produced a fact that passes the portability test AND is durable AND is not already captured. Before doing so, verify it against the wiki's documented Inclusion Criteria (read meta/schema) — that page is the authority on what earns a page and where it goes. When in doubt, return ok:true."
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/wiki-capture.py\""
           }
         ]
       }
