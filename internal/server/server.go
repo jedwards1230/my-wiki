@@ -65,7 +65,7 @@ func New(cfg Config, publicFS, vaultFS fs.FS, logger *slog.Logger, opts ...Optio
 	rawFS, err := fs.Sub(vaultFS, "raw")
 	var rawHandler *RawHandler
 	if err == nil {
-		rawHandler = NewRawHandler(rawFS, cfg.RawRenderer)
+		rawHandler = NewRawHandler(rawFS, cfg.RawRenderer, staticHandler)
 	}
 
 	mux := http.NewServeMux()

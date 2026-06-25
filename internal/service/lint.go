@@ -10,6 +10,15 @@ import (
 	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
+// isRawPath reports whether a vault-relative path lives under raw/. raw/
+// markdown is compiled as first-class wiki pages but is a verbatim source
+// import, so it's exempt from the authored-page frontmatter contract — the same
+// bypass the write API applies (see validateFrontmatter in pages.go).
+func isRawPath(rel string) bool {
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	return rel == "raw" || strings.HasPrefix(rel, "raw/")
+}
+
 // LintService provides vault lint operations.
 type LintService struct {
 	vault     *vault.Vault
@@ -107,6 +116,14 @@ func (s *LintService) checkFrontmatter(report *LintReport) {
 
 	for _, page := range pages {
 		rel, _ := filepath.Rel(s.vault.Dir, page)
+
+		// Pages under raw/ are verbatim source imports (clippings, etc.) and
+		// carry whatever frontmatter the original had — they're exempt from the
+		// wiki-page frontmatter contract, mirroring the write API's raw/ bypass
+		// (validateFrontmatter in pages.go).
+		if isRawPath(rel) {
+			continue
+		}
 
 		if err := vault.ValidateYAMLSyntax(page); err != nil {
 			report.Issues = append(report.Issues, LintIssue{

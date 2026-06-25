@@ -1,19 +1,21 @@
 package render
 
-// rawpage.go renders source documents under raw/ as first-class HTML pages.
-// raw/ stays out of the build graph (no search index, no page directory, not
-// a backlink node — see meta/schema "Raw Sources"), so these pages are
-// rendered on demand by the /raw/ handler rather than baked into the snapshot.
-// The point is presentation parity: a human clicking a raw markdown source
-// gets the same chrome and rich-media embeds as any wiki page, while agents
-// and scripts still fetch the verbatim bytes (Accept: !text/html or ?raw=1).
+// rawpage.go renders raw/ directory listings as galleries and provides an
+// on-demand markdown render used only as a fallback.
+//
+// raw/ MARKDOWN is now promoted to first-class wiki pages: it flows through
+// FindWikiPages and is baked into the snapshot at its raw/ slug, so the /raw/
+// handler serves the full compiled page (backlinks, TOC, graph, nav) by
+// delegating to the static snapshot. RenderRawPage here is the pre-first-build /
+// snapshot-miss fallback so a raw markdown URL never 404s spuriously. Agents and
+// scripts still fetch the verbatim bytes (Accept: !text/html or ?raw=1).
+//
+// raw/ ASSETS (PDFs, images, audio, video, .canvas) remain non-renderable source
+// files served as-is, with RenderRawIndex providing the directory gallery view.
 
 import (
 	"html"
 	"html/template"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -146,62 +148,6 @@ func buildRawIndex(urlDir string, entries []RawDirEntry) (template.HTML, []TOCEn
 	}
 
 	return template.HTML(b.String()), toc //nolint:gosec // names escaped, URLs built from clean dir + name
-}
-
-// buildRawExplorerNode walks the vault's raw/ directory and returns a top-level
-// Explorer node mirroring its folder/file structure, so raw sources are
-// browsable from the sidebar. Returns nil when there is no raw/ directory.
-// Folders link to their /raw/ listing; files link to their /raw/ URL. This is
-// the one place raw/ enters the nav — its contents still stay out of search,
-// the page directory, and the backlink graph.
-func buildRawExplorerNode(vaultDir string) *ExplorerNode {
-	rawDir := filepath.Join(vaultDir, "raw")
-	info, err := os.Stat(rawDir)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-	return &ExplorerNode{
-		Name:     humanizeSegment("raw"),
-		URL:      "/raw/",
-		IsFolder: true,
-		Children: rawDirChildren(rawDir, "/raw/"),
-	}
-}
-
-// rawDirChildren recursively builds Explorer nodes for a raw/ subdirectory.
-// fsDir is the filesystem path; urlPrefix is the /raw/ URL prefix (trailing
-// slash). Folders are humanized + linked to their listing; files keep their
-// literal name (extension visible) and link to the file URL.
-func rawDirChildren(fsDir, urlPrefix string) []*ExplorerNode {
-	entries, err := os.ReadDir(fsDir)
-	if err != nil {
-		return nil
-	}
-	sort.Slice(entries, func(i, j int) bool {
-		di, dj := entries[i].IsDir(), entries[j].IsDir()
-		if di != dj {
-			return di
-		}
-		return entries[i].Name() < entries[j].Name()
-	})
-	var out []*ExplorerNode
-	for _, e := range entries {
-		name := e.Name()
-		if strings.HasPrefix(name, ".") {
-			continue // skip dotfiles (.obsidian, etc.)
-		}
-		if e.IsDir() {
-			out = append(out, &ExplorerNode{
-				Name:     humanizeSegment(name),
-				URL:      urlPrefix + name + "/",
-				IsFolder: true,
-				Children: rawDirChildren(filepath.Join(fsDir, name), urlPrefix+name+"/"),
-			})
-		} else {
-			out = append(out, &ExplorerNode{Name: name, URL: urlPrefix + name})
-		}
-	}
-	return out
 }
 
 // markActiveByURL marks the explorer node whose URL exactly matches url as

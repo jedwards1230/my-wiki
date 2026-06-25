@@ -284,21 +284,11 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 	// gets a cheap deep-copy of the base tree with that page's ancestor
 	// chain marked open / active — O(N) per page instead of re-running
 	// the full O(N log N) build.
+	// raw/ markdown is promoted to first-class wiki pages (slugs "raw/…"), so
+	// it flows through BuildExplorerTree naturally and appears in the sidebar
+	// via the normal tree. Non-md raw assets aren't individual leaves but stay
+	// browsable through the /raw/<dir>/ gallery.
 	explorerBase := BuildExplorerTree(all, "")
-	// raw/ is excluded from the page graph, so BuildExplorerTree never sees it.
-	// Surface it as a dynamically-walked top-level subtree (filesystem-driven,
-	// not hardcoded) so raw sources are browsable from the sidebar, then re-sort
-	// the top level so it lands in folder-alphabetical order.
-	if rawNode := buildRawExplorerNode(v.Dir); rawNode != nil {
-		explorerBase = append(explorerBase, rawNode)
-		sort.Slice(explorerBase, func(i, j int) bool {
-			a, b := explorerBase[i], explorerBase[j]
-			if a.IsFolder != b.IsFolder {
-				return a.IsFolder
-			}
-			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
-		})
-	}
 
 	for _, p := range all {
 		// Per-page explorer tree with this page's branch marked active.

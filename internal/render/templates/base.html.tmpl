@@ -245,7 +245,13 @@
       {{- end }}
     </ul>
     {{- end }}
-    {{- if and (not .IsListPage) .Slug }}
+    {{- if .IsRawSource }}
+    <p class="raw-source-note">
+      <span class="raw-source-badge">Source</span>
+      <span class="raw-source-text">Verbatim source file from <code>raw/</code>.</span>
+      <a class="raw-link" href="{{ .SourceURL }}" hx-boost="false">View source</a>
+    </p>
+    {{- else if and (not .IsListPage) .Slug }}
     <a class="raw-link" href="/{{ .Slug }}.md" hx-boost="false">View source</a>
     {{- end }}
   </header>

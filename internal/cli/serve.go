@@ -106,11 +106,18 @@ func excludeDirsFromEnv() []string {
 // vars. Each var is honored only when set (LookupEnv): an unset var keeps the
 // service default, while setting it — even to whitespace — overrides. This lets
 // EnvIndexNoRecentsDirs be cleared to surface every directory in recents.
+//
+// raw/ is always added to the index-exclude set: raw/ markdown is rendered as
+// first-class wiki pages, but its on-disk directory holds verbatim source files
+// and assets that must not be polluted with a generated index.md. The /raw/
+// handler serves an on-demand gallery as the directory view instead.
 func directoryOptionsFromEnv() []service.DirectoryOption {
 	var opts []service.DirectoryOption
+	excludeDirs := []string{"raw"}
 	if v, ok := os.LookupEnv(EnvIndexExcludeDirs); ok {
-		opts = append(opts, service.WithIndexExcludeDirs(splitCSV(v)))
+		excludeDirs = append(excludeDirs, splitCSV(v)...)
 	}
+	opts = append(opts, service.WithIndexExcludeDirs(excludeDirs))
 	if v, ok := os.LookupEnv(EnvIndexNoRecentsDirs); ok {
 		opts = append(opts, service.WithNoRecentsDirs(splitCSV(v)))
 	}

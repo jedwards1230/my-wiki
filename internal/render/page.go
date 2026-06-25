@@ -101,6 +101,16 @@ type Page struct {
 	// to skip TOC/backlinks/word count chrome that doesn't apply.
 	IsListPage bool
 
+	// IsRawSource is true for pages compiled from a raw/ markdown source
+	// (slug prefixed "raw/"). The base template renders a compact "Source"
+	// badge + a link to the verbatim source so it's clear the page is a
+	// verbatim import rather than authored wiki content.
+	IsRawSource bool
+
+	// SourceURL is the verbatim-source link for a raw page — the page's
+	// /raw/ URL with ?raw=1. Empty for non-raw pages.
+	SourceURL string
+
 	// ListEntries is populated for IsListPage=true pages — the items shown
 	// on a folder or tag listing.
 	ListEntries []ListEntry

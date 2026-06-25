@@ -12,8 +12,12 @@ import (
 	"go.yaml.in/yaml/v2"
 )
 
-// DefaultExcludedDirs are directories excluded from wiki page discovery by default.
-var DefaultExcludedDirs = []string{".obsidian", "raw"}
+// DefaultExcludedDirs are directories excluded from wiki page discovery by
+// default. Only .obsidian/ (the editor config) is excluded: raw/ markdown is
+// promoted to first-class wiki pages (searchable, in recents/RSS/sitemap/graph),
+// rendered at their /raw/ URLs. raw/ non-markdown assets (PDFs, images, audio,
+// .canvas) are still served as-is by the dedicated /raw/ handler.
+var DefaultExcludedDirs = []string{".obsidian"}
 
 // Vault provides operations on a wiki vault directory.
 type Vault struct {
@@ -63,7 +67,8 @@ func (v *Vault) IsExcluded(rel string) bool {
 }
 
 // FindWikiPages returns all .md files, excluding directories listed in
-// ExcludedDirs (default: .obsidian/, raw/).
+// ExcludedDirs (default: .obsidian/). raw/ markdown IS included — it is
+// compiled as first-class wiki pages.
 func (v *Vault) FindWikiPages() ([]string, error) {
 	var pages []string
 	err := v.Storage.WalkDir("", func(rel string, d fs.DirEntry, err error) error {

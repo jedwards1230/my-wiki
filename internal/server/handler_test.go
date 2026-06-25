@@ -266,7 +266,7 @@ func newRawFS() fstest.MapFS {
 }
 
 func TestRawExactFile(t *testing.T) {
-	h := NewRawHandler(newRawFS(), nil)
+	h := NewRawHandler(newRawFS(), nil, nil)
 	r := httptest.NewRequest(http.MethodGet, "/raw/doc.pdf", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -281,7 +281,7 @@ func TestRawExactFile(t *testing.T) {
 }
 
 func TestRawMdFallback(t *testing.T) {
-	h := NewRawHandler(newRawFS(), nil)
+	h := NewRawHandler(newRawFS(), nil, nil)
 	// Request without .md extension, should find notes/hello.md
 	r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello", nil)
 	w := httptest.NewRecorder()
@@ -350,7 +350,7 @@ func TestRawMarkdownContentNegotiation(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			stub := &stubRawRenderer{}
-			h := NewRawHandler(newRawFS(), stub)
+			h := NewRawHandler(newRawFS(), stub, nil)
 			r := httptest.NewRequest(http.MethodGet, c.url, nil)
 			if c.accept != "" {
 				r.Header.Set("Accept", c.accept)
@@ -388,7 +388,7 @@ func TestRawMarkdownContentNegotiation(t *testing.T) {
 // When the renderer reports a miss (ok=false), the handler must fall back to
 // serving verbatim bytes rather than erroring.
 func TestRawMarkdownRenderMissFallsBackToBytes(t *testing.T) {
-	h := NewRawHandler(newRawFS(), &stubRawRenderer{miss: true})
+	h := NewRawHandler(newRawFS(), &stubRawRenderer{miss: true}, nil)
 	r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md", nil)
 	r.Header.Set("Accept", "text/html")
 	w := httptest.NewRecorder()
@@ -410,7 +410,7 @@ func TestRawMarkdownRenderMissFallsBackToBytes(t *testing.T) {
 func TestRawIndexGalleryNegotiation(t *testing.T) {
 	t.Run("browser gets gallery", func(t *testing.T) {
 		stub := &stubRawRenderer{}
-		h := NewRawHandler(newRawFS(), stub)
+		h := NewRawHandler(newRawFS(), stub, nil)
 		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil)
 		r.Header.Set("Accept", "text/html")
 		w := httptest.NewRecorder()
@@ -429,7 +429,7 @@ func TestRawIndexGalleryNegotiation(t *testing.T) {
 		// hx-boost: HX-Request true, Accept */* — must render so the swap
 		// response carries #main. This is the blank-pane regression.
 		stub := &stubRawRenderer{}
-		h := NewRawHandler(newRawFS(), stub)
+		h := NewRawHandler(newRawFS(), stub, nil)
 		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil)
 		r.Header.Set("Accept", "*/*")
 		r.Header.Set("HX-Request", "true")
@@ -441,7 +441,7 @@ func TestRawIndexGalleryNegotiation(t *testing.T) {
 	})
 	t.Run("agent gets plain autoindex", func(t *testing.T) {
 		stub := &stubRawRenderer{}
-		h := NewRawHandler(newRawFS(), stub)
+		h := NewRawHandler(newRawFS(), stub, nil)
 		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil) // no Accept
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
@@ -454,8 +454,168 @@ func TestRawIndexGalleryNegotiation(t *testing.T) {
 	})
 }
 
+// newRawSnapshotFS mimics the baked static snapshot for a promoted raw/ md
+// page: raw/notes/hello.md → key raw/notes/hello/index.html, served at
+// /raw/notes/hello/.
+func newRawSnapshotFS() fstest.MapFS {
+	return fstest.MapFS{
+		"raw/notes/hello/index.html": {Data: []byte("<html><main id=\"main\">BAKED RAW PAGE</main></html>")},
+		"404.html":                   {Data: []byte("<html>not found</html>")},
+	}
+}
+
+// TestRawMarkdownDelegatesToSnapshot covers the first-class-page contract: a
+// browser request for a raw/ markdown file is served from the baked snapshot
+// (full wiki page), while ?raw=1 and non-HTML Accept still return verbatim
+// source bytes. This is the load-bearing agent/human split.
+func TestRawMarkdownDelegatesToSnapshot(t *testing.T) {
+	static := NewStaticHandler(newRawSnapshotFS())
+
+	t.Run("browser at trailing-slash URL gets baked page", func(t *testing.T) {
+		// render is nil so a bug that bypassed delegation would surface as a
+		// fallthrough, not a silent on-demand render.
+		h := NewRawHandler(newRawFS(), nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello/", nil)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		if body := w.Body.String(); !strings.Contains(body, "BAKED RAW PAGE") {
+			t.Fatalf("expected baked snapshot page, got %q", body)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+			t.Fatalf("expected text/html, got %q", ct)
+		}
+	})
+
+	t.Run("browser at extensionless URL redirects to trailing slash", func(t *testing.T) {
+		h := NewRawHandler(newRawFS(), nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello", nil)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusMovedPermanently {
+			t.Fatalf("expected 301, got %d", w.Code)
+		}
+		if loc := w.Header().Get("Location"); loc != "/raw/notes/hello/" {
+			t.Fatalf("expected redirect to /raw/notes/hello/, got %q", loc)
+		}
+	})
+
+	t.Run("browser at .md URL redirects to canonical page URL", func(t *testing.T) {
+		h := NewRawHandler(newRawFS(), nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md", nil)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusMovedPermanently {
+			t.Fatalf("expected 301 redirect to canonical page URL, got %d", w.Code)
+		}
+		if loc := w.Header().Get("Location"); loc != "/raw/notes/hello/" {
+			t.Fatalf("redirect Location = %q, want /raw/notes/hello/", loc)
+		}
+	})
+
+	t.Run("htmx navigation serves baked page without redirect", func(t *testing.T) {
+		h := NewRawHandler(newRawFS(), nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md", nil)
+		r.Header.Set("Accept", "*/*")
+		r.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 (no redirect for HX nav), got %d", w.Code)
+		}
+		if body := w.Body.String(); !strings.Contains(body, "BAKED RAW PAGE") {
+			t.Fatalf("expected baked page for htmx nav, got %q", body)
+		}
+	})
+
+	t.Run("agent (no text/html) still gets verbatim bytes", func(t *testing.T) {
+		h := NewRawHandler(newRawFS(), nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
+			t.Fatalf("expected text/plain verbatim, got %q", ct)
+		}
+		if body := w.Body.String(); body != "# Hello" {
+			t.Fatalf("expected verbatim source bytes, got %q", body)
+		}
+	})
+
+	t.Run("?raw=1 forces verbatim bytes even for a browser", func(t *testing.T) {
+		h := NewRawHandler(newRawFS(), nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md?raw=1", nil)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
+			t.Fatalf("expected text/plain for ?raw=1, got %q", ct)
+		}
+		if body := w.Body.String(); body != "# Hello" {
+			t.Fatalf("expected verbatim source bytes, got %q", body)
+		}
+	})
+
+	t.Run("snapshot miss falls back to on-demand render", func(t *testing.T) {
+		// hello.md exists in the raw FS but NOT in the snapshot → delegation
+		// misses (404) and we fall back to the on-demand renderer.
+		emptyStatic := NewStaticHandler(fstest.MapFS{"404.html": {Data: []byte("nf")}})
+		stub := &stubRawRenderer{}
+		h := NewRawHandler(newRawFS(), stub, emptyStatic)
+		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md", nil)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		if !stub.called {
+			t.Fatal("expected on-demand render fallback when snapshot misses")
+		}
+		if !strings.Contains(w.Body.String(), "RENDERED") {
+			t.Fatalf("expected on-demand rendered body, got %q", w.Body.String())
+		}
+	})
+
+	t.Run("directory request still serves the gallery (not delegated)", func(t *testing.T) {
+		stub := &stubRawRenderer{}
+		h := NewRawHandler(newRawFS(), stub, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if !stub.indexCalled {
+			t.Fatal("directory request should still render the gallery")
+		}
+		if !strings.Contains(w.Body.String(), "GALLERY") {
+			t.Fatalf("expected gallery body, got %q", w.Body.String())
+		}
+	})
+
+	t.Run("non-md asset still served as bytes (not delegated)", func(t *testing.T) {
+		h := NewRawHandler(newRawFS(), nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/image.png", nil)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "image/png") {
+			t.Fatalf("expected image/png, got %q", ct)
+		}
+	})
+}
+
 func TestRawAutoindex(t *testing.T) {
-	h := NewRawHandler(newRawFS(), nil)
+	h := NewRawHandler(newRawFS(), nil, nil)
 	r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -486,7 +646,7 @@ func TestRawCustomMimeTypes(t *testing.T) {
 		{"/raw/video.mp4", "video/mp4"},
 		{"/raw/image.png", "image/png"},
 	}
-	h := NewRawHandler(newRawFS(), nil)
+	h := NewRawHandler(newRawFS(), nil, nil)
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, tt.path, nil)
@@ -505,7 +665,7 @@ func TestRawCustomMimeTypes(t *testing.T) {
 }
 
 func TestRawNosniff(t *testing.T) {
-	h := NewRawHandler(newRawFS(), nil)
+	h := NewRawHandler(newRawFS(), nil, nil)
 	r := httptest.NewRequest(http.MethodGet, "/raw/doc.pdf", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -516,7 +676,7 @@ func TestRawNosniff(t *testing.T) {
 }
 
 func TestRawNotFound(t *testing.T) {
-	h := NewRawHandler(newRawFS(), nil)
+	h := NewRawHandler(newRawFS(), nil, nil)
 	r := httptest.NewRequest(http.MethodGet, "/raw/nonexistent", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)

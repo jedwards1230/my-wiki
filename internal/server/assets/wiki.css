@@ -856,6 +856,19 @@ a.internal.tag-link::before {
 .raw-source-links { margin-left: auto; display: flex; gap: 0.9rem; }
 .raw-source-links a { white-space: nowrap; }
 
+/* Compact provenance note in the article header of a promoted raw/ page —
+   marks it as a verbatim import and links to the source bytes. Reuses the
+   .raw-source-badge / .raw-source-text styles above. */
+.raw-source-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.82rem;
+}
+.raw-source-note .raw-link { margin-left: 0.2rem; }
+
 /* Raw directory index — rendered like any wiki folder index (the Directory
    section is a plain bulleted internal-link list via .article-body ul). The
    Gallery section is a thumbnail grid (.raw-gallery) of detected media. */

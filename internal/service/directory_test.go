@@ -73,6 +73,65 @@ func TestDirectoryService_Generate(t *testing.T) {
 	}
 }
 
+// TestDirectoryService_RawPromotion verifies the promoted-raw contract for the
+// directory service: raw/ markdown is a first-class page (it appears in List and
+// in "Recently Updated"), but Generate must never write an index.md into raw/ —
+// that directory holds verbatim sources and assets, served by the on-demand
+// /raw/ gallery instead.
+func TestDirectoryService_RawPromotion(t *testing.T) {
+	dir := t.TempDir()
+	for _, sub := range []string{"raw/clippings", "notes"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		"notes/a.md":              "---\ntitle: A\ntags: notes\n---\n\nBody.\n",
+		"raw/clippings/clip.md":   "---\ntitle: Clipping\nsource: https://example.com\n---\n\nVerbatim.\n",
+		"raw/clippings/photo.png": "fake-png",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v := vault.New(dir)
+	// Mirror serve.go: raw/ is index-excluded but a first-class page.
+	svc := NewDirectoryService(v, WithIndexExcludeDirs([]string{"raw"}))
+
+	// List includes the raw markdown page (promoted to first-class).
+	entries, err := svc.List("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawRaw bool
+	for _, e := range entries {
+		if e.Path == "raw/clippings/clip.md" {
+			sawRaw = true
+		}
+	}
+	if !sawRaw {
+		t.Error("List should include raw/clippings/clip.md (promoted first-class page)")
+	}
+
+	if _, _, err := svc.Generate(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Generate must NOT pollute raw/ with a generated index.md.
+	for _, rel := range []string{"raw/index.md", "raw/clippings/index.md"} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+			t.Errorf("Generate wrote a forbidden index into raw/: %s", rel)
+		}
+	}
+
+	// The raw page should be eligible for Recently Updated — skipRecents only
+	// excludes the log index and configured noRecentsDirs, never raw/.
+	if svc.skipRecents("raw/clippings/clip.md") {
+		t.Error("raw/ pages must be eligible for Recently Updated")
+	}
+}
+
 // stampPast sets the given file's atime and mtime to a fixed past instant and
 // returns the actual mtime the filesystem stored (which can differ from the
 // requested time under coarse-resolution mtime, e.g. 1s on HFS+). Comparing
