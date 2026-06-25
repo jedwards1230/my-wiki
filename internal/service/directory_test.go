@@ -73,11 +73,11 @@ func TestDirectoryService_Generate(t *testing.T) {
 	}
 }
 
-// TestDirectoryService_RawPromotion verifies the promoted-raw contract for the
-// directory service: raw/ markdown is a first-class page (it appears in List and
-// in "Recently Updated"), but Generate must never write an index.md into raw/ —
-// that directory holds verbatim sources and assets, served by the on-demand
-// /raw/ gallery instead.
+// TestDirectoryService_RawPromotion verifies the normal-folder contract for
+// raw/: its markdown is a first-class page (it appears in List and is eligible
+// for "Recently Updated"), and Generate writes a standard index.md landing into
+// each raw/ directory just like any other folder — raw/ is no longer
+// special-cased out of index generation.
 func TestDirectoryService_RawPromotion(t *testing.T) {
 	dir := t.TempDir()
 	for _, sub := range []string{"raw/clippings", "notes"} {
@@ -96,8 +96,8 @@ func TestDirectoryService_RawPromotion(t *testing.T) {
 		}
 	}
 	v := vault.New(dir)
-	// Mirror serve.go: raw/ is index-excluded but a first-class page.
-	svc := NewDirectoryService(v, WithIndexExcludeDirs([]string{"raw"}))
+	// Mirror serve.go: raw/ is a normal indexed folder (no force-exclude).
+	svc := NewDirectoryService(v)
 
 	// List includes the raw markdown page (promoted to first-class).
 	entries, err := svc.List("")
@@ -118,10 +118,10 @@ func TestDirectoryService_RawPromotion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Generate must NOT pollute raw/ with a generated index.md.
+	// Generate now writes a standard index.md landing into each raw/ directory.
 	for _, rel := range []string{"raw/index.md", "raw/clippings/index.md"} {
-		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
-			t.Errorf("Generate wrote a forbidden index into raw/: %s", rel)
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Errorf("Generate should write an index into raw/: %s (err: %v)", rel, err)
 		}
 	}
 

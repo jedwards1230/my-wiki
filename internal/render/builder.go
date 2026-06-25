@@ -286,8 +286,9 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 	// the full O(N log N) build.
 	// raw/ markdown is promoted to first-class wiki pages (slugs "raw/…"), so
 	// it flows through BuildExplorerTree naturally and appears in the sidebar
-	// via the normal tree. Non-md raw assets aren't individual leaves but stay
-	// browsable through the /raw/<dir>/ gallery.
+	// via the normal tree — including the generated raw/<dir>/index landings.
+	// Non-md raw assets aren't individual leaves but stay browsable through the
+	// generated index landing (or its /raw/<dir>/ gallery fallback).
 	explorerBase := BuildExplorerTree(all, "")
 
 	for _, p := range all {

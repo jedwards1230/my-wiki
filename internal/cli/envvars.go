@@ -61,15 +61,16 @@ const EnvWatch = "WIKI_WATCH"
 // EnvWatchExcludeDirs is a comma-separated list of top-level vault
 // subdirectories the filesystem watcher skips.
 //
-// Default: ".obsidian,raw" (Obsidian metadata, raw byte storage). Whitespace
-// or a lone comma disables exclusions entirely; empty/unset uses the default.
+// Default: ".obsidian" (Obsidian editor metadata only). raw/ is watched like a
+// normal folder. Whitespace or a lone comma disables exclusions entirely;
+// empty/unset uses the default.
 const EnvWatchExcludeDirs = "WIKI_WATCH_EXCLUDE_DIRS"
 
 // EnvIndexExcludeDirs is a comma-separated list of vault directories that do
 // NOT receive a generated index.md during `directory --generate`.
 //
 // Default (unset): empty — every non-vault-excluded directory gets an index,
-// including meta/activity. Honored by `serve` and the `directory` CLI.
+// including meta/activity and raw/. Honored by `serve` and the `directory` CLI.
 const EnvIndexExcludeDirs = "WIKI_INDEX_EXCLUDE_DIRS"
 
 // EnvIndexNoRecentsDirs is a comma-separated list of vault directories whose

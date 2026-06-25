@@ -440,7 +440,9 @@ func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*P
 	// verbatim source import: the template shows a "Source" badge and a "View
 	// source" link to the markdown bytes. An explicit .md URL always returns
 	// source (like the universal /path.md route), so no ?raw=1 is needed.
-	if slug == "raw" || strings.HasPrefix(slug, "raw/") {
+	// Generated index.md landings under raw/ are machinery, not authored
+	// sources — they render as plain folder indexes like every other folder.
+	if (slug == "raw" || strings.HasPrefix(slug, "raw/")) && filepath.Base(path) != "index.md" {
 		p.IsRawSource = true
 		p.SourceURL = "/" + slug + ".md"
 	}

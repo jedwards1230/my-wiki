@@ -1,7 +1,6 @@
 package render
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +39,20 @@ func TestRenderPageRawSourceFlag(t *testing.T) {
 	}
 	if notRaw.SourceURL != "" {
 		t.Errorf("non-raw SourceURL should be empty, got %q", notRaw.SourceURL)
+	}
+
+	// A generated index.md landing under raw/ is folder machinery, not an
+	// authored source — it must NOT get the Source badge / view-source link,
+	// so it reads like every other folder index.
+	idx, err := r.RenderPage("raw/clippings/index.md", []byte("---\ntitle: Clippings\ngenerated: true\n---\nIndex of raw/clippings\n"), time.Time{})
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	if idx.IsRawSource {
+		t.Error("generated raw/ index.md should not be flagged as a raw source")
+	}
+	if idx.SourceURL != "" {
+		t.Errorf("generated raw/ index SourceURL should be empty, got %q", idx.SourceURL)
 	}
 }
 
@@ -140,96 +153,68 @@ func TestRawDirTitle(t *testing.T) {
 	}
 }
 
-func TestBuildRawIndex(t *testing.T) {
-	t.Run("media + md children + recents → all sections", func(t *testing.T) {
-		out, toc := buildRawIndex("/raw/clippings/", RawIndexData{
-			Children: []RawDirEntry{
-				{Name: "youtube", IsDir: true},
-				{Name: "great-clip.md", Title: "Great Clip"},
-				{Name: "untitled.md"}, // no resolved title → humanized filename
-				{Name: "photo.png"},
-				{Name: "clip.mp4"},
-				{Name: "notes.txt"},
-			},
-			Recents: []RawRecentEntry{
-				{RawURL: "/raw/clippings/youtube/clip/", Title: "Embedded Clip", ModTime: time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)},
-				{RawURL: "/raw/clippings/great-clip/", Title: "Great Clip", ModTime: time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC)},
-			},
+func TestBuildRawGallery(t *testing.T) {
+	t.Run("media + non-media assets → Gallery + Files", func(t *testing.T) {
+		out, toc := buildRawGallery("/raw/clippings/", []RawAsset{
+			{Name: "photo.png"},
+			{Name: "clip.mp4"},
+			{Name: "talk.pdf"},
+			{Name: "notes.txt"},
+			{Name: "archive.zip"},
 		})
 		s := string(out)
 
-		// Recently Updated section: each descendant page links to its rendered URL.
-		if !strings.Contains(s, `<h2 id="recently-updated">Recently Updated</h2>`) {
-			t.Errorf("missing Recently Updated heading:\n%s", s)
-		}
-		if !strings.Contains(s, `<a class="internal" href="/raw/clippings/youtube/clip/">Embedded Clip</a> — 2026-06-20`) {
-			t.Errorf("Recently Updated missing dated entry:\n%s", s)
-		}
-
-		// Directory section: a standard bulleted internal-link list. Markdown
-		// children link to their rendered /raw/.../ page using the resolved title.
-		if !strings.Contains(s, `<h2 id="directory">Directory</h2>`) {
-			t.Errorf("missing Directory heading:\n%s", s)
-		}
-		for _, want := range []string{
-			`<a class="internal" href="/raw/clippings/youtube/">youtube/</a>`,
-			`<a class="internal" href="/raw/clippings/great-clip/">Great Clip</a>`,
-			`<a class="internal" href="/raw/clippings/untitled/">Untitled</a>`, // humanized fallback
-			`<a class="internal" href="/raw/clippings/photo.png">photo.png</a>`,
-			`<a class="internal" href="/raw/clippings/notes.txt">notes.txt</a>`,
-		} {
-			if !strings.Contains(s, want) {
-				t.Errorf("Directory missing %q:\n%s", want, s)
-			}
-		}
-		if strings.Contains(s, "raw-list") || strings.Contains(s, "raw-row") {
-			t.Errorf("Directory should use plain article-body list, not custom raw-list:\n%s", s)
-		}
-
-		// Gallery section: image thumbnail + non-image media badge; markdown is
-		// NOT a gallery asset.
+		// Gallery section: image thumbnail + non-image media badge.
 		if !strings.Contains(s, `<h2 id="gallery">Gallery</h2>`) {
 			t.Errorf("missing Gallery heading:\n%s", s)
 		}
 		if !strings.Contains(s, `<img loading="lazy" src="/raw/clippings/photo.png"`) {
 			t.Errorf("Gallery missing image thumbnail:\n%s", s)
 		}
-		if !strings.Contains(s, "MP4") {
-			t.Errorf("Gallery missing video badge:\n%s", s)
+		if !strings.Contains(s, "MP4") || !strings.Contains(s, "PDF") {
+			t.Errorf("Gallery missing media badges:\n%s", s)
 		}
 
-		// TOC lists all three sections, in order, for the right-rail "On this page".
-		if len(toc) != 3 || toc[0].Anchor != "recently-updated" || toc[1].Anchor != "directory" || toc[2].Anchor != "gallery" {
-			t.Errorf("toc = %+v, want [recently-updated, directory, gallery]", toc)
+		// Files section: non-media assets as a plain link list.
+		if !strings.Contains(s, `<h2 id="files">Files</h2>`) {
+			t.Errorf("missing Files heading:\n%s", s)
+		}
+		for _, want := range []string{
+			`<a class="internal" href="/raw/clippings/notes.txt">notes.txt</a>`,
+			`<a class="internal" href="/raw/clippings/archive.zip">archive.zip</a>`,
+		} {
+			if !strings.Contains(s, want) {
+				t.Errorf("Files missing %q:\n%s", want, s)
+			}
+		}
+
+		// TOC lists both sections, in order, for the right-rail "On this page".
+		if len(toc) != 2 || toc[0].Anchor != "gallery" || toc[1].Anchor != "files" {
+			t.Errorf("toc = %+v, want [gallery, files]", toc)
 		}
 	})
 
-	t.Run("no media / no recents → Directory only", func(t *testing.T) {
-		out, toc := buildRawIndex("/raw/", RawIndexData{
-			Children: []RawDirEntry{
-				{Name: "clippings", IsDir: true},
-				{Name: "readme.txt", IsDir: false},
-			},
-		})
+	t.Run("media only → Gallery only", func(t *testing.T) {
+		out, toc := buildRawGallery("/raw/photos/", []RawAsset{{Name: "a.png"}, {Name: "b.jpg"}})
 		s := string(out)
-		if !strings.Contains(s, `<h2 id="directory">Directory</h2>`) {
-			t.Errorf("missing Directory heading:\n%s", s)
+		if !strings.Contains(s, `<h2 id="gallery">Gallery</h2>`) {
+			t.Errorf("missing Gallery heading:\n%s", s)
 		}
-		if strings.Contains(s, "Recently Updated") {
-			t.Errorf("no recents, but a Recently Updated section was rendered:\n%s", s)
+		if strings.Contains(s, "Files") {
+			t.Errorf("no non-media assets, but a Files section was rendered:\n%s", s)
 		}
-		if strings.Contains(s, "Gallery") || strings.Contains(s, "raw-gallery") {
-			t.Errorf("no media, but a Gallery section was rendered:\n%s", s)
-		}
-		if len(toc) != 1 || toc[0].Anchor != "directory" {
-			t.Errorf("toc = %+v, want [directory] only", toc)
+		if len(toc) != 1 || toc[0].Anchor != "gallery" {
+			t.Errorf("toc = %+v, want [gallery] only", toc)
 		}
 	})
 
 	t.Run("empty directory", func(t *testing.T) {
-		out, _ := buildRawIndex("/raw/empty/", RawIndexData{})
+		out, toc := buildRawGallery("/raw/empty/", nil)
 		if !strings.Contains(string(out), "empty") {
 			t.Errorf("expected empty-directory note:\n%s", out)
+		}
+		if len(toc) != 0 {
+			t.Errorf("toc = %+v, want empty", toc)
 		}
 	})
 }
@@ -247,58 +232,10 @@ func TestRawIndexDescription(t *testing.T) {
 	}
 }
 
-func TestRawIndexTitle(t *testing.T) {
-	if got := RawIndexTitle("great-clip.md", []byte("---\ntitle: Great Clip\n---\nbody")); got != "Great Clip" {
-		t.Errorf("frontmatter title = %q, want Great Clip", got)
-	}
-	if got := RawIndexTitle("some-clip.md", []byte("no frontmatter\n")); got != "Some Clip" {
-		t.Errorf("fallback title = %q, want Some Clip", got)
-	}
-}
-
-func TestSelectRawRecents(t *testing.T) {
-	mk := func(url string, day int) RawRecentEntry {
-		return RawRecentEntry{RawURL: url, ModTime: time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC)}
-	}
-
-	t.Run("non-root gated below minimum", func(t *testing.T) {
-		small := []RawRecentEntry{mk("/raw/d/a/", 1), mk("/raw/d/b/", 2)}
-		if got := SelectRawRecents(small, false); got != nil {
-			t.Errorf("small non-root subtree should yield no recents, got %+v", got)
-		}
-	})
-
-	t.Run("root always renders recents", func(t *testing.T) {
-		small := []RawRecentEntry{mk("/raw/a/", 1), mk("/raw/b/", 2)}
-		got := SelectRawRecents(small, true)
-		if len(got) != 2 {
-			t.Fatalf("root recents len = %d, want 2", len(got))
-		}
-		// Newest first.
-		if got[0].RawURL != "/raw/b/" {
-			t.Errorf("expected newest (b) first, got %q", got[0].RawURL)
-		}
-	})
-
-	t.Run("sorted newest-first and capped", func(t *testing.T) {
-		var many []RawRecentEntry
-		for i := 1; i <= 12; i++ {
-			many = append(many, mk(fmt.Sprintf("/raw/d/p%02d/", i), i))
-		}
-		got := SelectRawRecents(many, false)
-		if len(got) != rawIndexRecentsLimit {
-			t.Fatalf("recents len = %d, want %d", len(got), rawIndexRecentsLimit)
-		}
-		if got[0].RawURL != "/raw/d/p12/" {
-			t.Errorf("expected newest p12 first, got %q", got[0].RawURL)
-		}
-	})
-}
-
-// markActiveByURL is still used by RenderRawIndex (the on-demand gallery) and
-// the on-demand RenderRawPage fallback, so it keeps its own coverage even though
-// the buildRawExplorerNode sidebar injection was removed (raw/ md now flows
-// through the normal explorer tree as first-class pages).
+// markActiveByURL marks the active /raw/ landing/page node in the explorer tree;
+// it backs both the RenderRawGallery fallback and the on-demand RenderRawPage
+// fallback, whose pages carry an empty Slug that the slug-based markActive can't
+// match.
 func TestMarkActiveByURL(t *testing.T) {
 	leaf := &ExplorerNode{Name: "clip.md", URL: "/raw/clippings/youtube/clip.md"}
 	yt := &ExplorerNode{Name: "Youtube", URL: "/raw/clippings/youtube/", IsFolder: true, Children: []*ExplorerNode{leaf}}

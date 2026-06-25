@@ -157,15 +157,24 @@ func (h *MarkdownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // chrome. The native renderer's Builder implements it. ok=false means no
 // renderer is available (pre-first-build) and the caller serves bytes / the
 // plain autoindex instead.
+//
+// raw/ is a normal indexed folder: the standard generated index.md landing for
+// each raw/ directory is baked into the static snapshot and served by
+// delegation (just like /research/). The renderer here only provides fallbacks:
+// RenderRawPage for a markdown leaf with no baked page yet (pre-first-build),
+// and RenderRawGallery for an asset-only directory that produced no meaningful
+// baked index page.
 type RawRenderer interface {
 	// RenderRawPage renders a markdown source. relPath is vault-relative
 	// (e.g. "raw/clippings/x.md"); rawURL is the canonical /raw/ URL.
 	RenderRawPage(relPath string, source []byte, modTime time.Time, rawURL string) ([]byte, bool)
-	// RenderRawIndex renders a directory landing as a folder index (Recently
-	// Updated / Directory / Gallery sections). urlDir is the directory URL with
-	// a trailing slash (e.g. "/raw/clippings/"); data carries the immediate
-	// children and the pre-selected descendant recents.
-	RenderRawIndex(urlDir string, data render.RawIndexData) ([]byte, bool)
+	// RenderRawGallery renders a directory landing as a media gallery of the
+	// directory's non-markdown assets (images, PDFs, audio, video). It is the
+	// fallback when the static snapshot has no baked index page for the
+	// directory (an asset-only dir, or pre-first-build). urlDir is the directory
+	// URL with a trailing slash (e.g. "/raw/clippings/"); assets are the
+	// immediate non-markdown children to surface.
+	RenderRawGallery(urlDir string, assets []render.RawAsset) ([]byte, bool)
 }
 
 // RawHandler serves raw source files with native MIME types and directory listing.
@@ -263,12 +272,115 @@ func (h *RawHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try directory listing
-	if h.serveAutoindex(w, r, p) {
+	// Directory request. For browsers/htmx, delegate to the standard generated
+	// index.md landing baked into the static snapshot (raw/ is a normal indexed
+	// folder, served the same way as /research/). Agents and ?raw=1 get the
+	// plain autoindex.
+	if h.serveDirectory(w, r, p) {
 		return
 	}
 
 	http.NotFound(w, r)
+}
+
+// serveDirectory handles a /raw/ directory request. It returns false when the
+// path is not a directory at all (so the caller 404s).
+//
+// For a rendered-HTML request (browser/htmx), it delegates to the static
+// snapshot's baked index page for the directory (raw/<dir>/index.html, served
+// at /raw/<dir>/) — the standard generated folder landing. When the snapshot
+// has no baked index page (an asset-only directory that produced no meaningful
+// index, or pre-first-build), it falls back to the media gallery so assets stay
+// visible, then to the plain autoindex. Non-HTML requests (agents, curl,
+// ?raw=1) always get the plain autoindex.
+func (h *RawHandler) serveDirectory(w http.ResponseWriter, r *http.Request, dirPath string) bool {
+	name := dirPath
+	if name == "" {
+		name = "."
+	}
+	entries, err := fs.ReadDir(h.fsys, name)
+	if err != nil {
+		return false // not a directory
+	}
+
+	if wantsRenderedHTML(r) {
+		// 1. Standard generated index.md landing from the snapshot.
+		if h.serveBakedDirIndex(w, r, dirPath) {
+			return true
+		}
+		// 2. No baked index page → media gallery fallback (keeps assets visible).
+		if h.serveGalleryFallback(w, dirPath, entries) {
+			return true
+		}
+		// 3. Render miss → fall through to the plain autoindex.
+	}
+
+	return h.serveAutoindex(w, dirPath, entries)
+}
+
+// serveBakedDirIndex delegates a directory request to the static snapshot's
+// baked index page for that directory. A generated raw/<dir>/index.md is a
+// first-class page baked at raw/<dir>/index.html and served at /raw/<dir>/, so
+// the directory landing is the standard generated folder index — identical to
+// how /research/ is served. Returns false when no static handler is wired or the
+// snapshot has no baked page for the directory, so the caller can fall back.
+func (h *RawHandler) serveBakedDirIndex(w http.ResponseWriter, r *http.Request, dirPath string) bool {
+	if h.static == nil {
+		return false
+	}
+	pageURL := "/raw/"
+	if dirPath != "" {
+		pageURL = "/raw/" + dirPath + "/"
+	}
+
+	// Capture the delegated response so a snapshot miss (404) doesn't reach the
+	// client — we want to fall back to the gallery in that case.
+	rec := &recordingResponseWriter{header: make(http.Header)}
+	rr := r.Clone(r.Context())
+	rr.URL.Path = pageURL
+	h.static.ServeHTTP(rec, rr)
+	if rec.status == http.StatusNotFound || rec.status == 0 && rec.buf.Len() == 0 {
+		return false
+	}
+
+	for k, vals := range rec.header {
+		for _, v := range vals {
+			w.Header().Add(k, v)
+		}
+	}
+	if rec.status != 0 {
+		w.WriteHeader(rec.status)
+	}
+	_, _ = w.Write(rec.buf.Bytes())
+	return true
+}
+
+// serveGalleryFallback renders the directory's non-markdown assets as a media
+// gallery — the fallback when the snapshot has no baked index page (asset-only
+// dir, or pre-first-build). Returns false when no renderer is wired or it
+// reports a miss, so the caller falls through to the plain autoindex.
+func (h *RawHandler) serveGalleryFallback(w http.ResponseWriter, dirPath string, entries []fs.DirEntry) bool {
+	if h.render == nil {
+		return false
+	}
+	urlDir := "/raw/"
+	if dirPath != "" {
+		urlDir = "/raw/" + dirPath + "/"
+	}
+	var assets []render.RawAsset
+	for _, e := range entries {
+		if e.IsDir() || strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+			continue
+		}
+		assets = append(assets, render.RawAsset{Name: e.Name()})
+	}
+	out, ok := h.render.RenderRawGallery(urlDir, assets)
+	if !ok {
+		return false
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(out)
+	return true
 }
 
 // resolveMarkdown maps a /raw/-relative request path to the markdown source it
@@ -451,17 +563,10 @@ func wantsRenderedHTML(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
-func (h *RawHandler) serveAutoindex(w http.ResponseWriter, r *http.Request, dirPath string) bool {
-	name := dirPath
-	if name == "" {
-		name = "."
-	}
-
-	entries, err := fs.ReadDir(h.fsys, name)
-	if err != nil {
-		return false
-	}
-
+// serveAutoindex writes the plain "Index of …" directory listing — the
+// agent/curl/?raw=1 view. entries are the already-read directory entries; the
+// caller has confirmed dirPath is a directory.
+func (h *RawHandler) serveAutoindex(w http.ResponseWriter, dirPath string, entries []fs.DirEntry) bool {
 	// Sort: directories first, then files, alphabetically
 	sort.Slice(entries, func(i, j int) bool {
 		di, dj := entries[i].IsDir(), entries[j].IsDir()
@@ -477,19 +582,6 @@ func (h *RawHandler) serveAutoindex(w http.ResponseWriter, r *http.Request, dirP
 		if !strings.HasSuffix(urlDir, "/") {
 			urlDir += "/"
 		}
-	}
-
-	// Rendered folder-index landing (wiki chrome: Recently Updated / Directory /
-	// Gallery) for browsers. Agents, curl, and ?raw=1 still get the plain
-	// autoindex below.
-	if h.render != nil && wantsRenderedHTML(r) {
-		data := h.buildRawIndexData(dirPath, urlDir, entries)
-		if out, ok := h.render.RenderRawIndex(urlDir, data); ok {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write(out)
-			return true
-		}
-		// Render miss → fall through to the plain autoindex.
 	}
 
 	escapedDir := html.EscapeString(urlDir)
@@ -531,100 +623,6 @@ hr { border: none; border-top: 1px solid #e5e7eb; }
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(buf.Bytes())
 	return true
-}
-
-// buildRawIndexData gathers the filesystem-derived input for a /raw/ directory
-// landing: the immediate children (with resolved markdown titles for the
-// Directory section) and the most-recently-modified descendant markdown pages
-// (for the Recently Updated section). dirPath is the raw-relative directory
-// ("" for the root); urlDir is its /raw/ URL with a trailing slash; entries are
-// the already-sorted immediate dir entries.
-//
-// Titles are resolved on-demand by reading frontmatter — only for the immediate
-// markdown children and the top-N selected recents, so a deep clippings/ tree
-// isn't fully read on every landing request.
-func (h *RawHandler) buildRawIndexData(dirPath, urlDir string, entries []fs.DirEntry) render.RawIndexData {
-	children := make([]render.RawDirEntry, 0, len(entries))
-	for _, e := range entries {
-		entry := render.RawDirEntry{Name: e.Name(), IsDir: e.IsDir()}
-		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
-			rel := path.Join(dirPath, e.Name())
-			if src, ok := h.readFile(rel); ok {
-				entry.Title = render.RawIndexTitle(e.Name(), src)
-			}
-			if info, err := e.Info(); err == nil {
-				entry.ModTime = info.ModTime()
-			}
-		}
-		children = append(children, entry)
-	}
-
-	recents := h.collectRawRecents(dirPath)
-	recents = render.SelectRawRecents(recents, dirPath == "")
-	// Resolve titles only for the selected (capped) recents.
-	for i := range recents {
-		if recents[i].Title != "" {
-			continue
-		}
-		// RawURL is "/raw/<rel>/"; map back to the source ".md" relative path.
-		rel := strings.TrimSuffix(strings.TrimPrefix(recents[i].RawURL, "/raw/"), "/") + ".md"
-		if src, ok := h.readFile(rel); ok {
-			recents[i].Title = render.RawIndexTitle(path.Base(rel), src)
-		} else {
-			recents[i].Title = path.Base(strings.TrimSuffix(rel, ".md"))
-		}
-	}
-
-	return render.RawIndexData{Children: children, Recents: recents}
-}
-
-// collectRawRecents walks the directory subtree under dirPath and returns one
-// RawRecentEntry per descendant markdown page (RawURL + ModTime; Title is
-// filled later only for the selected slice). RawURL is the rendered page URL
-// ("/raw/<rel>/"), matching the first-class raw page route.
-func (h *RawHandler) collectRawRecents(dirPath string) []render.RawRecentEntry {
-	root := dirPath
-	if root == "" {
-		root = "."
-	}
-	var recents []render.RawRecentEntry
-	_ = fs.WalkDir(h.fsys, root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil //nolint:nilerr // a single unreadable subtree shouldn't fail the whole landing
-		}
-		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
-			return nil
-		}
-		// p is fsys-relative (e.g. "clippings/youtube/clip.md"); its rendered URL
-		// is "/raw/<rel-without-.md>/".
-		rel := strings.TrimSuffix(p, path.Ext(p))
-		rawURL := "/raw/" + rel + "/"
-		entry := render.RawRecentEntry{RawURL: rawURL}
-		if info, ierr := d.Info(); ierr == nil {
-			entry.ModTime = info.ModTime()
-		}
-		recents = append(recents, entry)
-		return nil
-	})
-	return recents
-}
-
-// readFile reads a regular file from the raw FS, returning (bytes, true) on
-// success. Used to pull frontmatter for title resolution.
-func (h *RawHandler) readFile(name string) ([]byte, bool) {
-	f, err := h.fsys.Open(name)
-	if err != nil {
-		return nil, false
-	}
-	defer func() { _ = f.Close() }()
-	if stat, serr := f.Stat(); serr != nil || stat.IsDir() {
-		return nil, false
-	}
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return nil, false
-	}
-	return data, true
 }
 
 // HealthHandler returns 200 "ok" for health checks.
