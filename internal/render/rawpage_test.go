@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -140,21 +141,40 @@ func TestRawDirTitle(t *testing.T) {
 }
 
 func TestBuildRawIndex(t *testing.T) {
-	t.Run("media present → Directory + Gallery sections", func(t *testing.T) {
-		out, toc := buildRawIndex("/raw/clippings/", []RawDirEntry{
-			{Name: "youtube", IsDir: true},
-			{Name: "photo.png", IsDir: false},
-			{Name: "clip.mp4", IsDir: false},
-			{Name: "notes.txt", IsDir: false},
+	t.Run("media + md children + recents → all sections", func(t *testing.T) {
+		out, toc := buildRawIndex("/raw/clippings/", RawIndexData{
+			Children: []RawDirEntry{
+				{Name: "youtube", IsDir: true},
+				{Name: "great-clip.md", Title: "Great Clip"},
+				{Name: "untitled.md"}, // no resolved title → humanized filename
+				{Name: "photo.png"},
+				{Name: "clip.mp4"},
+				{Name: "notes.txt"},
+			},
+			Recents: []RawRecentEntry{
+				{RawURL: "/raw/clippings/youtube/clip/", Title: "Embedded Clip", ModTime: time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)},
+				{RawURL: "/raw/clippings/great-clip/", Title: "Great Clip", ModTime: time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC)},
+			},
 		})
 		s := string(out)
-		// Directory section: a standard bulleted internal-link list (no custom
-		// raw-list/icons), listing every child including media.
+
+		// Recently Updated section: each descendant page links to its rendered URL.
+		if !strings.Contains(s, `<h2 id="recently-updated">Recently Updated</h2>`) {
+			t.Errorf("missing Recently Updated heading:\n%s", s)
+		}
+		if !strings.Contains(s, `<a class="internal" href="/raw/clippings/youtube/clip/">Embedded Clip</a> — 2026-06-20`) {
+			t.Errorf("Recently Updated missing dated entry:\n%s", s)
+		}
+
+		// Directory section: a standard bulleted internal-link list. Markdown
+		// children link to their rendered /raw/.../ page using the resolved title.
 		if !strings.Contains(s, `<h2 id="directory">Directory</h2>`) {
 			t.Errorf("missing Directory heading:\n%s", s)
 		}
 		for _, want := range []string{
 			`<a class="internal" href="/raw/clippings/youtube/">youtube/</a>`,
+			`<a class="internal" href="/raw/clippings/great-clip/">Great Clip</a>`,
+			`<a class="internal" href="/raw/clippings/untitled/">Untitled</a>`, // humanized fallback
 			`<a class="internal" href="/raw/clippings/photo.png">photo.png</a>`,
 			`<a class="internal" href="/raw/clippings/notes.txt">notes.txt</a>`,
 		} {
@@ -165,7 +185,9 @@ func TestBuildRawIndex(t *testing.T) {
 		if strings.Contains(s, "raw-list") || strings.Contains(s, "raw-row") {
 			t.Errorf("Directory should use plain article-body list, not custom raw-list:\n%s", s)
 		}
-		// Gallery section: image thumbnail + non-image media badge.
+
+		// Gallery section: image thumbnail + non-image media badge; markdown is
+		// NOT a gallery asset.
 		if !strings.Contains(s, `<h2 id="gallery">Gallery</h2>`) {
 			t.Errorf("missing Gallery heading:\n%s", s)
 		}
@@ -175,20 +197,26 @@ func TestBuildRawIndex(t *testing.T) {
 		if !strings.Contains(s, "MP4") {
 			t.Errorf("Gallery missing video badge:\n%s", s)
 		}
-		// TOC lists both sections for the right-rail "On this page".
-		if len(toc) != 2 || toc[0].Anchor != "directory" || toc[1].Anchor != "gallery" {
-			t.Errorf("toc = %+v, want [directory, gallery]", toc)
+
+		// TOC lists all three sections, in order, for the right-rail "On this page".
+		if len(toc) != 3 || toc[0].Anchor != "recently-updated" || toc[1].Anchor != "directory" || toc[2].Anchor != "gallery" {
+			t.Errorf("toc = %+v, want [recently-updated, directory, gallery]", toc)
 		}
 	})
 
-	t.Run("no media → Directory only, no Gallery", func(t *testing.T) {
-		out, toc := buildRawIndex("/raw/", []RawDirEntry{
-			{Name: "clippings", IsDir: true},
-			{Name: "readme.txt", IsDir: false},
+	t.Run("no media / no recents → Directory only", func(t *testing.T) {
+		out, toc := buildRawIndex("/raw/", RawIndexData{
+			Children: []RawDirEntry{
+				{Name: "clippings", IsDir: true},
+				{Name: "readme.txt", IsDir: false},
+			},
 		})
 		s := string(out)
 		if !strings.Contains(s, `<h2 id="directory">Directory</h2>`) {
 			t.Errorf("missing Directory heading:\n%s", s)
+		}
+		if strings.Contains(s, "Recently Updated") {
+			t.Errorf("no recents, but a Recently Updated section was rendered:\n%s", s)
 		}
 		if strings.Contains(s, "Gallery") || strings.Contains(s, "raw-gallery") {
 			t.Errorf("no media, but a Gallery section was rendered:\n%s", s)
@@ -199,9 +227,70 @@ func TestBuildRawIndex(t *testing.T) {
 	})
 
 	t.Run("empty directory", func(t *testing.T) {
-		out, _ := buildRawIndex("/raw/empty/", nil)
+		out, _ := buildRawIndex("/raw/empty/", RawIndexData{})
 		if !strings.Contains(string(out), "empty") {
 			t.Errorf("expected empty-directory note:\n%s", out)
+		}
+	})
+}
+
+func TestRawIndexDescription(t *testing.T) {
+	cases := map[string]string{
+		"/raw/":           "Index of raw",
+		"/raw/clippings/": "Index of raw/clippings",
+		"/raw/a/b/":       "Index of raw/a/b",
+	}
+	for in, want := range cases {
+		if got := rawIndexDescription(in); got != want {
+			t.Errorf("rawIndexDescription(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRawIndexTitle(t *testing.T) {
+	if got := RawIndexTitle("great-clip.md", []byte("---\ntitle: Great Clip\n---\nbody")); got != "Great Clip" {
+		t.Errorf("frontmatter title = %q, want Great Clip", got)
+	}
+	if got := RawIndexTitle("some-clip.md", []byte("no frontmatter\n")); got != "Some Clip" {
+		t.Errorf("fallback title = %q, want Some Clip", got)
+	}
+}
+
+func TestSelectRawRecents(t *testing.T) {
+	mk := func(url string, day int) RawRecentEntry {
+		return RawRecentEntry{RawURL: url, ModTime: time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC)}
+	}
+
+	t.Run("non-root gated below minimum", func(t *testing.T) {
+		small := []RawRecentEntry{mk("/raw/d/a/", 1), mk("/raw/d/b/", 2)}
+		if got := SelectRawRecents(small, false); got != nil {
+			t.Errorf("small non-root subtree should yield no recents, got %+v", got)
+		}
+	})
+
+	t.Run("root always renders recents", func(t *testing.T) {
+		small := []RawRecentEntry{mk("/raw/a/", 1), mk("/raw/b/", 2)}
+		got := SelectRawRecents(small, true)
+		if len(got) != 2 {
+			t.Fatalf("root recents len = %d, want 2", len(got))
+		}
+		// Newest first.
+		if got[0].RawURL != "/raw/b/" {
+			t.Errorf("expected newest (b) first, got %q", got[0].RawURL)
+		}
+	})
+
+	t.Run("sorted newest-first and capped", func(t *testing.T) {
+		var many []RawRecentEntry
+		for i := 1; i <= 12; i++ {
+			many = append(many, mk(fmt.Sprintf("/raw/d/p%02d/", i), i))
+		}
+		got := SelectRawRecents(many, false)
+		if len(got) != rawIndexRecentsLimit {
+			t.Fatalf("recents len = %d, want %d", len(got), rawIndexRecentsLimit)
+		}
+		if got[0].RawURL != "/raw/d/p12/" {
+			t.Errorf("expected newest p12 first, got %q", got[0].RawURL)
 		}
 	})
 }
