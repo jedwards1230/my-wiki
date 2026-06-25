@@ -120,7 +120,7 @@ Auth fails closed: network entry points (REST API / MCP HTTP) refuse to start un
 
 ## Vault Conventions
 
-- `raw/` — **markdown** is promoted to first-class compiled wiki pages (searchable, in Recently Updated / RSS / sitemap / backlink graph / nav, rendered as full pages at their `/raw/...` URLs); the verbatim source stays available via `/path.md` and `?raw=1`. Non-markdown **assets** (PDFs, images, audio, video, `.canvas`) are served as-is by the `/raw/` handler with a directory gallery. `Generate` never writes an `index.md` into `raw/`. All raw paths are slug-indexed wikilink targets.
+- `raw/` — **markdown** is promoted to first-class compiled wiki pages (searchable, in Recently Updated / RSS / sitemap / backlink graph / nav, rendered as full pages at their `/raw/...` URLs); the verbatim source stays available via `/path.md` and `?raw=1`. Non-markdown **assets** (PDFs, images, audio, video, `.canvas`) are served as-is by the `/raw/` handler. A browser hitting a `/raw/<dir>/` URL gets a folder-index landing rendered on-demand (Recently Updated + Directory + a media Gallery), matching the look of normal folder indexes; agents and `?raw=1` still get the plain autoindex. `Generate` never writes an `index.md` into `raw/`. All raw paths are slug-indexed wikilink targets.
 - `.obsidian/` — Obsidian config, excluded from page listing (and denied on the API/HTTP/MCP page surface)
 - Pages have YAML frontmatter (`title`, `tags`, `date`); wikilinks (`[[target]]`) are parsed for link checking
 - `meta/lint-config.yaml` (optional) — overrides schema-coupled lint values (clipping tag, raw-path prefix, stub cooldown). Missing/partial → `service.DefaultLintConfig()` defaults. Malformed → ERROR under both `clippings` and `stub` checks (shared config).

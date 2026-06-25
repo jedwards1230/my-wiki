@@ -306,6 +306,7 @@ type stubRawRenderer struct {
 	gotRel      string
 	gotURL      string
 	gotIndexURL string
+	gotIndex    render.RawIndexData
 	gotBytes    []byte
 }
 
@@ -320,13 +321,14 @@ func (s *stubRawRenderer) RenderRawPage(relPath string, source []byte, _ time.Ti
 	return []byte("<html>RENDERED</html>"), true
 }
 
-func (s *stubRawRenderer) RenderRawIndex(urlDir string, _ []render.RawDirEntry) ([]byte, bool) {
+func (s *stubRawRenderer) RenderRawIndex(urlDir string, data render.RawIndexData) ([]byte, bool) {
 	s.indexCalled = true
 	s.gotIndexURL = urlDir
+	s.gotIndex = data
 	if s.miss {
 		return nil, false
 	}
-	return []byte("<html>GALLERY</html>"), true
+	return []byte("<html>LANDING</html>"), true
 }
 
 func TestRawMarkdownContentNegotiation(t *testing.T) {
@@ -409,10 +411,10 @@ func TestRawMarkdownRenderMissFallsBackToBytes(t *testing.T) {
 	}
 }
 
-// A browser browsing a /raw/ directory gets the rendered gallery; agents and
-// ?raw=1 get the plain autoindex.
-func TestRawIndexGalleryNegotiation(t *testing.T) {
-	t.Run("browser gets gallery", func(t *testing.T) {
+// A browser browsing a /raw/ directory gets the rendered folder-index landing;
+// agents and ?raw=1 get the plain autoindex.
+func TestRawIndexLandingNegotiation(t *testing.T) {
+	t.Run("browser gets landing", func(t *testing.T) {
 		stub := &stubRawRenderer{}
 		h := NewRawHandler(newRawFS(), stub, nil)
 		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil)
@@ -420,16 +422,16 @@ func TestRawIndexGalleryNegotiation(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if !stub.indexCalled {
-			t.Fatal("expected gallery render path")
+			t.Fatal("expected landing render path")
 		}
 		if stub.gotIndexURL != "/raw/somedir/" {
 			t.Fatalf("urlDir = %q, want /raw/somedir/", stub.gotIndexURL)
 		}
-		if !strings.Contains(w.Body.String(), "GALLERY") {
-			t.Fatalf("expected gallery body, got %q", w.Body.String())
+		if !strings.Contains(w.Body.String(), "LANDING") {
+			t.Fatalf("expected landing body, got %q", w.Body.String())
 		}
 	})
-	t.Run("htmx click gets gallery (chrome with #main)", func(t *testing.T) {
+	t.Run("htmx click gets landing (chrome with #main)", func(t *testing.T) {
 		// hx-boost: HX-Request true, Accept */* — must render so the swap
 		// response carries #main. This is the blank-pane regression.
 		stub := &stubRawRenderer{}
@@ -440,7 +442,7 @@ func TestRawIndexGalleryNegotiation(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if !stub.indexCalled {
-			t.Fatal("htmx navigation must render the gallery, not the plain autoindex")
+			t.Fatal("htmx navigation must render the landing, not the plain autoindex")
 		}
 	})
 	t.Run("agent gets plain autoindex", func(t *testing.T) {
@@ -450,12 +452,90 @@ func TestRawIndexGalleryNegotiation(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if stub.indexCalled {
-			t.Fatal("agent should get plain autoindex, not gallery")
+			t.Fatal("agent should get plain autoindex, not landing")
 		}
 		if !strings.Contains(w.Body.String(), "file1.txt") {
 			t.Fatalf("expected plain autoindex, got %q", w.Body.String())
 		}
 	})
+}
+
+// TestRawIndexLandingData covers the filesystem gathering the handler hands to
+// the renderer: immediate children (with markdown titles resolved) for the
+// Directory section, and descendant markdown pages (with rendered /raw/ URLs)
+// selected for the Recently Updated section.
+func TestRawIndexLandingData(t *testing.T) {
+	// A clippings tree with enough descendant md pages to clear the non-root
+	// recentsMinPages gate, plus a non-md asset to prove the gallery still
+	// surfaces it.
+	fsys := fstest.MapFS{
+		"clippings/great-clip.md":               {Data: []byte("---\ntitle: Great Clip\n---\nbody")},
+		"clippings/photo.png":                   {Data: []byte("fake-png")},
+		"clippings/youtube/p01.md":              {Data: []byte("# P1")},
+		"clippings/youtube/p02.md":              {Data: []byte("# P2")},
+		"clippings/youtube/p03.md":              {Data: []byte("# P3")},
+		"clippings/youtube/p04.md":              {Data: []byte("# P4")},
+		"clippings/youtube/p05.md":              {Data: []byte("# P5")},
+		"clippings/youtube/p06.md":              {Data: []byte("# P6")},
+		"clippings/youtube/p07.md":              {Data: []byte("# P7")},
+		"clippings/youtube/p08.md":              {Data: []byte("# P8")},
+		"clippings/youtube/p09.md":              {Data: []byte("# P9")},
+		"clippings/youtube/nested/deep-clip.md": {Data: []byte("---\ntitle: Deep Clip\n---\nbody")},
+	}
+	stub := &stubRawRenderer{}
+	h := NewRawHandler(fsys, stub, nil)
+	r := httptest.NewRequest(http.MethodGet, "/raw/clippings/", nil)
+	r.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if !stub.indexCalled {
+		t.Fatal("expected landing render path")
+	}
+
+	// Immediate children: the md file resolves its frontmatter title; the
+	// subdirectory and the asset are present.
+	var gotGreatClip, gotYoutubeDir, gotPhoto bool
+	for _, c := range stub.gotIndex.Children {
+		switch c.Name {
+		case "great-clip.md":
+			gotGreatClip = true
+			if c.Title != "Great Clip" {
+				t.Errorf("great-clip.md title = %q, want Great Clip", c.Title)
+			}
+		case "youtube":
+			gotYoutubeDir = c.IsDir
+		case "photo.png":
+			gotPhoto = true
+		}
+	}
+	if !gotGreatClip || !gotYoutubeDir || !gotPhoto {
+		t.Fatalf("children missing entries: %+v", stub.gotIndex.Children)
+	}
+
+	// Recents: descendant md pages, each as a rendered /raw/.../ URL, capped at
+	// the limit. Titles are resolved for the selected slice.
+	if len(stub.gotIndex.Recents) == 0 {
+		t.Fatal("expected recents for a subtree above the gate")
+	}
+	var sawDeepClipURL bool
+	for _, rec := range stub.gotIndex.Recents {
+		if !strings.HasPrefix(rec.RawURL, "/raw/clippings/") || strings.HasSuffix(rec.RawURL, ".md") {
+			t.Errorf("recent RawURL not a rendered page URL: %q", rec.RawURL)
+		}
+		if rec.Title == "" {
+			t.Errorf("selected recent has empty title: %+v", rec)
+		}
+		if rec.RawURL == "/raw/clippings/youtube/nested/deep-clip/" {
+			sawDeepClipURL = true
+			if rec.Title != "Deep Clip" {
+				t.Errorf("deep-clip title = %q, want Deep Clip", rec.Title)
+			}
+		}
+	}
+	if !sawDeepClipURL {
+		t.Errorf("expected a descendant recent with the deep nested URL, got %+v", stub.gotIndex.Recents)
+	}
 }
 
 // newRawSnapshotFS mimics the baked static snapshot for a promoted raw/ md
@@ -596,7 +676,7 @@ func TestRawMarkdownDelegatesToSnapshot(t *testing.T) {
 		}
 	})
 
-	t.Run("directory request still serves the gallery (not delegated)", func(t *testing.T) {
+	t.Run("directory request renders the folder-index landing (not delegated)", func(t *testing.T) {
 		stub := &stubRawRenderer{}
 		h := NewRawHandler(newRawFS(), stub, static)
 		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil)
@@ -604,10 +684,10 @@ func TestRawMarkdownDelegatesToSnapshot(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if !stub.indexCalled {
-			t.Fatal("directory request should still render the gallery")
+			t.Fatal("directory request should render the landing")
 		}
-		if !strings.Contains(w.Body.String(), "GALLERY") {
-			t.Fatalf("expected gallery body, got %q", w.Body.String())
+		if !strings.Contains(w.Body.String(), "LANDING") {
+			t.Fatalf("expected landing body, got %q", w.Body.String())
 		}
 	})
 

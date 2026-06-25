@@ -161,9 +161,11 @@ type RawRenderer interface {
 	// RenderRawPage renders a markdown source. relPath is vault-relative
 	// (e.g. "raw/clippings/x.md"); rawURL is the canonical /raw/ URL.
 	RenderRawPage(relPath string, source []byte, modTime time.Time, rawURL string) ([]byte, bool)
-	// RenderRawIndex renders a directory listing as a gallery. urlDir is the
-	// directory URL with a trailing slash (e.g. "/raw/clippings/").
-	RenderRawIndex(urlDir string, entries []render.RawDirEntry) ([]byte, bool)
+	// RenderRawIndex renders a directory landing as a folder index (Recently
+	// Updated / Directory / Gallery sections). urlDir is the directory URL with
+	// a trailing slash (e.g. "/raw/clippings/"); data carries the immediate
+	// children and the pre-selected descendant recents.
+	RenderRawIndex(urlDir string, data render.RawIndexData) ([]byte, bool)
 }
 
 // RawHandler serves raw source files with native MIME types and directory listing.
@@ -477,14 +479,12 @@ func (h *RawHandler) serveAutoindex(w http.ResponseWriter, r *http.Request, dirP
 		}
 	}
 
-	// Rendered gallery (wiki chrome + image thumbnails) for browsers. Agents,
-	// curl, and ?raw=1 still get the plain autoindex below.
+	// Rendered folder-index landing (wiki chrome: Recently Updated / Directory /
+	// Gallery) for browsers. Agents, curl, and ?raw=1 still get the plain
+	// autoindex below.
 	if h.render != nil && wantsRenderedHTML(r) {
-		gallery := make([]render.RawDirEntry, len(entries))
-		for i, e := range entries {
-			gallery[i] = render.RawDirEntry{Name: e.Name(), IsDir: e.IsDir()}
-		}
-		if out, ok := h.render.RenderRawIndex(urlDir, gallery); ok {
+		data := h.buildRawIndexData(dirPath, urlDir, entries)
+		if out, ok := h.render.RenderRawIndex(urlDir, data); ok {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write(out)
 			return true
@@ -531,6 +531,100 @@ hr { border: none; border-top: 1px solid #e5e7eb; }
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(buf.Bytes())
 	return true
+}
+
+// buildRawIndexData gathers the filesystem-derived input for a /raw/ directory
+// landing: the immediate children (with resolved markdown titles for the
+// Directory section) and the most-recently-modified descendant markdown pages
+// (for the Recently Updated section). dirPath is the raw-relative directory
+// ("" for the root); urlDir is its /raw/ URL with a trailing slash; entries are
+// the already-sorted immediate dir entries.
+//
+// Titles are resolved on-demand by reading frontmatter — only for the immediate
+// markdown children and the top-N selected recents, so a deep clippings/ tree
+// isn't fully read on every landing request.
+func (h *RawHandler) buildRawIndexData(dirPath, urlDir string, entries []fs.DirEntry) render.RawIndexData {
+	children := make([]render.RawDirEntry, 0, len(entries))
+	for _, e := range entries {
+		entry := render.RawDirEntry{Name: e.Name(), IsDir: e.IsDir()}
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+			rel := path.Join(dirPath, e.Name())
+			if src, ok := h.readFile(rel); ok {
+				entry.Title = render.RawIndexTitle(e.Name(), src)
+			}
+			if info, err := e.Info(); err == nil {
+				entry.ModTime = info.ModTime()
+			}
+		}
+		children = append(children, entry)
+	}
+
+	recents := h.collectRawRecents(dirPath)
+	recents = render.SelectRawRecents(recents, dirPath == "")
+	// Resolve titles only for the selected (capped) recents.
+	for i := range recents {
+		if recents[i].Title != "" {
+			continue
+		}
+		// RawURL is "/raw/<rel>/"; map back to the source ".md" relative path.
+		rel := strings.TrimSuffix(strings.TrimPrefix(recents[i].RawURL, "/raw/"), "/") + ".md"
+		if src, ok := h.readFile(rel); ok {
+			recents[i].Title = render.RawIndexTitle(path.Base(rel), src)
+		} else {
+			recents[i].Title = path.Base(strings.TrimSuffix(rel, ".md"))
+		}
+	}
+
+	return render.RawIndexData{Children: children, Recents: recents}
+}
+
+// collectRawRecents walks the directory subtree under dirPath and returns one
+// RawRecentEntry per descendant markdown page (RawURL + ModTime; Title is
+// filled later only for the selected slice). RawURL is the rendered page URL
+// ("/raw/<rel>/"), matching the first-class raw page route.
+func (h *RawHandler) collectRawRecents(dirPath string) []render.RawRecentEntry {
+	root := dirPath
+	if root == "" {
+		root = "."
+	}
+	var recents []render.RawRecentEntry
+	_ = fs.WalkDir(h.fsys, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil //nolint:nilerr // a single unreadable subtree shouldn't fail the whole landing
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
+			return nil
+		}
+		// p is fsys-relative (e.g. "clippings/youtube/clip.md"); its rendered URL
+		// is "/raw/<rel-without-.md>/".
+		rel := strings.TrimSuffix(p, path.Ext(p))
+		rawURL := "/raw/" + rel + "/"
+		entry := render.RawRecentEntry{RawURL: rawURL}
+		if info, ierr := d.Info(); ierr == nil {
+			entry.ModTime = info.ModTime()
+		}
+		recents = append(recents, entry)
+		return nil
+	})
+	return recents
+}
+
+// readFile reads a regular file from the raw FS, returning (bytes, true) on
+// success. Used to pull frontmatter for title resolution.
+func (h *RawHandler) readFile(name string) ([]byte, bool) {
+	f, err := h.fsys.Open(name)
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = f.Close() }()
+	if stat, serr := f.Stat(); serr != nil || stat.IsDir() {
+		return nil, false
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
 }
 
 // HealthHandler returns 200 "ok" for health checks.
