@@ -437,12 +437,12 @@ func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*P
 	p.BreadcrumbItems = BuildBreadcrumb(slug)
 
 	// raw/ markdown is promoted to a first-class wiki page but flagged as a
-	// verbatim source import: the template shows a "Source" badge and a link
-	// to the raw bytes (the slug → /raw/<path>.md?raw=1). The verbatim source
-	// stays reachable via that link and the universal /path.md route.
+	// verbatim source import: the template shows a "Source" badge and a "View
+	// source" link to the markdown bytes. An explicit .md URL always returns
+	// source (like the universal /path.md route), so no ?raw=1 is needed.
 	if slug == "raw" || strings.HasPrefix(slug, "raw/") {
 		p.IsRawSource = true
-		p.SourceURL = "/" + slug + ".md?raw=1"
+		p.SourceURL = "/" + slug + ".md"
 	}
 	if p.Description == "" {
 		p.Description = firstParagraph(buf.String())

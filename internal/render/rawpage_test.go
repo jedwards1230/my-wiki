@@ -23,8 +23,8 @@ func TestRenderPageRawSourceFlag(t *testing.T) {
 	if !raw.IsRawSource {
 		t.Error("raw/ page should have IsRawSource = true")
 	}
-	if raw.SourceURL != "/raw/clippings/clip.md?raw=1" {
-		t.Errorf("SourceURL = %q, want /raw/clippings/clip.md?raw=1", raw.SourceURL)
+	if raw.SourceURL != "/raw/clippings/clip.md" {
+		t.Errorf("SourceURL = %q, want /raw/clippings/clip.md", raw.SourceURL)
 	}
 	if raw.RelativeURL != "/raw/clippings/clip/" {
 		t.Errorf("RelativeURL = %q, want /raw/clippings/clip/", raw.RelativeURL)

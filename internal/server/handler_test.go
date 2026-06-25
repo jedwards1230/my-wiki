@@ -338,14 +338,18 @@ func TestRawMarkdownContentNegotiation(t *testing.T) {
 		wantRender bool
 		wantCType  string
 	}{
-		{"browser renders", "/raw/notes/hello.md", "text/html,*/*", false, true, "text/html"},
-		{"agent gets bytes", "/raw/notes/hello.md", "", false, false, "text/plain"},
-		{"raw=1 forces bytes", "/raw/notes/hello.md?raw=1", "text/html", false, false, "text/plain"},
+		// The extension-less URL is the page; browsers/htmx render it.
+		{"browser renders (extensionless)", "/raw/notes/hello", "text/html,*/*", false, true, "text/html"},
+		// An explicit .md URL is ALWAYS verbatim source, regardless of Accept —
+		// matching the universal /path.md route for normal pages.
+		{"explicit .md → source bytes", "/raw/notes/hello.md", "text/html", false, false, "text/plain"},
+		{"agent gets bytes", "/raw/notes/hello", "", false, false, "text/plain"},
+		{"raw=1 forces bytes", "/raw/notes/hello?raw=1", "text/html", false, false, "text/plain"},
 		{"non-md untouched", "/raw/image.png", "text/html", false, false, "image/png"},
 		// htmx (hx-boost) sends HX-Request but Accept: */* — must still render
 		// the chrome page so the swap target #main exists (else blank pane).
-		{"htmx renders", "/raw/notes/hello.md", "*/*", true, true, "text/html"},
-		{"htmx but raw=1 → bytes", "/raw/notes/hello.md?raw=1", "*/*", true, false, "text/plain"},
+		{"htmx renders (extensionless)", "/raw/notes/hello", "*/*", true, true, "text/html"},
+		{"htmx but raw=1 → bytes", "/raw/notes/hello?raw=1", "*/*", true, false, "text/plain"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -389,7 +393,7 @@ func TestRawMarkdownContentNegotiation(t *testing.T) {
 // serving verbatim bytes rather than erroring.
 func TestRawMarkdownRenderMissFallsBackToBytes(t *testing.T) {
 	h := NewRawHandler(newRawFS(), &stubRawRenderer{miss: true}, nil)
-	r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md", nil)
+	r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello", nil)
 	r.Header.Set("Accept", "text/html")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -504,23 +508,28 @@ func TestRawMarkdownDelegatesToSnapshot(t *testing.T) {
 		}
 	})
 
-	t.Run("browser at .md URL redirects to canonical page URL", func(t *testing.T) {
+	t.Run("explicit .md URL gets verbatim source, not the rendered page", func(t *testing.T) {
+		// Consistency with the universal /path.md route: an explicit .md URL is
+		// always source bytes, never rendered/redirected — even in a browser.
 		h := NewRawHandler(newRawFS(), nil, static)
 		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md", nil)
 		r.Header.Set("Accept", "text/html")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
-		if w.Code != http.StatusMovedPermanently {
-			t.Fatalf("expected 301 redirect to canonical page URL, got %d", w.Code)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 verbatim source, got %d", w.Code)
 		}
-		if loc := w.Header().Get("Location"); loc != "/raw/notes/hello/" {
-			t.Fatalf("redirect Location = %q, want /raw/notes/hello/", loc)
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
+			t.Fatalf("expected text/plain source, got %q", ct)
+		}
+		if body := w.Body.String(); body != "# Hello" {
+			t.Fatalf("expected verbatim source bytes, got %q", body)
 		}
 	})
 
 	t.Run("htmx navigation serves baked page without redirect", func(t *testing.T) {
 		h := NewRawHandler(newRawFS(), nil, static)
-		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md", nil)
+		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello", nil)
 		r.Header.Set("Accept", "*/*")
 		r.Header.Set("HX-Request", "true")
 		w := httptest.NewRecorder()
@@ -572,7 +581,7 @@ func TestRawMarkdownDelegatesToSnapshot(t *testing.T) {
 		emptyStatic := NewStaticHandler(fstest.MapFS{"404.html": {Data: []byte("nf")}})
 		stub := &stubRawRenderer{}
 		h := NewRawHandler(newRawFS(), stub, emptyStatic)
-		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello.md", nil)
+		r := httptest.NewRequest(http.MethodGet, "/raw/notes/hello", nil)
 		r.Header.Set("Accept", "text/html")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)

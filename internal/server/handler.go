@@ -231,25 +231,33 @@ func (h *RawHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// itself is a .md file, or the extension-less path resolves via a .md
 	// fallback (e.g. /raw/clippings/foo → raw/clippings/foo.md).
 	if mdName, ok := h.resolveMarkdown(p); ok {
-		if wantsRenderedHTML(r) {
+		// Only the extension-less URL (/raw/clippings/foo) renders as a page for
+		// browsers. An explicit .md URL (/raw/clippings/foo.md) is ALWAYS verbatim
+		// source — matching the universal /path.md route for normal pages, so the
+		// source view is reachable consistently regardless of Accept.
+		if !strings.HasSuffix(p, ".md") && wantsRenderedHTML(r) {
 			// Promoted raw/ markdown is a first-class compiled page. Serve the
 			// full baked wiki page from the static snapshot (backlinks, TOC,
 			// graph, nav) instead of the on-demand stripped render.
 			if h.serveRenderedMarkdown(w, r, mdName) {
 				return
 			}
-			// No snapshot key (pre-first-build) or no static handler → fall back
-			// to the on-demand render below so nothing 404s spuriously.
+			// No snapshot key (pre-first-build) or no static handler → on-demand
+			// render fallback so nothing 404s spuriously.
+			if h.serveOnDemandRender(w, r, mdName) {
+				return
+			}
 		}
-		// Non-HTML Accept / ?raw=1, or a delegation miss: verbatim bytes (with
-		// the legacy on-demand render as the HTML fallback).
-		if h.serveRawFile(w, r, mdName) {
+		// Explicit .md URL, non-HTML Accept / ?raw=1, or a render miss: verbatim
+		// bytes. serveRawFile is bytes-only — rendering is decided above, so an
+		// explicit .md URL is always source (like the universal /path.md route).
+		if h.serveRawFile(w, mdName) {
 			return
 		}
 	}
 
 	// Non-markdown asset (pdf/img/audio/…) served as bytes with native MIME.
-	if p != "" && !strings.HasSuffix(p, ".md") && h.serveRawFile(w, r, p) {
+	if p != "" && !strings.HasSuffix(p, ".md") && h.serveRawFile(w, p) {
 		return
 	}
 
@@ -362,7 +370,11 @@ func (rw *recordingResponseWriter) Write(b []byte) (int, error) {
 	return rw.buf.Write(b)
 }
 
-func (h *RawHandler) serveRawFile(w http.ResponseWriter, r *http.Request, name string) bool {
+// serveRawFile writes a raw file's verbatim bytes with its native MIME type.
+// It is bytes-only — the render-vs-source decision is made by the caller, so an
+// explicit .md URL always reaches here as source (matching /path.md). Returns
+// false if name is missing or a directory.
+func (h *RawHandler) serveRawFile(w http.ResponseWriter, name string) bool {
 	f, err := h.fsys.Open(name)
 	if err != nil {
 		return false
@@ -379,19 +391,6 @@ func (h *RawHandler) serveRawFile(w http.ResponseWriter, r *http.Request, name s
 		return false
 	}
 
-	// On-demand render fallback: only reached for markdown when the static
-	// snapshot delegation missed (e.g. pre-first-build). Browsers get a
-	// rendered page; agents/scripts (Accept without text/html) and explicit
-	// ?raw=1 still get verbatim bytes.
-	if h.render != nil && strings.HasSuffix(name, ".md") && wantsRenderedHTML(r) {
-		if out, ok := h.render.RenderRawPage("raw/"+name, data, stat.ModTime(), "/raw/"+name); ok {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write(out)
-			return true
-		}
-		// Render miss (e.g. pre-first-build) → fall through to plain bytes.
-	}
-
 	ext := path.Ext(name)
 	ct, ok := rawMIMETypes[ext]
 	if !ok {
@@ -401,6 +400,36 @@ func (h *RawHandler) serveRawFile(w http.ResponseWriter, r *http.Request, name s
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(data)
+	return true
+}
+
+// serveOnDemandRender renders a raw markdown file to an HTML page on demand,
+// used only as the fallback when the static snapshot has no baked page yet
+// (pre-first-build). name is the raw-relative path including ".md". Returns
+// false on a render miss so the caller falls back to verbatim bytes.
+func (h *RawHandler) serveOnDemandRender(w http.ResponseWriter, _ *http.Request, name string) bool {
+	if h.render == nil {
+		return false
+	}
+	f, err := h.fsys.Open(name)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	stat, err := f.Stat()
+	if err != nil || stat.IsDir() {
+		return false
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return false
+	}
+	out, ok := h.render.RenderRawPage("raw/"+name, data, stat.ModTime(), "/raw/"+name)
+	if !ok {
+		return false
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(out)
 	return true
 }
 
