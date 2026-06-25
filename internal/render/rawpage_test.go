@@ -40,6 +40,20 @@ func TestRenderPageRawSourceFlag(t *testing.T) {
 	if notRaw.SourceURL != "" {
 		t.Errorf("non-raw SourceURL should be empty, got %q", notRaw.SourceURL)
 	}
+
+	// A generated index.md landing under raw/ is folder machinery, not an
+	// authored source — it must NOT get the Source badge / view-source link,
+	// so it reads like every other folder index.
+	idx, err := r.RenderPage("raw/clippings/index.md", []byte("---\ntitle: Clippings\ngenerated: true\n---\nIndex of raw/clippings\n"), time.Time{})
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	if idx.IsRawSource {
+		t.Error("generated raw/ index.md should not be flagged as a raw source")
+	}
+	if idx.SourceURL != "" {
+		t.Errorf("generated raw/ index SourceURL should be empty, got %q", idx.SourceURL)
+	}
 }
 
 func TestFrontmatterScalar(t *testing.T) {
