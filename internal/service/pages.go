@@ -80,10 +80,7 @@ var ErrPathDenied = errors.New("page not found")
 //
 // Scope rationale: this is intentionally NARROWER than the page-listing
 // exclude list (vault.DefaultExcludedDirs / defaultWatchExcludeDirs, which
-// also include "raw"). The security intent is confidentiality and editor
-// hygiene:
-//   - "private"   — confidential, device-only content that must never be
-//     served or mutated through the API.
+// also include "raw"). The security intent is editor hygiene:
 //   - ".obsidian" — Obsidian editor config; exposing/editing it serves no
 //     legitimate purpose and risks leaking workspace internals.
 //
@@ -91,12 +88,12 @@ var ErrPathDenied = errors.New("page not found")
 // dedicated /raw/ handler (RawHandler) and its files are valid wikilink
 // targets. Denying it would break legitimate raw serving. raw/ is excluded
 // from page LISTING only, which is a separate concern.
-var apiDeniedPrefixes = []string{"private", ".obsidian"}
+var apiDeniedPrefixes = []string{".obsidian"}
 
 // IsAPIDenied reports whether relPath falls under a denied directory
 // (apiDeniedPrefixes) and therefore must not be readable or writable through
 // the API/HTTP/MCP page surface. The path is cleaned and normalized to
-// forward slashes first so that variants like "private/x", "private/../private/x",
+// forward slashes first so that variants like ".obsidian/x", ".obsidian/../.obsidian/x",
 // or back-slashed paths cannot bypass the check.
 func IsAPIDenied(relPath string) bool {
 	normalized := filepath.ToSlash(filepath.Clean(relPath))

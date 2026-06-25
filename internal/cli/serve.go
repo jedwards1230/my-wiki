@@ -80,9 +80,9 @@ func envOrBool(key string, fallback bool) bool {
 }
 
 // defaultWatchExcludeDirs lists vault subdirectories the filesystem watcher
-// skips by default — Obsidian metadata, raw byte storage (intentionally
-// silent), and the device-only private folder.
-var defaultWatchExcludeDirs = []string{".obsidian", "raw", "private"}
+// skips by default — Obsidian metadata and raw byte storage (intentionally
+// silent).
+var defaultWatchExcludeDirs = []string{".obsidian", "raw"}
 
 // excludeDirsFromEnv returns the watcher exclude list, honoring
 // EnvWatchExcludeDirs as a comma-separated override. Unset or empty

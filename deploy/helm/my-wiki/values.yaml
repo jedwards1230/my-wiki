@@ -34,7 +34,9 @@ ingress:
 obsidian:
   vault: "My Wiki"
   deviceName: "my-wiki"
-  excludedFolders: "private"
+  # Comma-separated Obsidian Sync folders to skip. Empty by default — keep
+  # private content in a separate, unsynced vault rather than a folder here.
+  excludedFolders: ""
   syncMode: "bidirectional"
 
 # When true, obsidian-headless runs as a separate single-replica Deployment

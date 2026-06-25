@@ -27,7 +27,6 @@
 #   transclusion/a→b→c→d.md      ![[…]] chain to exercise the depth-3 limit
 #   transclusion/partial.md      ![[target#heading]] + ![[target#^block]]
 #   raw/*.{txt,yaml,sh}          native source files + /raw directory listing
-#   private/secret.md            MUST be excluded from listings (negative test)
 #
 # Shared tags (#demo #rendering #reference) span multiple pages so tag-listing
 # pages have more than one entry.
@@ -626,20 +625,6 @@ EOF
 
 b64file raw/sample.wav <<'EOF'
 UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=
-EOF
-
-# ---------------------------------------------------------------------------
-# private/ — MUST be excluded from sync and page listings (negative test)
-# ---------------------------------------------------------------------------
-page private/secret.md <<'EOF'
----
-title: Secret
----
-
-# Secret
-
-If this page shows up in the explorer, search, or any listing, exclusion is
-broken. It should be invisible to the rendered site.
 EOF
 
 # --- done ------------------------------------------------------------------

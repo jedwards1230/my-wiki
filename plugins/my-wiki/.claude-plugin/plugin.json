@@ -1,7 +1,7 @@
 {
   "name": "my-wiki",
-  "version": "0.0.6",
-  "description": "Wiki MCP tools and Stop hook for wiki capture prompts",
+  "version": "0.0.9",
+  "description": "Wiki MCP tools and a debounced Stop hook for wiki capture prompts",
   "author": {
     "name": "jedwards1230"
   },

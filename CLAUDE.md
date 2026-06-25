@@ -71,7 +71,7 @@ For CSS/template/rendered-output changes, verify visually before a PR (skip for 
 ```bash
 go build -o wiki-server ./cmd/wiki-server
 # Seed a vault that exercises every renderer feature (callouts, code, math,
-# diagrams, wikilinks/backlinks, transclusion, raw/, private/ exclusion, …).
+# diagrams, wikilinks/backlinks, transclusion, raw/, …).
 # Defaults to /tmp/wiki-test-vault; pass a path to override.
 scripts/seed-vault.sh /tmp/wiki-test-vault
 # WIKI_AUTH_DISABLED=true is required: the HTTP server fails closed and refuses
@@ -121,7 +121,6 @@ Auth fails closed: network entry points (REST API / MCP HTTP) refuse to start un
 ## Vault Conventions
 
 - `raw/` — source documents served natively; excluded from page directory and page-listing API, but ARE valid (slug-indexed) wikilink targets
-- `private/` — excluded from sync and page listing
-- `.obsidian/` — Obsidian config, excluded from page listing
+- `.obsidian/` — Obsidian config, excluded from page listing (and denied on the API/HTTP/MCP page surface)
 - Pages have YAML frontmatter (`title`, `tags`, `date`); wikilinks (`[[target]]`) are parsed for link checking
 - `meta/lint-config.yaml` (optional) — overrides schema-coupled lint values (clipping tag, raw-path prefix, stub cooldown). Missing/partial → `service.DefaultLintConfig()` defaults. Malformed → ERROR under both `clippings` and `stub` checks (shared config).

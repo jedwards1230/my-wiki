@@ -19,7 +19,7 @@ func setupTestVault(t *testing.T) *vault.Vault {
 	t.Helper()
 	dir := t.TempDir()
 
-	for _, d := range []string{"raw", "meta", "meta/activity", "project", "private", ".obsidian"} {
+	for _, d := range []string{"raw", "meta", "meta/activity", "project", ".obsidian"} {
 		_ = os.MkdirAll(filepath.Join(dir, d), 0o755)
 	}
 

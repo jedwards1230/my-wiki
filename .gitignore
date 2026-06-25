@@ -4,3 +4,7 @@ node_modules/
 .claude/settings.local.json
 docs/plans/
 .playwright-mcp/
+
+# Python bytecode (hook scripts)
+__pycache__/
+*.pyc

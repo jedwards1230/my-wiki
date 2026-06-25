@@ -17,7 +17,7 @@ type VaultWatcher struct {
 	watcher     *fsnotify.Watcher
 	sink        Sink
 	vaultDir    string
-	excludeDirs []string // top-level dirs to skip, e.g. [".obsidian", "raw", "private"]
+	excludeDirs []string // top-level dirs to skip, e.g. [".obsidian", "raw"]
 	logger      *slog.Logger
 }
 

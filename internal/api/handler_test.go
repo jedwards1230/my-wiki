@@ -26,12 +26,13 @@ func setupTestVault(t *testing.T) *vault.Vault {
 	}
 
 	files := map[string]string{
-		"index.md":           "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[about]]\n",
-		"about.md":           "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[index]]\n",
-		"project/alpha.md":   "---\ntitle: Alpha\ntags:\n  - project\ndate: 2026-02-01\n---\n\nContent.\n",
-		"raw/source.md":      "---\ntitle: Source\nsource: https://example.com\ndate-added: 2026-01-15\n---\n\nRaw content.\n",
-		"raw/unprocessed.md": "---\ntitle: Unprocessed\nsource: https://example.com/2\ndate-added: 2026-02-01\n---\n\nNot ingested.\n",
-		"private/secret.md":  "---\ntitle: Secret\ntags:\n  - confidential\ndate: 2026-01-01\n---\n\nConfidential.\n",
+		"index.md":                 "---\ntitle: Home\ntags:\n  - root\ndate: 2026-01-01\n---\n\n[[about]]\n",
+		"about.md":                 "---\ntitle: About\ntags:\n  - info\ndate: 2026-01-01\n---\n\n[[index]]\n",
+		"project/alpha.md":         "---\ntitle: Alpha\ntags:\n  - project\ndate: 2026-02-01\n---\n\nContent.\n",
+		"raw/source.md":            "---\ntitle: Source\nsource: https://example.com\ndate-added: 2026-01-15\n---\n\nRaw content.\n",
+		"raw/unprocessed.md":       "---\ntitle: Unprocessed\nsource: https://example.com/2\ndate-added: 2026-02-01\n---\n\nNot ingested.\n",
+		"private/secret.md":        "---\ntitle: Secret\ntags:\n  - confidential\ndate: 2026-01-01\n---\n\nConfidential.\n",
+		".obsidian/workspace.json": "{}\n",
 	}
 	for name, content := range files {
 		_ = os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
@@ -827,34 +828,46 @@ func TestAuthMutatingRoutesPassWithAuth(t *testing.T) {
 	}
 }
 
-// TestPageDeniedEndpoints verifies that private/ (and .obsidian/) are denied on
-// the JSON page API for read AND write/delete, returning 404 so existence is
-// not confirmed.
+// TestPageDeniedEndpoints verifies that .obsidian/ is denied on the JSON page
+// API for read AND write/delete, returning 404 so existence is not confirmed.
 func TestPageDeniedEndpoints(t *testing.T) {
 	mux, _ := setupTestMux(t)
 
-	// Read denied — even though private/secret.md exists on disk.
-	r := httptest.NewRequest(http.MethodGet, "/api/pages/private/secret", nil)
+	// Read denied — even though .obsidian/workspace.json exists on disk.
+	r := httptest.NewRequest(http.MethodGet, "/api/pages/.obsidian/workspace", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusNotFound {
-		t.Errorf("GET /api/pages/private/secret: expected 404, got %d", w.Code)
+		t.Errorf("GET /api/pages/.obsidian/workspace: expected 404, got %d", w.Code)
 	}
 
 	// Write denied.
 	body := "---\ntitle: X\ntags:\n  - t\ndate: 2026-01-01\n---\n\nbody\n"
-	r = httptest.NewRequest(http.MethodPut, "/api/pages/private/injected", strings.NewReader(body))
+	r = httptest.NewRequest(http.MethodPut, "/api/pages/.obsidian/injected", strings.NewReader(body))
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusNotFound {
-		t.Errorf("PUT /api/pages/private/injected: expected 404, got %d", w.Code)
+		t.Errorf("PUT /api/pages/.obsidian/injected: expected 404, got %d", w.Code)
 	}
 
 	// Delete denied.
-	r = httptest.NewRequest(http.MethodDelete, "/api/pages/private/secret", nil)
+	r = httptest.NewRequest(http.MethodDelete, "/api/pages/.obsidian/workspace", nil)
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusNotFound {
-		t.Errorf("DELETE /api/pages/private/secret: expected 404, got %d", w.Code)
+		t.Errorf("DELETE /api/pages/.obsidian/workspace: expected 404, got %d", w.Code)
+	}
+}
+
+// TestPagePrivateNowServed verifies private/ is a normal, served directory
+// after the privacy special-casing was removed.
+func TestPagePrivateNowServed(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/api/pages/private/secret", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /api/pages/private/secret: expected 200, got %d", w.Code)
 	}
 }

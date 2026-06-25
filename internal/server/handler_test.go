@@ -131,19 +131,26 @@ func newVaultFS() fstest.MapFS {
 	}
 }
 
-// TestMarkdownDeniesPrivateAndObsidian verifies the markdown surface refuses
-// to serve confidential (private/) and editor-config (.obsidian/) content,
-// returning 404 (not 403, to avoid confirming existence). raw/ is intentionally
-// not denied here — it has its own handler.
-func TestMarkdownDeniesPrivateAndObsidian(t *testing.T) {
+// TestMarkdownDeniesObsidian verifies the markdown surface refuses to serve
+// editor-config (.obsidian/) content, returning 404 (not 403, to avoid
+// confirming existence). raw/ is intentionally not denied here — it has its
+// own handler. private/ is no longer special and IS served.
+func TestMarkdownDeniesObsidian(t *testing.T) {
 	h := NewMarkdownHandler(newVaultFS())
-	for _, p := range []string{"/private/secret.md", "/.obsidian/workspace.json"} {
-		r := httptest.NewRequest(http.MethodGet, p, nil)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		if w.Code != http.StatusNotFound {
-			t.Errorf("GET %s: expected 404, got %d", p, w.Code)
-		}
+
+	r := httptest.NewRequest(http.MethodGet, "/.obsidian/workspace.json", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("GET /.obsidian/workspace.json: expected 404, got %d", w.Code)
+	}
+
+	// private/ is a normal directory now — it is served like any other page.
+	r = httptest.NewRequest(http.MethodGet, "/private/secret.md", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Errorf("GET /private/secret.md: expected 200, got %d", w.Code)
 	}
 }
 
