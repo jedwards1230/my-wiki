@@ -78,16 +78,14 @@ var ErrPathDenied = errors.New("page not found")
 // every page operation reachable over the network (REST API, HTTP markdown
 // catch-all, MCP tools).
 //
-// Scope rationale: this is intentionally NARROWER than the page-listing
-// exclude list (vault.DefaultExcludedDirs / defaultWatchExcludeDirs, which
-// also include "raw"). The security intent is editor hygiene:
+// Scope rationale: the security intent is editor hygiene:
 //   - ".obsidian" — Obsidian editor config; exposing/editing it serves no
 //     legitimate purpose and risks leaking workspace internals.
 //
-// "raw" is deliberately NOT denied here: it is served intentionally by the
-// dedicated /raw/ handler (RawHandler) and its files are valid wikilink
-// targets. Denying it would break legitimate raw serving. raw/ is excluded
-// from page LISTING only, which is a separate concern.
+// "raw" is deliberately NOT denied here: it is a normal indexed folder served by
+// the dedicated /raw/ handler (RawHandler), its markdown is a first-class page,
+// and its files are valid wikilink targets. Denying it would break legitimate
+// raw serving.
 var apiDeniedPrefixes = []string{".obsidian"}
 
 // IsAPIDenied reports whether relPath falls under a denied directory

@@ -300,14 +300,14 @@ func TestRawMdFallback(t *testing.T) {
 // HTML body so tests can assert the render path was taken. When miss is set,
 // both methods report ok=false so the handler falls back to bytes / autoindex.
 type stubRawRenderer struct {
-	miss        bool
-	called      bool
-	indexCalled bool
-	gotRel      string
-	gotURL      string
-	gotIndexURL string
-	gotIndex    render.RawIndexData
-	gotBytes    []byte
+	miss          bool
+	called        bool
+	galleryCalled bool
+	gotRel        string
+	gotURL        string
+	gotGalleryURL string
+	gotAssets     []render.RawAsset
+	gotBytes      []byte
 }
 
 func (s *stubRawRenderer) RenderRawPage(relPath string, source []byte, _ time.Time, rawURL string) ([]byte, bool) {
@@ -321,14 +321,14 @@ func (s *stubRawRenderer) RenderRawPage(relPath string, source []byte, _ time.Ti
 	return []byte("<html>RENDERED</html>"), true
 }
 
-func (s *stubRawRenderer) RenderRawIndex(urlDir string, data render.RawIndexData) ([]byte, bool) {
-	s.indexCalled = true
-	s.gotIndexURL = urlDir
-	s.gotIndex = data
+func (s *stubRawRenderer) RenderRawGallery(urlDir string, assets []render.RawAsset) ([]byte, bool) {
+	s.galleryCalled = true
+	s.gotGalleryURL = urlDir
+	s.gotAssets = assets
 	if s.miss {
 		return nil, false
 	}
-	return []byte("<html>LANDING</html>"), true
+	return []byte("<html>GALLERY</html>"), true
 }
 
 func TestRawMarkdownContentNegotiation(t *testing.T) {
@@ -411,27 +411,29 @@ func TestRawMarkdownRenderMissFallsBackToBytes(t *testing.T) {
 	}
 }
 
-// A browser browsing a /raw/ directory gets the rendered folder-index landing;
-// agents and ?raw=1 get the plain autoindex.
-func TestRawIndexLandingNegotiation(t *testing.T) {
-	t.Run("browser gets landing", func(t *testing.T) {
+// A browser browsing a /raw/ directory with no baked snapshot index page falls
+// back to the media gallery (assets stay visible); agents and ?raw=1 get the
+// plain autoindex.
+func TestRawDirectoryFallback(t *testing.T) {
+	t.Run("browser with no snapshot index gets gallery fallback", func(t *testing.T) {
+		// static nil → no baked index page, so the gallery fallback handles it.
 		stub := &stubRawRenderer{}
 		h := NewRawHandler(newRawFS(), stub, nil)
 		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil)
 		r.Header.Set("Accept", "text/html")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
-		if !stub.indexCalled {
-			t.Fatal("expected landing render path")
+		if !stub.galleryCalled {
+			t.Fatal("expected gallery fallback render path")
 		}
-		if stub.gotIndexURL != "/raw/somedir/" {
-			t.Fatalf("urlDir = %q, want /raw/somedir/", stub.gotIndexURL)
+		if stub.gotGalleryURL != "/raw/somedir/" {
+			t.Fatalf("urlDir = %q, want /raw/somedir/", stub.gotGalleryURL)
 		}
-		if !strings.Contains(w.Body.String(), "LANDING") {
-			t.Fatalf("expected landing body, got %q", w.Body.String())
+		if !strings.Contains(w.Body.String(), "GALLERY") {
+			t.Fatalf("expected gallery body, got %q", w.Body.String())
 		}
 	})
-	t.Run("htmx click gets landing (chrome with #main)", func(t *testing.T) {
+	t.Run("htmx click gets gallery fallback (chrome with #main)", func(t *testing.T) {
 		// hx-boost: HX-Request true, Accept */* — must render so the swap
 		// response carries #main. This is the blank-pane regression.
 		stub := &stubRawRenderer{}
@@ -441,8 +443,8 @@ func TestRawIndexLandingNegotiation(t *testing.T) {
 		r.Header.Set("HX-Request", "true")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
-		if !stub.indexCalled {
-			t.Fatal("htmx navigation must render the landing, not the plain autoindex")
+		if !stub.galleryCalled {
+			t.Fatal("htmx navigation must render the gallery fallback, not the plain autoindex")
 		}
 	})
 	t.Run("agent gets plain autoindex", func(t *testing.T) {
@@ -451,8 +453,8 @@ func TestRawIndexLandingNegotiation(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil) // no Accept
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
-		if stub.indexCalled {
-			t.Fatal("agent should get plain autoindex, not landing")
+		if stub.galleryCalled {
+			t.Fatal("agent should get plain autoindex, not gallery")
 		}
 		if !strings.Contains(w.Body.String(), "file1.txt") {
 			t.Fatalf("expected plain autoindex, got %q", w.Body.String())
@@ -460,27 +462,15 @@ func TestRawIndexLandingNegotiation(t *testing.T) {
 	})
 }
 
-// TestRawIndexLandingData covers the filesystem gathering the handler hands to
-// the renderer: immediate children (with markdown titles resolved) for the
-// Directory section, and descendant markdown pages (with rendered /raw/ URLs)
-// selected for the Recently Updated section.
-func TestRawIndexLandingData(t *testing.T) {
-	// A clippings tree with enough descendant md pages to clear the non-root
-	// recentsMinPages gate, plus a non-md asset to prove the gallery still
-	// surfaces it.
+// TestRawGalleryFallbackAssets covers the asset set the handler hands to the
+// gallery fallback: only the immediate non-markdown children, with subdirs and
+// markdown filtered out.
+func TestRawGalleryFallbackAssets(t *testing.T) {
 	fsys := fstest.MapFS{
-		"clippings/great-clip.md":               {Data: []byte("---\ntitle: Great Clip\n---\nbody")},
-		"clippings/photo.png":                   {Data: []byte("fake-png")},
-		"clippings/youtube/p01.md":              {Data: []byte("# P1")},
-		"clippings/youtube/p02.md":              {Data: []byte("# P2")},
-		"clippings/youtube/p03.md":              {Data: []byte("# P3")},
-		"clippings/youtube/p04.md":              {Data: []byte("# P4")},
-		"clippings/youtube/p05.md":              {Data: []byte("# P5")},
-		"clippings/youtube/p06.md":              {Data: []byte("# P6")},
-		"clippings/youtube/p07.md":              {Data: []byte("# P7")},
-		"clippings/youtube/p08.md":              {Data: []byte("# P8")},
-		"clippings/youtube/p09.md":              {Data: []byte("# P9")},
-		"clippings/youtube/nested/deep-clip.md": {Data: []byte("---\ntitle: Deep Clip\n---\nbody")},
+		"clippings/great-clip.md": {Data: []byte("---\ntitle: Great Clip\n---\nbody")},
+		"clippings/photo.png":     {Data: []byte("fake-png")},
+		"clippings/talk.pdf":      {Data: []byte("%PDF")},
+		"clippings/youtube/p1.md": {Data: []byte("# P1")},
 	}
 	stub := &stubRawRenderer{}
 	h := NewRawHandler(fsys, stub, nil)
@@ -489,52 +479,23 @@ func TestRawIndexLandingData(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 
-	if !stub.indexCalled {
-		t.Fatal("expected landing render path")
+	if !stub.galleryCalled {
+		t.Fatal("expected gallery fallback render path")
 	}
 
-	// Immediate children: the md file resolves its frontmatter title; the
-	// subdirectory and the asset are present.
-	var gotGreatClip, gotYoutubeDir, gotPhoto bool
-	for _, c := range stub.gotIndex.Children {
-		switch c.Name {
-		case "great-clip.md":
-			gotGreatClip = true
-			if c.Title != "Great Clip" {
-				t.Errorf("great-clip.md title = %q, want Great Clip", c.Title)
-			}
-		case "youtube":
-			gotYoutubeDir = c.IsDir
+	var gotPhoto, gotPDF bool
+	for _, a := range stub.gotAssets {
+		switch a.Name {
 		case "photo.png":
 			gotPhoto = true
+		case "talk.pdf":
+			gotPDF = true
+		case "great-clip.md", "youtube":
+			t.Errorf("gallery assets should exclude markdown and subdirs, got %q", a.Name)
 		}
 	}
-	if !gotGreatClip || !gotYoutubeDir || !gotPhoto {
-		t.Fatalf("children missing entries: %+v", stub.gotIndex.Children)
-	}
-
-	// Recents: descendant md pages, each as a rendered /raw/.../ URL, capped at
-	// the limit. Titles are resolved for the selected slice.
-	if len(stub.gotIndex.Recents) == 0 {
-		t.Fatal("expected recents for a subtree above the gate")
-	}
-	var sawDeepClipURL bool
-	for _, rec := range stub.gotIndex.Recents {
-		if !strings.HasPrefix(rec.RawURL, "/raw/clippings/") || strings.HasSuffix(rec.RawURL, ".md") {
-			t.Errorf("recent RawURL not a rendered page URL: %q", rec.RawURL)
-		}
-		if rec.Title == "" {
-			t.Errorf("selected recent has empty title: %+v", rec)
-		}
-		if rec.RawURL == "/raw/clippings/youtube/nested/deep-clip/" {
-			sawDeepClipURL = true
-			if rec.Title != "Deep Clip" {
-				t.Errorf("deep-clip title = %q, want Deep Clip", rec.Title)
-			}
-		}
-	}
-	if !sawDeepClipURL {
-		t.Errorf("expected a descendant recent with the deep nested URL, got %+v", stub.gotIndex.Recents)
+	if !gotPhoto || !gotPDF {
+		t.Fatalf("assets missing entries: %+v", stub.gotAssets)
 	}
 }
 
@@ -676,18 +637,20 @@ func TestRawMarkdownDelegatesToSnapshot(t *testing.T) {
 		}
 	})
 
-	t.Run("directory request renders the folder-index landing (not delegated)", func(t *testing.T) {
+	t.Run("directory with no baked index falls back to the gallery", func(t *testing.T) {
+		// somedir/ has no baked raw/somedir/index.html in the snapshot, so the
+		// directory request misses delegation and falls back to the gallery.
 		stub := &stubRawRenderer{}
 		h := NewRawHandler(newRawFS(), stub, static)
 		r := httptest.NewRequest(http.MethodGet, "/raw/somedir/", nil)
 		r.Header.Set("Accept", "text/html")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
-		if !stub.indexCalled {
-			t.Fatal("directory request should render the landing")
+		if !stub.galleryCalled {
+			t.Fatal("directory with no baked index should render the gallery fallback")
 		}
-		if !strings.Contains(w.Body.String(), "LANDING") {
-			t.Fatalf("expected landing body, got %q", w.Body.String())
+		if !strings.Contains(w.Body.String(), "GALLERY") {
+			t.Fatalf("expected gallery body, got %q", w.Body.String())
 		}
 	})
 
@@ -699,6 +662,76 @@ func TestRawMarkdownDelegatesToSnapshot(t *testing.T) {
 		h.ServeHTTP(w, r)
 		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "image/png") {
 			t.Fatalf("expected image/png, got %q", ct)
+		}
+	})
+}
+
+// TestRawDirectoryDelegatesToSnapshot covers the normal-folder contract: a
+// browser request for a /raw/<dir>/ directory is served from the baked generated
+// index.md landing in the static snapshot (raw/<dir>/index.html), exactly like a
+// non-raw folder index. Agents and ?raw=1 still get the plain autoindex.
+func TestRawDirectoryDelegatesToSnapshot(t *testing.T) {
+	// Snapshot with a baked generated index landing for raw/clippings/.
+	static := NewStaticHandler(fstest.MapFS{
+		"raw/clippings/index.html": {Data: []byte("<html><main id=\"main\">BAKED RAW INDEX</main></html>")},
+		"raw/index.html":           {Data: []byte("<html><main id=\"main\">BAKED RAW ROOT</main></html>")},
+		"404.html":                 {Data: []byte("<html>not found</html>")},
+	})
+	rawFS := fstest.MapFS{
+		"clippings/clip.md":   {Data: []byte("# Clip")},
+		"clippings/photo.png": {Data: []byte("fake-png")},
+	}
+
+	t.Run("browser gets the baked generated index landing", func(t *testing.T) {
+		// render nil so a bug bypassing delegation surfaces as a fallthrough,
+		// not a silent gallery render.
+		h := NewRawHandler(rawFS, nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/clippings/", nil)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		if body := w.Body.String(); !strings.Contains(body, "BAKED RAW INDEX") {
+			t.Fatalf("expected baked snapshot index, got %q", body)
+		}
+	})
+
+	t.Run("root /raw/ gets the baked root index landing", func(t *testing.T) {
+		h := NewRawHandler(rawFS, nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/", nil)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if body := w.Body.String(); !strings.Contains(body, "BAKED RAW ROOT") {
+			t.Fatalf("expected baked root index, got %q", body)
+		}
+	})
+
+	t.Run("htmx navigation serves baked index", func(t *testing.T) {
+		h := NewRawHandler(rawFS, nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/clippings/", nil)
+		r.Header.Set("Accept", "*/*")
+		r.Header.Set("HX-Request", "true")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if body := w.Body.String(); !strings.Contains(body, "BAKED RAW INDEX") {
+			t.Fatalf("expected baked index for htmx nav, got %q", body)
+		}
+	})
+
+	t.Run("agent gets plain autoindex, not the baked landing", func(t *testing.T) {
+		h := NewRawHandler(rawFS, nil, static)
+		r := httptest.NewRequest(http.MethodGet, "/raw/clippings/", nil) // no Accept
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		body := w.Body.String()
+		if strings.Contains(body, "BAKED RAW INDEX") {
+			t.Fatalf("agent should get the plain autoindex, got the baked landing: %q", body)
+		}
+		if !strings.Contains(body, "clip.md") {
+			t.Fatalf("expected plain autoindex with entries, got %q", body)
 		}
 	})
 }

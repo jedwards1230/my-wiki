@@ -1,86 +1,42 @@
 package render
 
-// rawpage.go renders raw/ directory listings as folder-index landing pages and
-// provides an on-demand markdown render used only as a fallback.
+// rawpage.go renders raw/ content fallbacks. raw/ is a normal indexed folder:
+// its markdown is promoted to first-class wiki pages and its directories get a
+// standard generated index.md landing baked into the snapshot. The functions
+// here are only fallbacks the /raw/ handler reaches for when the snapshot has no
+// baked page:
 //
-// raw/ MARKDOWN is now promoted to first-class wiki pages: it flows through
-// FindWikiPages and is baked into the snapshot at its raw/ slug, so the /raw/
-// handler serves the full compiled page (backlinks, TOC, graph, nav) by
-// delegating to the static snapshot. RenderRawPage here is the pre-first-build /
-// snapshot-miss fallback so a raw markdown URL never 404s spuriously. Agents and
-// scripts still fetch the verbatim bytes (Accept: !text/html or ?raw=1).
-//
-// raw/ DIRECTORIES (/raw/, /raw/<dir>/) render an "Index of …" landing page
-// matching the normal folder-index look: a "Recently Updated" section of the
-// most recently modified descendant pages, a "Directory" section listing the
-// immediate children, and a "Gallery" section of any non-markdown media assets
-// (PDFs, images, audio, video) directly in that directory. The landing is
-// generated on-demand from the filesystem by RenderRawIndex — nothing is
-// persisted into the vault (Generate never writes index.md into raw/).
+//   - RenderRawPage renders a markdown leaf on-demand before the first build, so
+//     a raw markdown URL never 404s spuriously. Agents and scripts still fetch
+//     the verbatim bytes (Accept: !text/html or ?raw=1).
+//   - RenderRawGallery renders an asset-only directory (no markdown, so no
+//     meaningful generated index page) as a media gallery, keeping PDFs, images,
+//     audio, and video visible. This is the original pre-folder-index behavior.
 
 import (
 	"html"
 	"html/template"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/jedwards1230/my-wiki/internal/version"
 )
 
-// RawDirEntry is one entry in a /raw/ directory listing, passed by the server's
-// raw handler to RenderRawIndex. Name + IsDir drives classification; Title and
-// ModTime are populated for markdown entries so the Directory and Recently
-// Updated sections can show a real page title and order by mtime.
-type RawDirEntry struct {
-	// Name is the immediate child name (e.g. "clip.md", "youtube", "photo.png").
+// RawAsset is one non-markdown asset surfaced in a /raw/ directory gallery,
+// passed by the server's raw handler to RenderRawGallery. Name is the immediate
+// child filename (e.g. "photo.png", "talk.pdf").
+type RawAsset struct {
 	Name string
-	// IsDir reports whether the entry is a subdirectory.
-	IsDir bool
-	// Title is the resolved page title for a markdown entry (frontmatter
-	// title, falling back to a humanized filename). Empty for non-markdown
-	// entries and subdirectories.
-	Title string
-	// ModTime is the file mtime for a markdown entry, used for ordering the
-	// Recently Updated section. Zero for entries that don't carry one.
-	ModTime time.Time
 }
 
-// RawRecentEntry is one descendant markdown page surfaced in a raw landing's
-// "Recently Updated" section. RawURL is the rendered page URL (e.g.
-// "/raw/clippings/youtube/clip/"); Title is its display title; ModTime orders
-// the list newest-first.
-type RawRecentEntry struct {
-	RawURL  string
-	Title   string
-	ModTime time.Time
-}
-
-// RawIndexData is the filesystem-derived input the raw handler hands to
-// RenderRawIndex to render a /raw/ directory landing. Children are the immediate
-// entries (for the Directory + Gallery sections); Recents are the most recently
-// modified descendant markdown pages (for the Recently Updated section), already
-// sorted newest-first and capped by the handler.
-type RawIndexData struct {
-	Children []RawDirEntry
-	Recents  []RawRecentEntry
-}
-
-// isMarkdownName reports whether a filename is a markdown source (the set
-// promoted to first-class wiki pages, linked to their rendered /raw/ URL).
-func isMarkdownName(name string) bool {
-	return strings.HasSuffix(strings.ToLower(name), ".md")
-}
-
-// RenderRawIndex renders a /raw/ directory as a folder-index landing page
-// wrapped in the wiki chrome — structurally consistent with the wiki's normal
-// folder index pages (same "Index of …" description, #recently-updated and
-// #directory sections, "On this page" TOC) — plus a Gallery section for any
-// non-markdown media in the directory. urlDir is the directory URL with a
-// trailing slash (e.g. "/raw/clippings/", or "/raw/" for the root). Returns
-// ok=false before the first build, so the handler falls back to the plain
-// autoindex.
-func (b *Builder) RenderRawIndex(urlDir string, data RawIndexData) ([]byte, bool) {
+// RenderRawGallery renders a /raw/ directory as a media gallery landing wrapped
+// in the wiki chrome — the fallback for an asset-only directory (no markdown, so
+// the standard generated index.md has no meaningful page) or the pre-first-build
+// window. urlDir is the directory URL with a trailing slash (e.g.
+// "/raw/clippings/", or "/raw/" for the root); assets are the non-markdown
+// children to surface. Returns ok=false before the first build, so the handler
+// falls back to the plain autoindex.
+func (b *Builder) RenderRawGallery(urlDir string, assets []RawAsset) ([]byte, bool) {
 	b.mu.Lock()
 	r := b.lastRenderer
 	explorer := cloneExplorerTree(b.lastExplorer)
@@ -90,7 +46,7 @@ func (b *Builder) RenderRawIndex(urlDir string, data RawIndexData) ([]byte, bool
 	}
 	markActiveByURL(explorer, urlDir)
 
-	content, toc := buildRawIndex(urlDir, data)
+	content, toc := buildRawGallery(urlDir, assets)
 	p := &Page{
 		Title:                      rawDirTitle(urlDir),
 		Description:                rawIndexDescription(urlDir),
@@ -115,7 +71,7 @@ func (b *Builder) RenderRawIndex(urlDir string, data RawIndexData) ([]byte, bool
 	return out, true
 }
 
-// rawDirTitle is the page title for a /raw/ directory index — the humanized
+// rawDirTitle is the page title for a /raw/ directory landing — the humanized
 // last path segment, matching how wiki folder index pages are titled (e.g.
 // "/raw/clippings/" → "Clippings", "/raw/" → "Raw").
 func rawDirTitle(urlDir string) string {
@@ -139,163 +95,78 @@ func rawIndexDescription(urlDir string) string {
 }
 
 // isMediaFile reports whether a filename is renderable media (image, video,
-// audio, or PDF) — the set the Gallery section surfaces.
+// audio, or PDF) — the set the gallery surfaces with a thumbnail/badge tile.
 func isMediaFile(name string) bool {
 	return isImageExtension(name) || isVideoExtension(name) || isAudioExtension(name) || isPDFExtension(name)
 }
 
-// buildRawIndex renders a /raw/ directory as a folder-index landing matching the
-// wiki's normal generated folder indexes:
+// buildRawGallery renders a /raw/ directory's non-markdown assets as a gallery:
 //
-//   - "Recently Updated" (#recently-updated) — the most recently modified
-//     descendant markdown pages, newest first. Mirrors the normal index's
-//     recents: the handler caps the list at recentsLimit and applies the
-//     non-root recentsMinPages gate, so this section only renders the slice it
-//     was handed.
-//   - "Directory" (#directory) — the immediate children as a bulleted
-//     internal-link list (subdirs → /raw/<dir>/sub/, markdown → its rendered
-//     /raw/.../ page using the resolved title, other assets → the raw URL).
-//   - "Gallery" (#gallery) — a thumbnail grid of any non-markdown media (images,
-//     PDFs, audio, video) directly in this directory, so assets stay visible.
-//     Only rendered when such media exist.
+//   - "Gallery" (#gallery) — a thumbnail grid of recognized media (images, PDFs,
+//     audio, video) with image thumbnails and a type badge for the rest.
+//   - "Files" (#files) — any remaining non-media assets as a plain link list.
 //
 // Returns the body HTML plus TOC entries so the right-rail "On this page" lists
-// the sections present, like any other page.
-func buildRawIndex(urlDir string, data RawIndexData) (template.HTML, []TOCEntry) {
-	var media []RawDirEntry
-	for _, e := range data.Children {
-		if !e.IsDir && isMediaFile(e.Name) {
-			media = append(media, e)
+// the sections present. When the directory has no assets at all the body is an
+// "empty" note (the handler reaches the gallery fallback only when there is no
+// baked index page, so this stays informative rather than blank).
+func buildRawGallery(urlDir string, assets []RawAsset) (template.HTML, []TOCEntry) {
+	var media, files []RawAsset
+	for _, a := range assets {
+		if isMediaFile(a.Name) {
+			media = append(media, a)
+		} else {
+			files = append(files, a)
 		}
 	}
 
 	var b strings.Builder
 	var toc []TOCEntry
 
-	// Recently Updated — most recently modified descendant pages, newest first.
-	// The handler pre-sorts/caps/gates this list, so we render exactly what we
-	// were given.
-	if len(data.Recents) > 0 {
-		b.WriteString(`<h2 id="recently-updated">Recently Updated</h2>`)
-		toc = append(toc, TOCEntry{Depth: 2, Text: "Recently Updated", Anchor: "recently-updated"})
-		b.WriteString(`<ul>`)
-		for _, e := range data.Recents {
-			href := html.EscapeString(e.RawURL)
-			label := html.EscapeString(e.Title)
-			if !e.ModTime.IsZero() {
-				b.WriteString(`<li><a class="internal" href="` + href + `">` + label + `</a> — ` +
-					html.EscapeString(e.ModTime.Format("2006-01-02")) + `</li>`)
-			} else {
-				b.WriteString(`<li><a class="internal" href="` + href + `">` + label + `</a></li>`)
-			}
-		}
-		b.WriteString(`</ul>`)
-	}
-
-	// Directory section — every immediate child, as a bulleted internal-link
-	// list, the same markup generated folder indexes produce.
-	b.WriteString(`<h2 id="directory">Directory</h2>`)
-	toc = append(toc, TOCEntry{Depth: 2, Text: "Directory", Anchor: "directory"})
-	if len(data.Children) == 0 {
+	if len(media) == 0 && len(files) == 0 {
 		b.WriteString(`<p><em>This directory is empty.</em></p>`)
-	} else {
-		b.WriteString(`<ul>`)
-		for _, e := range data.Children {
-			escName := html.EscapeString(e.Name)
-			switch {
-			case e.IsDir:
-				href := html.EscapeString(urlDir + e.Name + "/")
-				b.WriteString(`<li><a class="internal" href="` + href + `">` + escName + `/</a></li>`)
-			case isMarkdownName(e.Name):
-				// Markdown children are first-class pages — link to the rendered
-				// /raw/.../ page (extension-less + trailing slash) using the
-				// resolved page title, falling back to a humanized filename.
-				slug := strings.TrimSuffix(e.Name, ".md")
-				href := html.EscapeString(urlDir + slug + "/")
-				label := e.Title
-				if label == "" {
-					label = humanizeSegment(slug)
-				}
-				b.WriteString(`<li><a class="internal" href="` + href + `">` + html.EscapeString(label) + `</a></li>`)
-			default:
-				href := html.EscapeString(urlDir + e.Name)
-				b.WriteString(`<li><a class="internal" href="` + href + `">` + escName + `</a></li>`)
-			}
-		}
-		b.WriteString(`</ul>`)
+		return template.HTML(b.String()), toc //nolint:gosec // static literal
 	}
 
-	// Gallery section — thumbnails of detected media. Only rendered when the
-	// directory actually contains non-markdown media assets.
 	if len(media) > 0 {
 		b.WriteString(`<h2 id="gallery">Gallery</h2>`)
 		toc = append(toc, TOCEntry{Depth: 2, Text: "Gallery", Anchor: "gallery"})
 		b.WriteString(`<ul class="raw-gallery">`)
-		for _, e := range media {
-			href := html.EscapeString(urlDir + e.Name)
-			escName := html.EscapeString(e.Name)
-			if isImageExtension(e.Name) {
+		for _, a := range media {
+			href := html.EscapeString(urlDir + a.Name)
+			escName := html.EscapeString(a.Name)
+			if isImageExtension(a.Name) {
 				b.WriteString(`<li class="raw-tile"><a href="` + href +
 					`"><span class="raw-tile-thumb"><img loading="lazy" src="` + href + `" alt="` + escName +
 					`"></span><span class="raw-tile-name">` + escName + `</span></a></li>`)
 			} else {
 				b.WriteString(`<li class="raw-tile"><a href="` + href +
-					`"><span class="raw-tile-thumb raw-tile-badge">` + html.EscapeString(fileTypeLabel(e.Name)) +
+					`"><span class="raw-tile-thumb raw-tile-badge">` + html.EscapeString(fileTypeLabel(a.Name)) +
 					`</span><span class="raw-tile-name">` + escName + `</span></a></li>`)
 			}
 		}
 		b.WriteString(`</ul>`)
 	}
 
-	return template.HTML(b.String()), toc //nolint:gosec // names/titles/URLs escaped, dir built from clean path
-}
-
-// RawIndexTitle resolves a markdown source's display title: its frontmatter
-// `title:` when present, otherwise a humanized filename (sans ".md"). Shared by
-// the handler so Directory + Recently Updated entries read like real pages.
-func RawIndexTitle(name string, source []byte) string {
-	if t := frontmatterScalar(source, "title"); t != "" {
-		return t
-	}
-	return humanizeSegment(strings.TrimSuffix(name, ".md"))
-}
-
-// rawIndexRecentsLimit caps how many descendant pages a raw landing's "Recently
-// Updated" section lists, matching the normal folder index's recentsLimit.
-const rawIndexRecentsLimit = 10
-
-// rawIndexRecentsMinPages gates the "Recently Updated" section on non-root raw
-// landings: a subtree this small or smaller just echoes its own directory
-// listing, so the section is skipped there — matching the normal index's
-// recentsMinPages.
-const rawIndexRecentsMinPages = 8
-
-// SelectRawRecents orders a /raw/ landing's descendant pages newest-first,
-// applies the non-root recentsMinPages gate, and caps the result at
-// recentsLimit — mirroring the normal folder index's "Recently Updated"
-// semantics. isRoot is true only for the /raw/ root landing (which always shows
-// recents, regardless of count). The input slice is not mutated.
-func SelectRawRecents(recents []RawRecentEntry, isRoot bool) []RawRecentEntry {
-	if !isRoot && len(recents) <= rawIndexRecentsMinPages {
-		return nil
-	}
-	sorted := make([]RawRecentEntry, len(recents))
-	copy(sorted, recents)
-	sort.Slice(sorted, func(i, j int) bool {
-		if !sorted[i].ModTime.Equal(sorted[j].ModTime) {
-			return sorted[i].ModTime.After(sorted[j].ModTime)
+	if len(files) > 0 {
+		b.WriteString(`<h2 id="files">Files</h2>`)
+		toc = append(toc, TOCEntry{Depth: 2, Text: "Files", Anchor: "files"})
+		b.WriteString(`<ul>`)
+		for _, a := range files {
+			href := html.EscapeString(urlDir + a.Name)
+			escName := html.EscapeString(a.Name)
+			b.WriteString(`<li><a class="internal" href="` + href + `">` + escName + `</a></li>`)
 		}
-		return sorted[i].RawURL < sorted[j].RawURL
-	})
-	if len(sorted) > rawIndexRecentsLimit {
-		sorted = sorted[:rawIndexRecentsLimit]
+		b.WriteString(`</ul>`)
 	}
-	return sorted
+
+	return template.HTML(b.String()), toc //nolint:gosec // names/URLs escaped, dir built from clean path
 }
 
 // markActiveByURL marks the explorer node whose URL exactly matches url as
-// active and opens its ancestor folders. Used for raw pages, whose empty Slug
-// can't be matched by the slug-based markActive. Returns true once matched.
+// active and opens its ancestor folders. Used for raw landings/pages, whose
+// empty Slug can't be matched by the slug-based markActive. Returns true once
+// matched.
 func markActiveByURL(nodes []*ExplorerNode, url string) bool {
 	for _, n := range nodes {
 		if n.URL == url {

@@ -79,9 +79,10 @@ func envOrBool(key string, fallback bool) bool {
 }
 
 // defaultWatchExcludeDirs lists vault subdirectories the filesystem watcher
-// skips by default — Obsidian metadata and raw byte storage (intentionally
-// silent).
-var defaultWatchExcludeDirs = []string{".obsidian", "raw"}
+// skips by default — only Obsidian editor metadata. raw/ is a normal indexed
+// folder now: it is watched like every other directory so new clippings trigger
+// a rebuild/reindex (and regenerate raw/'s index.md landings).
+var defaultWatchExcludeDirs = []string{".obsidian"}
 
 // excludeDirsFromEnv returns the watcher exclude list, honoring
 // EnvWatchExcludeDirs as a comma-separated override. Unset or empty
@@ -107,13 +108,13 @@ func excludeDirsFromEnv() []string {
 // service default, while setting it — even to whitespace — overrides. This lets
 // EnvIndexNoRecentsDirs be cleared to surface every directory in recents.
 //
-// raw/ is always added to the index-exclude set: raw/ markdown is rendered as
-// first-class wiki pages, but its on-disk directory holds verbatim source files
-// and assets that must not be polluted with a generated index.md. The /raw/
-// handler serves an on-demand gallery as the directory view instead.
+// raw/ is a normal indexed folder: it is NOT force-excluded from index
+// generation. Generate writes an index.md landing into each raw/ directory just
+// like any other folder, baked into the snapshot and searchable. Only
+// EnvIndexExcludeDirs (when set) adds to the exclude set.
 func directoryOptionsFromEnv() []service.DirectoryOption {
 	var opts []service.DirectoryOption
-	excludeDirs := []string{"raw"}
+	var excludeDirs []string
 	if v, ok := os.LookupEnv(EnvIndexExcludeDirs); ok {
 		excludeDirs = append(excludeDirs, splitCSV(v)...)
 	}
