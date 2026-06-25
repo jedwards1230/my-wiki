@@ -153,7 +153,8 @@ func TestPageService_List(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should include wiki pages (including private/) but not raw/ or .obsidian/
+	// Should include wiki pages (including private/ AND raw/ markdown, now
+	// promoted to first-class pages) but not .obsidian/.
 	paths := map[string]bool{}
 	for _, p := range pages {
 		paths[p.Path] = true
@@ -168,8 +169,8 @@ func TestPageService_List(t *testing.T) {
 	if !paths["private/secret.md"] {
 		t.Error("expected private/secret.md — private/ is no longer special")
 	}
-	if paths["raw/source.md"] {
-		t.Error("should not include raw/")
+	if !paths["raw/source.md"] {
+		t.Error("expected raw/source.md — raw/ markdown is now a first-class page")
 	}
 }
 

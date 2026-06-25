@@ -1,11 +1,46 @@
 package render
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// TestRenderPageRawSourceFlag verifies that RenderPage marks pages compiled from
+// raw/ markdown as verbatim-source imports (IsRawSource + SourceURL) so the base
+// template can render the "Source" provenance badge, while leaving non-raw pages
+// untouched.
+func TestRenderPageRawSourceFlag(t *testing.T) {
+	r, err := NewRenderer(nil)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+
+	raw, err := r.RenderPage("raw/clippings/clip.md", []byte("---\ntitle: Clip\n---\nBody\n"), time.Time{})
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	if !raw.IsRawSource {
+		t.Error("raw/ page should have IsRawSource = true")
+	}
+	if raw.SourceURL != "/raw/clippings/clip.md" {
+		t.Errorf("SourceURL = %q, want /raw/clippings/clip.md", raw.SourceURL)
+	}
+	if raw.RelativeURL != "/raw/clippings/clip/" {
+		t.Errorf("RelativeURL = %q, want /raw/clippings/clip/", raw.RelativeURL)
+	}
+
+	notRaw, err := r.RenderPage("notes/note.md", []byte("# Note\n"), time.Time{})
+	if err != nil {
+		t.Fatalf("RenderPage: %v", err)
+	}
+	if notRaw.IsRawSource {
+		t.Error("non-raw page should not be flagged as raw source")
+	}
+	if notRaw.SourceURL != "" {
+		t.Errorf("non-raw SourceURL should be empty, got %q", notRaw.SourceURL)
+	}
+}
 
 func TestFrontmatterScalar(t *testing.T) {
 	src := []byte("---\ntitle: Sample\nsource: https://youtu.be/abc\ndate-added: 2026-06-06\n---\n\nBody here\n")
@@ -171,57 +206,28 @@ func TestBuildRawIndex(t *testing.T) {
 	})
 }
 
-func TestBuildRawExplorerNode(t *testing.T) {
-	dir := t.TempDir()
-	if buildRawExplorerNode(dir) != nil {
-		t.Fatal("expected nil when vault has no raw/ dir")
-	}
-	mk := func(parts ...string) string {
-		p := filepath.Join(append([]string{dir}, parts...)...)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return p
-	}
-	mk("raw", "clippings", "youtube", "clip.md")
-	mk("raw", "gists", "snippet.txt")
-	mk("raw", "top.png")
+// markActiveByURL is still used by RenderRawIndex (the on-demand gallery) and
+// the on-demand RenderRawPage fallback, so it keeps its own coverage even though
+// the buildRawExplorerNode sidebar injection was removed (raw/ md now flows
+// through the normal explorer tree as first-class pages).
+func TestMarkActiveByURL(t *testing.T) {
+	leaf := &ExplorerNode{Name: "clip.md", URL: "/raw/clippings/youtube/clip.md"}
+	yt := &ExplorerNode{Name: "Youtube", URL: "/raw/clippings/youtube/", IsFolder: true, Children: []*ExplorerNode{leaf}}
+	clippings := &ExplorerNode{Name: "Clippings", URL: "/raw/clippings/", IsFolder: true, Children: []*ExplorerNode{yt}}
+	gists := &ExplorerNode{Name: "Gists", URL: "/raw/gists/", IsFolder: true}
+	root := &ExplorerNode{Name: "Raw", URL: "/raw/", IsFolder: true, Children: []*ExplorerNode{clippings, gists}}
 
-	node := buildRawExplorerNode(dir)
-	if node == nil || node.Name != "Raw" || node.URL != "/raw/" || !node.IsFolder {
-		t.Fatalf("unexpected root node: %+v", node)
-	}
-	// Folders sort before files: Clippings, Gists, then top.png.
-	if len(node.Children) != 3 {
-		t.Fatalf("want 3 children, got %d", len(node.Children))
-	}
-	if node.Children[0].Name != "Clippings" || node.Children[0].URL != "/raw/clippings/" {
-		t.Errorf("child[0] = %+v, want Clippings /raw/clippings/", node.Children[0])
-	}
-	if node.Children[2].Name != "top.png" || node.Children[2].URL != "/raw/top.png" || node.Children[2].IsFolder {
-		t.Errorf("child[2] = %+v, want file top.png", node.Children[2])
-	}
-	// Deep file URL.
-	yt := node.Children[0].Children[0]
-	if yt.Name != "Youtube" || yt.Children[0].URL != "/raw/clippings/youtube/clip.md" {
-		t.Errorf("deep node wrong: %+v / %+v", yt, yt.Children[0])
-	}
-
-	// markActiveByURL marks the leaf and opens its ancestors.
-	roots := []*ExplorerNode{node}
+	roots := []*ExplorerNode{root}
 	if !markActiveByURL(roots, "/raw/clippings/youtube/clip.md") {
 		t.Fatal("expected markActiveByURL to match the clip")
 	}
-	if !node.IsOpen || !node.Children[0].IsOpen || !yt.IsOpen {
+	if !root.IsOpen || !clippings.IsOpen || !yt.IsOpen {
 		t.Error("ancestor folders should be open")
 	}
-	if !yt.Children[0].IsActive {
+	if !leaf.IsActive {
 		t.Error("clip.md leaf should be active")
 	}
-	if node.Children[1].IsOpen {
+	if gists.IsOpen {
 		t.Error("sibling folder (Gists) should stay closed")
 	}
 }

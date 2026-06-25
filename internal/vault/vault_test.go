@@ -126,7 +126,8 @@ func TestFindWikiPages(t *testing.T) {
 	}
 	sort.Strings(rels)
 
-	// Should include wiki pages (including private/), not raw/ or .obsidian/
+	// Should include wiki pages (including private/ AND raw/ markdown, now
+	// promoted to first-class pages), but not .obsidian/. Sorted.
 	expected := []string{
 		"index.md",
 		"meta/schema.md",
@@ -134,6 +135,9 @@ func TestFindWikiPages(t *testing.T) {
 		"orphan.md",
 		"private/secret.md",
 		"project/alpha.md",
+		"raw/missing-fields.md",
+		"raw/source1.md",
+		"raw/source2.md",
 	}
 
 	if len(rels) != len(expected) {
@@ -636,7 +640,8 @@ func TestWithStorage_MemStorage(t *testing.T) {
 		}
 		sort.Strings(rels)
 
-		expected := []string{"index.md", "notes/hello.md", "private/secret.md"}
+		// raw/ markdown is now a first-class page (.obsidian/ still excluded).
+		expected := []string{"index.md", "notes/hello.md", "private/secret.md", "raw/source.md"}
 		if len(rels) != len(expected) {
 			t.Fatalf("expected %d pages, got %d: %v", len(expected), len(rels), rels)
 		}

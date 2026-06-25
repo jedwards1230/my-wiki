@@ -226,6 +226,44 @@ func TestSubstringSearchExcludesIndexFiles(t *testing.T) {
 	}
 }
 
+// TestSubstringSearchIncludesRawMarkdown verifies raw/ markdown is now indexed:
+// raw/ pages are promoted to first-class wiki pages and must be discoverable in
+// search by title and content.
+func TestSubstringSearchIncludesRawMarkdown(t *testing.T) {
+	v := setupTestVault(t)
+	s := NewSubstringSearcher(v)
+
+	// By title — raw/source.md has title "Source".
+	results, err := s.Search("Source", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var byTitle bool
+	for _, r := range results {
+		if r.Path == "raw/source.md" {
+			byTitle = true
+		}
+	}
+	if !byTitle {
+		t.Error("expected raw/source.md to be discoverable by title")
+	}
+
+	// By content — "Raw content about kubernetes." in the body.
+	results, err = s.Search("Raw content about", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var byContent bool
+	for _, r := range results {
+		if r.Path == "raw/source.md" {
+			byContent = true
+		}
+	}
+	if !byContent {
+		t.Error("expected raw/source.md to be discoverable by content")
+	}
+}
+
 func TestSubstringSearchName(t *testing.T) {
 	v := setupTestVault(t)
 	s := NewSubstringSearcher(v)

@@ -20,7 +20,7 @@ goldmark parses markdown → `html/template` wraps it in the page shell → Chro
 |-----|--------|
 | `/` and `/{path}/` | Go-rendered HTML |
 | `/{path}.md` | vault markdown (text/plain) |
-| `/raw/{path}` | native bytes from `vault/raw/` |
+| `/raw/{path}` | raw/ markdown → full compiled wiki page (browser) or verbatim bytes (`?raw=1` / non-HTML Accept); raw/ assets → native bytes; directories → gallery |
 | `/api/*` | REST API (incl. `/api/popover/{slug}`, `/api/backlinks`, `/api/graph.json`) |
 | `/_/static/*` | embedded asset bundle (htmx + Alpine + KaTeX + Mermaid + fonts + wiki.css/js) |
 | `HX-Request: true` | content-only fragment from `RenderFragment` |
