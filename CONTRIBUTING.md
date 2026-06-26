@@ -27,6 +27,10 @@ gofmt -w .
 go mod tidy
 ```
 
+## Documentation
+
+Keep documentation current as part of the change, not as a follow-up — update the README and any affected docs in the same PR. A new environment variable belongs in its godoc in `internal/cli/envvars.go` (the canonical inventory); a new CLI subcommand or rendering feature should be reflected in the README and the relevant file under `docs/`.
+
 ## Before you open a PR
 
 - Make sure all CI checks pass locally first — run the formatter, linter, and tests.
