@@ -16,16 +16,8 @@ Three content paths: `/path` (rendered HTML), `/path.md` (vault markdown), `/raw
 ## Commands
 
 ```bash
-go build -o wiki-server ./cmd/wiki-server
-
-go test ./...                                   # fast unit tests
-go test -v -race -coverprofile=coverage.out ./...
-go test -tags=integration -v -race ./...        # includes stdio subprocess test (slower)
+# Build/test/lint: see CONTRIBUTING.md
 go test -v ./internal/search/                   # single package
-
-go vet ./... && golangci-lint run ./...
-go mod tidy                                      # CI checks this
-gofmt -w .
 
 # Run (needs vault dir)
 ./wiki-server serve --vault /path/to/vault --port 8080
@@ -112,7 +104,7 @@ Assets are embedded via `//go:embed` in `internal/server/assets/assets.go`, serv
 - **Docker**: multi-stage — Go binary built in `golang:1.25.6-alpine`, copied into `node:24-alpine` (obsidian-headless).
 - **Helm**: `deploy/helm/my-wiki/`, published to `oci://ghcr.io/jedwards1230/charts/my-wiki`. Chart version auto-bumped by the release workflow.
 - **CI** (`.github/workflows/ci.yml`): test (race + coverage), lint (go vet + golangci-lint + mod tidy), build.
-- **Release** (`.github/workflows/release.yml`): auto-semver on push to main (PR labels `semver:patch|minor|major`), builds image to GHCR, publishes Helm OCI chart, creates GitHub release.
+- **Release behavior** (labels, immutable tag, AI notes): see [CONTRIBUTING.md](CONTRIBUTING.md#releases).
 
 ## Environment Variables
 

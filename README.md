@@ -62,5 +62,6 @@ Key Helm values (see `deploy/helm/my-wiki/values.yaml` for the full list): `inst
 - [docs/OVERVIEW.md](docs/OVERVIEW.md) — architecture and design choices
 - [docs/SERVER-MODES.md](docs/SERVER-MODES.md) — per-mode feature matrix
 - [docs/RENDERER.md](docs/RENDERER.md) — native renderer pipeline and assets
-- [CLAUDE.md](CLAUDE.md) — agent repo guide (build commands, conventions, env vars)
+- [CLAUDE.md](CLAUDE.md) — agent repo guide (architecture, conventions, env vars)
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contributor guide (prerequisites, build/test/lint, PR flow)
 - `internal/cli/envvars.go` — canonical `WIKI_*` environment variable inventory
