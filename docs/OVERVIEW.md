@@ -28,5 +28,3 @@ The binary doesn't know which shape it runs in — it's all flag/subcommand sele
 ## See also
 
 - [SERVER-MODES.md](SERVER-MODES.md) — feature matrix across the MCP-server surfaces
-- [../CLAUDE.md](../CLAUDE.md) — agent repo guide (architecture, env vars, conventions)
-- [../README.md](../README.md) — install and quickstart
