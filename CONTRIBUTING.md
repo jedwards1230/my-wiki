@@ -13,7 +13,11 @@
 # Build
 go build -o wiki-server ./cmd/wiki-server
 
-# Tests — the integration tag includes the stdio subprocess test (slower)
+# Tests — fast unit tests for iteration
+go test ./...
+
+# Full test run (what CI runs) — the integration tag adds the stdio subprocess
+# test (slower), with the race detector and coverage
 go test -tags=integration -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
 # Vet + lint
