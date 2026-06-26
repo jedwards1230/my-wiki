@@ -16,7 +16,6 @@ Three content paths: `/path` (rendered HTML), `/path.md` (vault markdown), `/raw
 ## Commands
 
 ```bash
-# Build/test/lint: see CONTRIBUTING.md
 go test -v ./internal/search/                   # single package
 
 # Run (needs vault dir)
@@ -104,7 +103,6 @@ Assets are embedded via `//go:embed` in `internal/server/assets/assets.go`, serv
 - **Docker**: multi-stage — Go binary built in `golang:1.25.6-alpine`, copied into `node:24-alpine` (obsidian-headless).
 - **Helm**: `deploy/helm/my-wiki/`, published to `oci://ghcr.io/jedwards1230/charts/my-wiki`. Chart version auto-bumped by the release workflow.
 - **CI** (`.github/workflows/ci.yml`): test (race + coverage), lint (go vet + golangci-lint + mod tidy), build.
-- **Release behavior** (labels, immutable tag, AI notes): see [CONTRIBUTING.md](CONTRIBUTING.md#releases).
 
 ## Environment Variables
 
