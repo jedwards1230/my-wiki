@@ -1,6 +1,6 @@
-@CONTRIBUTING.md
-
 # CLAUDE.md
+
+@CONTRIBUTING.md
 
 Guidance for Claude Code when working in this repository.
 
