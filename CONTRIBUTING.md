@@ -38,6 +38,7 @@ Keep documentation current as part of the change, not as a follow-up — update 
 ## Before you open a PR
 
 - Make sure all CI checks pass locally first — run the formatter, linter, and tests.
+- For CSS, template, or rendered-output changes, verify visually before a PR: build, then `scripts/seed-vault.sh /tmp/wiki-test-vault` and `WIKI_AUTH_DISABLED=true ./wiki-server serve --vault /tmp/wiki-test-vault --port 9876`, and check key pages in light + dark.
 
 ## Branching & commits
 
