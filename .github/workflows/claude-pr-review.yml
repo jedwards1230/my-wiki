@@ -21,6 +21,7 @@ jobs:
     with:
       extra_plugins: |
         plugin-dev@claude-plugins-official
+        go-quality@jedwards1230-plugins
       extra_plugin_marketplaces: |
         https://github.com/anthropics/claude-plugins-official.git
       focus: |
@@ -36,4 +37,5 @@ jobs:
         - Code↔chart drift: a new WIKI_* env var / flag / port must be exposed in
           the Helm chart under deploy/helm/my-wiki/.
         - For plugin files (manifest, hooks, skills, agents, commands), use plugin-dev's plugin-validator / skill-reviewer agents.
+        - When the diff touches Go, prioritize the go-quality:go-reviewer agent for language-specific Go review.
         Do NOT re-flag gofmt/go vet/golangci-lint — CI owns those.
