@@ -69,7 +69,7 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *serv
 	// The description is generic and Icons are omitted (no icon asset ships).
 	serverOpts := []server.ServerOption{
 		server.WithToolCapabilities(false),
-		server.WithResourceCapabilities(false, false),
+		server.WithResourceCapabilities(false, true), // listChanged:true so the resources capability serializes non-empty — ContextForge's federation only fetches resources when capabilities.resources is truthy; the resource list is static (only wiki://schema) so we never emit notifications/resources/list_changed.
 		server.WithLogging(),
 		server.WithDescription("Read and edit a wiki backed by an Obsidian vault."),
 		server.WithInstructions("Home wiki backed by an Obsidian vault. The meta/schema resource is available for context. Page create/update/delete/move mutations are auto-logged as compact audit entries — do NOT call activity for individual page changes. Use activity only for narrative summaries of multi-page work sessions or non-page activities (lint, note, migrate)."),
