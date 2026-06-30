@@ -256,5 +256,12 @@ webhooks:
 nodeSelector: {}
 tolerations: []
 
+# -- Pod annotations applied to both the wiki server and (when standalone)
+# wiki-sync pods (e.g. Velero backup-volumes hooks).
+podAnnotations: {}
+# -- Additional pod labels applied to both the wiki server and (when standalone)
+# wiki-sync pods.
+podLabels: {}
+
 # Inject arbitrary manifests (e.g., OnePasswordItem, NetworkPolicy, ServiceMonitor)
 extraManifests: []
