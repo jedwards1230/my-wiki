@@ -5,7 +5,7 @@ name: PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened, synchronize, ready_for_review, reopened, closed]
 
 permissions:
   contents: read
@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   review:
+    if: github.event.action != 'closed'
     uses: jedwards1230/release-workflows/.github/workflows/claude-pr-review.yml@v1
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -39,3 +40,11 @@ jobs:
         - For plugin files (manifest, hooks, skills, agents, commands), use plugin-dev's plugin-validator / skill-reviewer agents.
         - When the diff touches Go, prioritize the go-quality:go-reviewer agent for language-specific Go review.
         Do NOT re-flag gofmt/go vet/golangci-lint — CI owns those.
+
+  cancel-review:
+    if: github.event.action == 'closed'
+    permissions:
+      actions: write
+    uses: jedwards1230/release-workflows/.github/workflows/claude-pr-review-cancel.yml@v1
+    with:
+      review_workflow: "PR Review"
