@@ -3,10 +3,10 @@ module github.com/jedwards1230/my-wiki
 go 1.25.6
 
 require (
-	github.com/alecthomas/chroma/v2 v2.24.1
-	github.com/coreos/go-oidc/v3 v3.18.0
-	github.com/fsnotify/fsnotify v1.9.0
-	github.com/mark3labs/mcp-go v0.54.1
+	github.com/alecthomas/chroma/v2 v2.27.0
+	github.com/coreos/go-oidc/v3 v3.19.0
+	github.com/fsnotify/fsnotify v1.10.1
+	github.com/mark3labs/mcp-go v0.55.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/spf13/cobra v1.10.2
@@ -16,15 +16,16 @@ require (
 	github.com/yuin/goldmark-meta v1.1.0
 	go.abhg.dev/goldmark/mermaid v0.6.0
 	go.abhg.dev/goldmark/wikilink v0.6.0
-	go.yaml.in/yaml/v2 v2.4.2
-	golang.org/x/sync v0.20.0
-	gopkg.in/yaml.v2 v2.3.0
+	go.yaml.in/yaml/v2 v2.4.4
+	golang.org/x/sync v0.21.0
+	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dlclark/regexp2 v1.12.0 // indirect
+	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
