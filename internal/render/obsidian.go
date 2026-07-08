@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -772,6 +771,7 @@ func (e *customWikilinkExtender) Extend(m goldmark.Markdown) {
 			util.Prioritized(&transcludeRenderer{
 				resolver:    e.resolver,
 				transcludes: e.transcludes,
+				hasDest:     make(map[*wikilink.Node]struct{}),
 			}, 199),
 		),
 	)
@@ -855,18 +855,25 @@ type ParsedPage struct {
 // transcludeRenderer renders wikilink.Node nodes. For non-Embed links
 // and for image embeds, it mirrors abhg's renderer output. For non-image
 // embeds it triggers the transclusion path.
+//
+// hasDest tracks whether we wrote an opening <a> for a given node so the
+// exit pass knows whether to close it, keyed by *wikilink.Node pointer.
+// It is per-instance (not a package global) because the AST cache is shared
+// across concurrent page renders: two pages transcluding the same target
+// walk the same *wikilink.Node pointers, so a process-global map would race
+// on enter/exit and drop </a> tags. Each RenderPage builds a fresh goldmark
+// (and thus a fresh transcludeRenderer), and a single goldmark render walk —
+// including the synchronous reentry through renderTransclude's child render —
+// runs on one goroutine, so per-instance access is sequential and race-free.
 type transcludeRenderer struct {
 	resolver    *SlugResolver
 	transcludes *TranscludeSource
+	hasDest     map[*wikilink.Node]struct{}
 }
 
 func (r *transcludeRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(wikilink.Kind, r.render)
 }
-
-// hasDest tracks whether we wrote an opening <a> for a given node so the
-// exit pass knows whether to close it. Keyed by *wikilink.Node pointer.
-var hasDestKeys sync.Map // *wikilink.Node → struct{}
 
 func (r *transcludeRenderer) render(w util.BufWriter, src []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
 	n, ok := node.(*wikilink.Node)
@@ -875,7 +882,8 @@ func (r *transcludeRenderer) render(w util.BufWriter, src []byte, node ast.Node,
 	}
 
 	if !entering {
-		if _, ok := hasDestKeys.LoadAndDelete(n); ok {
+		if _, ok := r.hasDest[n]; ok {
+			delete(r.hasDest, n)
 			_, _ = w.WriteString("</a>")
 		}
 		return ast.WalkContinue, nil
@@ -932,12 +940,12 @@ func (r *transcludeRenderer) render(w util.BufWriter, src []byte, node ast.Node,
 		// (no href) so unresolved wikilinks render muted (see a.broken in
 		// wiki.css) rather than as bare text that reads like a broken link.
 		// Covers both forward-reference stubs and dead staging refs (inbox/*).
-		// The exit pass closes the </a> via hasDestKeys, same as a real link.
-		hasDestKeys.Store(n, struct{}{})
+		// The exit pass closes the </a> via hasDest, same as a real link.
+		r.hasDest[n] = struct{}{}
 		_, _ = w.WriteString(`<a class="broken">`)
 		return ast.WalkContinue, nil
 	}
-	hasDestKeys.Store(n, struct{}{})
+	r.hasDest[n] = struct{}{}
 	_, _ = w.WriteString(`<a href="`)
 	_, _ = w.Write(util.URLEscape(dest, true))
 	_, _ = w.WriteString(`" class="internal">`)

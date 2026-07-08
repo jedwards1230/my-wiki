@@ -119,7 +119,8 @@ func (h *Handler) handlePagePatch(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, msg)
 		case strings.Contains(msg, "path traversal"),
 			strings.Contains(msg, "must not be empty"),
-			strings.Contains(msg, "must be non-empty"):
+			strings.Contains(msg, "must be non-empty"),
+			strings.Contains(msg, "must be provided"):
 			writeError(w, http.StatusBadRequest, msg)
 		case strings.Contains(msg, "find string not found"):
 			writeError(w, http.StatusUnprocessableEntity, msg)

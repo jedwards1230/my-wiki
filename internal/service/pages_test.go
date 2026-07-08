@@ -373,7 +373,7 @@ func TestPageService_PatchValidContent(t *testing.T) {
 
 	// Patch index.md (which has valid frontmatter) — result should still be valid
 	result, err := svc.Patch("index.md", []PatchOp{
-		{Find: "Welcome.", Replace: "Welcome to the wiki."},
+		{Find: "Welcome.", Replace: strptr("Welcome to the wiki.")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -381,6 +381,57 @@ func TestPageService_PatchValidContent(t *testing.T) {
 	if !strings.Contains(result, "Welcome to the wiki.") {
 		t.Error("expected patched content")
 	}
+}
+
+// strptr returns a pointer to s — used to populate PatchOp.Replace in tests.
+func strptr(s string) *string { return &s }
+
+// TestPageService_PatchOmittedReplaceRejected verifies that a patch op with a
+// nil Replace (the "replace" key omitted on the wire) is rejected and leaves the
+// file untouched, while an explicit empty Replace ("delete this text") succeeds.
+func TestPageService_PatchOmittedReplaceRejected(t *testing.T) {
+	t.Run("omitted replace is rejected and file unchanged", func(t *testing.T) {
+		storage, _ := setupPagesVault(t)
+		svc := NewPageService(storage)
+
+		before, err := svc.Read("index.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = svc.Patch("index.md", []PatchOp{
+			{Find: "Welcome.", Replace: nil},
+		})
+		if err == nil {
+			t.Fatal("expected error for omitted replace, got nil")
+		}
+		if !strings.Contains(err.Error(), "replace must be provided") {
+			t.Errorf("expected 'replace must be provided' error, got %v", err)
+		}
+
+		after, err := svc.Read("index.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after != before {
+			t.Errorf("file was modified despite rejected patch:\nbefore: %q\nafter:  %q", before, after)
+		}
+	})
+
+	t.Run("explicit empty replace deletes found text", func(t *testing.T) {
+		storage, _ := setupPagesVault(t)
+		svc := NewPageService(storage)
+
+		result, err := svc.Patch("index.md", []PatchOp{
+			{Find: "Welcome.", Replace: strptr("")},
+		})
+		if err != nil {
+			t.Fatalf("explicit empty replace should succeed, got %v", err)
+		}
+		if strings.Contains(result, "Welcome.") {
+			t.Errorf("expected 'Welcome.' to be deleted, still present in %q", result)
+		}
+	})
 }
 
 func TestPageService_MutationCallbackCreate(t *testing.T) {
@@ -452,7 +503,7 @@ func TestPageService_MutationCallbackPatch(t *testing.T) {
 	}))
 
 	_, err := svc.Patch("index.md", []PatchOp{
-		{Find: "Welcome.", Replace: "Hello."},
+		{Find: "Welcome.", Replace: strptr("Hello.")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -592,7 +643,7 @@ func TestPageService_PatchDeniedReturnsSentinel(t *testing.T) {
 	storage, _ := setupPagesVault(t)
 	svc := NewPageService(storage)
 
-	if _, err := svc.Patch(".obsidian/workspace.json", []PatchOp{{Find: "{}", Replace: "[]"}}); !errors.Is(err, ErrPathDenied) {
+	if _, err := svc.Patch(".obsidian/workspace.json", []PatchOp{{Find: "{}", Replace: strptr("[]")}}); !errors.Is(err, ErrPathDenied) {
 		t.Errorf("Patch(.obsidian) err = %v, want ErrPathDenied", err)
 	}
 }

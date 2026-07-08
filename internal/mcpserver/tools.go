@@ -545,7 +545,7 @@ func getPatchOps(req mcp.CallToolRequest) ([]service.PatchOp, error) {
 			return nil, fmt.Errorf("operation %d: replace must be a string", i)
 		}
 
-		ops = append(ops, service.PatchOp{Find: find, Replace: replace})
+		ops = append(ops, service.PatchOp{Find: find, Replace: &replace})
 	}
 
 	return ops, nil

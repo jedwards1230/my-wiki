@@ -386,7 +386,9 @@ func (s *PageService) Patch(relPath string, ops []PatchOp) (string, error) {
 		if op.Find == "" {
 			return "", fmt.Errorf("operation %d: find must be non-empty", i)
 		}
-		_ = i // validated
+		if op.Replace == nil {
+			return "", fmt.Errorf("operation %d: replace must be provided", i)
+		}
 	}
 
 	content, err := s.Read(relPath)
@@ -398,7 +400,7 @@ func (s *PageService) Patch(relPath string, ops []PatchOp) (string, error) {
 		if !strings.Contains(content, op.Find) {
 			return "", fmt.Errorf("patch op %d: find string not found in %s", i, relPath)
 		}
-		content = strings.Replace(content, op.Find, op.Replace, 1)
+		content = strings.Replace(content, op.Find, *op.Replace, 1)
 	}
 
 	if err := s.Write(relPath, content); err != nil {

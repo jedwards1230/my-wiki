@@ -554,6 +554,71 @@ func TestEditHandlerFindNotFound(t *testing.T) {
 	}
 }
 
+// TestEditHandlerOmittedReplace verifies that omitting the "replace" key errors
+// (the MCP surface requires the key) and leaves the file unchanged.
+func TestEditHandlerOmittedReplace(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+
+	before, err := svc.Read("project/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "project/alpha",
+		"operations": []interface{}{
+			map[string]interface{}{"find": "Content."}, // no "replace" key
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error result for omitted replace key")
+	}
+
+	after, err := svc.Read("project/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("file modified despite rejected patch:\nbefore: %q\nafter:  %q", before, after)
+	}
+}
+
+// TestEditHandlerExplicitEmptyReplace verifies that an explicit empty replace is
+// accepted and deletes the found text.
+func TestEditHandlerExplicitEmptyReplace(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "project/alpha",
+		"operations": []interface{}{
+			map[string]interface{}{"find": "Content.", "replace": ""},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("explicit empty replace should succeed, got error: %s", getTextContent(result))
+	}
+
+	readText, err := svc.Read("project/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(readText, "Content.") {
+		t.Errorf("expected 'Content.' to be deleted, still present in:\n%s", readText)
+	}
+}
+
 func TestEditHandlerEmptyPath(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
