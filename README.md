@@ -59,7 +59,7 @@ Key Helm values (see `deploy/helm/my-wiki/values.yaml` for the full list): `inst
 
 ## Documentation
 
-- [docs/openapi.yaml](docs/openapi.yaml) — OpenAPI 3.1 spec for the REST API, kept in sync with the registered routes by `TestOpenAPISync` (`internal/api`)
+- [docs/openapi.yaml](docs/openapi.yaml) — OpenAPI 3.1 spec for the REST API, kept in sync with the registered routes by `TestOpenAPISync` (`internal/api`); running instances also serve it at `GET /api/openapi.yaml`
 - [docs/OVERVIEW.md](docs/OVERVIEW.md) — architecture and design choices
 - [docs/SERVER-MODES.md](docs/SERVER-MODES.md) — per-mode feature matrix
 - [docs/RENDERER.md](docs/RENDERER.md) — native renderer pipeline and assets
