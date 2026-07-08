@@ -1,7 +1,6 @@
 package search
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -38,16 +37,14 @@ type loadedPage struct {
 	body  string
 }
 
-// loadPage reads and normalizes the wiki page at absPath (relative to vaultDir).
+// loadPage reads and normalizes the wiki page at rel (a storage-relative,
+// forward-slash path from FindWikiPages) through the vault's Storage backend.
 // It returns ok=false for pages that should be skipped by both search backends:
 // activity logs, generated index files, and unreadable files. The title falls
 // back to the filename when frontmatter has no title.
-func loadPage(vaultDir, absPath string) (loadedPage, bool) {
-	rel, _ := filepath.Rel(vaultDir, absPath)
-
-	// Skip activity logs (OS-aware separator).
-	activityPrefix := filepath.Join("meta", "activity") + string(filepath.Separator)
-	if strings.HasPrefix(rel, activityPrefix) {
+func loadPage(v *vault.Vault, rel string) (loadedPage, bool) {
+	// Skip activity logs.
+	if strings.HasPrefix(rel, "meta/activity/") {
 		return loadedPage{}, false
 	}
 	// Skip generated index files.
@@ -55,14 +52,14 @@ func loadPage(vaultDir, absPath string) (loadedPage, bool) {
 		return loadedPage{}, false
 	}
 
-	data, err := os.ReadFile(absPath)
+	data, err := v.Storage.ReadFile(rel)
 	if err != nil {
 		return loadedPage{}, false
 	}
 
-	fm, _ := vault.ParseFrontmatter(absPath)
+	fm, _ := vault.ParseFrontmatterString(string(data))
 
-	title := strings.TrimSuffix(filepath.Base(absPath), ".md")
+	title := strings.TrimSuffix(filepath.Base(rel), ".md")
 	tags := ""
 	if fm != nil {
 		if fm["title"] != "" {

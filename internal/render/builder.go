@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -181,21 +180,18 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 			if err := pgCtx.Err(); err != nil {
 				return err
 			}
-			rel, err := filepath.Rel(v.Dir, page)
-			if err != nil {
-				return fmt.Errorf("relpath %s: %w", page, err)
-			}
-			rel = filepath.ToSlash(rel)
-			data, err := os.ReadFile(page)
+			// FindWikiPages returns storage-relative, forward-slash paths.
+			rel := filepath.ToSlash(page)
+			data, err := v.Storage.ReadFile(rel)
 			if err != nil {
 				return fmt.Errorf("read %s: %w", rel, err)
 			}
-			info, err := os.Stat(page)
+			info, err := v.Storage.Stat(rel)
 			if err != nil {
 				return fmt.Errorf("stat %s: %w", rel, err)
 			}
 			pp, _, _ := r.ParsePage(rel, data)
-			links, _ := vault.ExtractWikilinks(page)
+			links, _ := v.ExtractWikilinks(rel)
 			parseResults[i] = parsedInfo{
 				relPath: rel,
 				source:  data,

@@ -2,9 +2,9 @@ package vault
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -66,9 +66,12 @@ func (v *Vault) IsExcluded(rel string) bool {
 	return false
 }
 
-// FindWikiPages returns all .md files, excluding directories listed in
-// ExcludedDirs (default: .obsidian/). raw/ markdown IS included — it is
-// compiled as first-class wiki pages.
+// FindWikiPages returns all .md files as storage-relative, forward-slash paths
+// (relative to the vault root), excluding directories listed in ExcludedDirs
+// (default: .obsidian/). raw/ markdown IS included — it is compiled as
+// first-class wiki pages. Paths are consumed directly by the Storage-backed
+// read methods (ParseFrontmatter/ValidateYAMLSyntax/ExtractWikilinks) so the
+// read path works against any Storage backend.
 func (v *Vault) FindWikiPages() ([]string, error) {
 	var pages []string
 	err := v.Storage.WalkDir("", func(rel string, d fs.DirEntry, err error) error {
@@ -82,7 +85,7 @@ func (v *Vault) FindWikiPages() ([]string, error) {
 			return nil
 		}
 		if filepath.Ext(rel) == ".md" {
-			pages = append(pages, filepath.Join(v.Dir, rel))
+			pages = append(pages, filepath.ToSlash(rel))
 		}
 		return nil
 	})
@@ -92,17 +95,16 @@ func (v *Vault) FindWikiPages() ([]string, error) {
 	return pages, nil
 }
 
-// ParseFrontmatter parses YAML frontmatter between --- markers into key-value pairs.
-// List values (e.g. tags with "- item" entries) are joined as comma-separated strings.
-func ParseFrontmatter(path string) (map[string]string, error) {
-	f, err := os.Open(path)
+// ParseFrontmatter parses YAML frontmatter between --- markers into key-value
+// pairs, reading the page at relPath (relative to the vault root) through the
+// vault's Storage backend. List values (e.g. tags with "- item" entries) are
+// joined as comma-separated strings.
+func (v *Vault) ParseFrontmatter(relPath string) (map[string]string, error) {
+	data, err := v.Storage.ReadFile(relPath)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-
-	scanner := bufio.NewScanner(f)
-	return parseFrontmatterScanner(scanner)
+	return ParseFrontmatterString(string(data))
 }
 
 // ParseFrontmatterString parses YAML frontmatter from a content string.
@@ -186,11 +188,12 @@ func parseFrontmatterScanner(scanner *bufio.Scanner) (map[string]string, error) 
 	return fm, scanner.Err()
 }
 
-// ValidateYAMLSyntax checks whether the frontmatter between --- markers is
-// valid YAML by running yaml.Unmarshal. Returns nil if valid or no frontmatter,
-// an error describing the parse failure otherwise.
-func ValidateYAMLSyntax(path string) error {
-	data, err := os.ReadFile(path)
+// ValidateYAMLSyntax checks whether the frontmatter between --- markers is valid
+// YAML by running yaml.Unmarshal on the page at relPath (relative to the vault
+// root, read through the vault's Storage backend). Returns nil if valid or no
+// frontmatter, an error describing the parse failure otherwise.
+func (v *Vault) ValidateYAMLSyntax(relPath string) error {
+	data, err := v.Storage.ReadFile(relPath)
 	if err != nil {
 		return err
 	}
@@ -246,17 +249,20 @@ var (
 	fencedBlockRe = regexp.MustCompile("^```")
 )
 
-// ExtractWikilinks extracts [[wikilink]] targets from a file, skipping fenced
-// code blocks and inline code.
-func ExtractWikilinks(path string) ([]string, error) {
-	f, err := os.Open(path)
+// ExtractWikilinks extracts [[wikilink]] targets from the page at relPath
+// (relative to the vault root, read through the vault's Storage backend),
+// skipping fenced code blocks and inline code.
+func (v *Vault) ExtractWikilinks(relPath string) ([]string, error) {
+	data, err := v.Storage.ReadFile(relPath)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	return extractWikilinksScanner(bufio.NewScanner(bytes.NewReader(data)))
+}
 
+// extractWikilinksScanner is the shared implementation for wikilink extraction.
+func extractWikilinksScanner(scanner *bufio.Scanner) ([]string, error) {
 	var links []string
-	scanner := bufio.NewScanner(f)
 	inFence := false
 
 	for scanner.Scan() {

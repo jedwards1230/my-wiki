@@ -78,7 +78,7 @@ func (h *Handler) handleGraph(w http.ResponseWriter, _ *http.Request) {
 		pageCanonical[p] = canonical
 		info := known[canonical]
 		if info.title == "" {
-			info.title = titleFor(p)
+			info.title = titleFor(h.vault, p)
 			known[canonical] = info
 		}
 	}
@@ -90,7 +90,7 @@ func (h *Handler) handleGraph(w http.ResponseWriter, _ *http.Request) {
 		if src == "" {
 			continue
 		}
-		wls, err := vault.ExtractWikilinks(p)
+		wls, err := h.vault.ExtractWikilinks(p)
 		if err != nil {
 			continue // skip unreadable pages, don't fail the request
 		}
@@ -120,28 +120,24 @@ func (h *Handler) handleGraph(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// relSlug returns a page's slug-style path: relative to vault root,
+// relSlug returns a page's slug-style path from a storage-relative page path:
 // forward slashes, no `.md` extension, lowercased.
-func (h *Handler) relSlug(abs string) string {
-	rel, err := filepath.Rel(h.vaultDir, abs)
-	if err != nil {
-		return ""
-	}
+func (h *Handler) relSlug(rel string) string {
 	rel = filepath.ToSlash(rel)
 	rel = strings.TrimSuffix(rel, ".md")
 	return strings.ToLower(rel)
 }
 
 // titleFor pulls the title from frontmatter; falls back to the slug
-// basename. Cheap because ParseFrontmatter stops at the closing `---`.
-func titleFor(path string) string {
-	fm, err := vault.ParseFrontmatter(path)
+// basename. rel is a storage-relative page path read through the vault.
+func titleFor(v *vault.Vault, rel string) string {
+	fm, err := v.ParseFrontmatter(rel)
 	if err == nil {
 		if t, ok := fm["title"]; ok && t != "" {
 			return t
 		}
 	}
-	base := filepath.Base(path)
+	base := filepath.Base(rel)
 	return strings.TrimSuffix(base, ".md")
 }
 

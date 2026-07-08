@@ -59,16 +59,17 @@ func (s *TagService) CountTags() (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	return countTagsFromPages(pages), nil
+	return countTagsFromPages(s.vault, pages), nil
 }
 
 // countTagsFromPages tallies tag usage across the given page paths, skipping
 // generated and untagged pages. Callers that already hold the page list share
-// it here to avoid re-walking the vault.
-func countTagsFromPages(pages []string) map[string]int {
+// it here to avoid re-walking the vault. Pages are storage-relative paths read
+// through the vault's Storage backend.
+func countTagsFromPages(v *vault.Vault, pages []string) map[string]int {
 	counts := make(map[string]int)
 	for _, page := range pages {
-		fm, fmErr := vault.ParseFrontmatter(page)
+		fm, fmErr := v.ParseFrontmatter(page)
 		if fmErr != nil || fm == nil {
 			continue
 		}
@@ -95,7 +96,7 @@ func (s *TagService) List() (*TagReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	counts := countTagsFromPages(pages)
+	counts := countTagsFromPages(s.vault, pages)
 
 	var used []TagUsage
 	for tag, count := range counts {

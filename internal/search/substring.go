@@ -33,8 +33,8 @@ func (s *SubstringSearcher) Search(query string, limit int) ([]Result, error) {
 	lowerQ := strings.ToLower(query)
 	var results []Result
 
-	for _, absPath := range pages {
-		lp, ok := loadPage(s.vault.Dir, absPath)
+	for _, rel := range pages {
+		lp, ok := loadPage(s.vault, rel)
 		if !ok {
 			continue
 		}

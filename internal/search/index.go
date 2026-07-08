@@ -69,8 +69,8 @@ func (s *IndexSearcher) Build() error {
 		postings: make(map[string][]posting),
 	}
 
-	for _, absPath := range pages {
-		lp, ok := loadPage(s.vault.Dir, absPath)
+	for _, rel := range pages {
+		lp, ok := loadPage(s.vault, rel)
 		if !ok {
 			continue
 		}
