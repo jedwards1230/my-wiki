@@ -15,6 +15,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Build binary (layer busted when source changes)
 COPY cmd/ cmd/
 COPY internal/ internal/
+# docs is a Go package (go:embed of openapi.yaml) — copy only the files the build needs
+COPY docs/openapi.go docs/openapi.yaml docs/
 ARG BUILD_VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
