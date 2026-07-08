@@ -24,6 +24,7 @@ type apiRoute struct {
 var apiRoutes = []apiRoute{
 	// Read-only routes — auth-gated only when WIKI_AUTH_READS=true.
 	{Method: "GET", Pattern: "/api/lint", handler: (*Handler).handleLint},
+	{Method: "GET", Pattern: "/api/openapi.yaml", handler: (*Handler).handleOpenAPISpec},
 	{Method: "GET", Pattern: "/api/directory", handler: (*Handler).handleDirectoryList},
 	{Method: "GET", Pattern: "/api/pages/{path...}", handler: (*Handler).handlePageRead},
 	{Method: "GET", Pattern: "/api/pages", handler: (*Handler).handlePageList},

@@ -362,6 +362,21 @@ paths:
                 properties:
                   data: { $ref: "#/components/schemas/ServerInfo" }
 
+  /api/openapi.yaml:
+    get:
+      tags: [meta]
+      summary: Serve this OpenAPI document
+      description: >
+        Returns this OpenAPI spec verbatim as YAML, so a deployed instance
+        exposes its own machine-readable REST contract. Not envelope-wrapped.
+      responses:
+        "200":
+          description: The OpenAPI document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+
   /api/activity:
     post:
       tags: [activity]
