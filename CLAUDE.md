@@ -13,6 +13,13 @@ Guidance for Claude Code when working in this repository.
 
 Three content paths: `/path` (rendered HTML), `/path.md` (vault markdown), `/raw/path` (native source files with directory listing).
 
+## Design Principles
+
+- **Stateless over a filesystem — preserve this.** No database, ever. All state is either markdown in the vault (including generated `index.md` and activity pages) or in-memory snapshots rebuilt from the files (render memfs, search index, slug index). Pointing `--vault` at any Obsidian vault must build and render correctly with zero migration. A feature that "needs" a datastore should persist as markdown in the vault or be recomputed on rebuild — if it can't, question the feature.
+- **Agent-first, human-compatible.** The primary consumers are AI agents (MCP tools, REST, `.md` URLs). The web UI is the minimal direct interface for a human to check the actual files — keep it good, but when interfaces compete for design effort, the agent surface wins. Parity flows through `service/`: both `api/` and `mcpserver/` delegate there, so a capability added to one must land in the other.
+- **SSO/OIDC-first auth.** OIDC (e.g. Authentik, or any provider) is the auth story; the server does not grow its own password store as a default path. Local password auth is acceptable only as an optional, clearly-separated add-on for public deployments where requiring an IdP is too heavy.
+- **Spaces (direction, not yet built).** The single-vault assumption is temporary. The goal is multiple vaults ("spaces") per server: each space is a directory with its own optional sync backend (none / Obsidian Sync / git / …), membership resolved from OIDC claims/groups, users see only the spaces they have access to, and shares are configurable per space. Until then, don't deepen single-vault coupling — prefer passing `*vault.Vault` and services as parameters over adding new process-global singletons or vault-path assumptions.
+
 ## Commands
 
 ```bash
