@@ -237,7 +237,6 @@ func readHandler(svc *service.PageService) server.ToolHandlerFunc {
 	}
 }
 
-// buildFrontmatter assembles YAML frontmatter from structured parameters.
 // sanitizeScalar strips newlines and trims whitespace to ensure a value
 // stays on a single YAML line.
 func sanitizeScalar(s string) string {
@@ -267,6 +266,7 @@ func validateExtraFrontmatter(extra string) error {
 	return nil
 }
 
+// buildFrontmatter assembles YAML frontmatter from structured parameters.
 func buildFrontmatter(title string, tags []string, date, description, extraFrontmatter string) string {
 	var b strings.Builder
 	b.WriteString("---\n")

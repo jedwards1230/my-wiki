@@ -279,8 +279,8 @@ func (s *PageService) List(opts ListOptions) ([]PageInfo, error) {
 		}
 
 		// Exclude meta/activity/ and the auto-regenerated meta/log.md index from
-		// modified-sorted listings (same as old recent behavior). Both bump mtime
-		// on every `wiki-server log` run and would otherwise dominate recents.
+		// modified-sorted listings. Both bump mtime on every `wiki-server log`
+		// run and would otherwise dominate recents.
 		if sortByMtime {
 			normRel := filepath.ToSlash(rel)
 			if strings.HasPrefix(normRel, "meta/activity/") || normRel == "meta/log.md" {

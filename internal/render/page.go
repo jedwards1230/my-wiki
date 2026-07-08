@@ -144,12 +144,10 @@ type TOCEntry struct {
 }
 
 // BacklinkEntry is one inbound wikilink shown in the right-rail backlinks
-// list. Snippet is the surrounding sentence; URL is the linking page's
-// canonical URL.
+// list. URL is the linking page's canonical URL.
 type BacklinkEntry struct {
-	Title   string
-	URL     string
-	Snippet string
+	Title string
+	URL   string
 }
 
 // BreadcrumbItem is one segment in the breadcrumb nav at the top of every

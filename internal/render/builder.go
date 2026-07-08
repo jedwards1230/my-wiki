@@ -254,7 +254,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		return nil, err
 	}
 
-	// 5. Backlink index — built from the full result set, replaces the
+	// 6. Backlink index — built from the full result set, replaces the
 	// atomic pointer so /api/backlinks readers see the new map.
 	all := make([]*Page, 0, len(results))
 	linkMap := make(map[string][]string, len(results))
@@ -274,7 +274,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		p.Backlinks = backlinks[p.Slug]
 	}
 
-	// 6. Build the snapshot — full-page HTML for each, plus aggregate
+	// 7. Build the snapshot — full-page HTML for each, plus aggregate
 	// artifacts.
 	snap := memfs.NewSnapshot()
 	now := time.Now()
@@ -329,7 +329,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		}
 	}
 
-	// 7. Tag pages — collect tag → pages, render one listing per tag.
+	// 8. Tag pages — collect tag → pages, render one listing per tag.
 	tagPages := groupByTag(all)
 	for tag, ps := range tagPages {
 		listSlug := "tags/" + tag
@@ -359,7 +359,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		}
 	}
 
-	// 8. Sitemap + RSS.
+	// 9. Sitemap + RSS.
 	if sm, err := BuildSitemap(all, b.cfg.BaseURL); err == nil {
 		if err := snap.AddFile("sitemap.xml", sm, now); err != nil {
 			return nil, err
@@ -375,7 +375,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		b.logger.Warn("rss render failed", "error", err)
 	}
 
-	// 9. 404 page. Same chrome as a regular page so the user has a
+	// 10. 404 page. Same chrome as a regular page so the user has a
 	// sidebar/footer to navigate away from the dead URL.
 	notFoundData := TemplateData{
 		Page: &Page{

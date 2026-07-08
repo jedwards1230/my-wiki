@@ -628,23 +628,9 @@ func (p *inlineTagParser) Parse(parent ast.Node, block text.Reader, pc parser.Co
 	}
 
 	// Guard: reject `#` preceded by a word char, `(`, or `[` — those
-	// indicate a URL fragment, issue-number, or markdown link destination.
-	// block.Position() returns the absolute offset into the source;
-	// segment.Start is the byte offset of the current line's start.
-	// The character immediately before the `#` is at segment.Start - 1
-	// relative to the source — but we can read it from the raw source
-	// via the reader's Source() method if available. Simpler: check
-	// whether the column before the trigger is a word/bracket char by
-	// reading back from the segment start + current column offset.
-	//
-	// goldmark advances segment.Start on each Advance call, so the
-	// current position within the line is (current offset - segment.Start).
-	// The character before the `#` on this line (if any) can be found by
-	// checking the last byte consumed before we were called.
-	//
-	// Practical approach: read the source and look at the byte before this
-	// `#`. If the reader doesn't expose the full source we skip this check
-	// (safe to proceed; most false-positives are caught by the block parser).
+	// indicate a URL fragment, issue-number, or markdown link destination,
+	// not a tag. segment.Start is the line's byte offset into the source, so
+	// the char immediately before the `#` is src[segment.Start-1].
 	src := block.Source()
 	if segment.Start > 0 {
 		prev := src[segment.Start-1]

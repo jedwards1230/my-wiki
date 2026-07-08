@@ -165,7 +165,7 @@ func (d *Debouncer) flushIfCurrent(key DebounceKey, gen uint64) {
 }
 
 // Close stops all pending timers without flushing. Intended for graceful
-// shutdown where dropping in-flight events is acceptable (Phase 2 policy).
+// shutdown where dropping in-flight events is acceptable.
 func (d *Debouncer) Close() {
 	d.mu.Lock()
 	defer d.mu.Unlock()

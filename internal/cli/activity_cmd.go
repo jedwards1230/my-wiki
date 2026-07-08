@@ -64,12 +64,3 @@ func runActivity(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
-
-// Keep these exported for test compatibility
-func sanitize(s string) string {
-	return service.Sanitize(s)
-}
-
-func buildDescription(summary string, touched []string) string {
-	return service.BuildDescription(summary, touched)
-}

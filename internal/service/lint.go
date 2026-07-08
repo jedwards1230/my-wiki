@@ -51,7 +51,7 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 	switch check {
 	case "all":
 		s.checkFrontmatter(report)
-		s.checkTags(report, false)
+		s.checkTags(report)
 		s.checkLinks(report)
 		s.checkOrphans(report)
 		s.checkSize(report)
@@ -61,7 +61,7 @@ func (s *LintService) Run(check string) (*LintReport, error) {
 	case "frontmatter":
 		s.checkFrontmatter(report)
 	case "tags":
-		s.checkTags(report, true)
+		s.checkTags(report)
 	case "links":
 		s.checkLinks(report)
 	case "orphans":
@@ -166,7 +166,7 @@ func (s *LintService) checkFrontmatter(report *LintReport) {
 	}
 }
 
-func (s *LintService) checkTags(report *LintReport, _ bool) {
+func (s *LintService) checkTags(report *LintReport) {
 	tagCounts, err := s.tagSvc.CountTags()
 	if err != nil {
 		report.Issues = append(report.Issues, LintIssue{
