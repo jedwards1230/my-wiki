@@ -2,7 +2,6 @@ package service
 
 import (
 	"bufio"
-	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,14 +22,6 @@ func NewLogService(storage vault.Storage) *LogService {
 	return &LogService{storage: storage}
 }
 
-func (s *LogService) logIndexPath() string {
-	return filepath.Join("meta", "log.md")
-}
-
-func (s *LogService) activityDir() string {
-	return filepath.Join("meta", "activity")
-}
-
 var (
 	logIndexDateRe    = regexp.MustCompile(`[|\[](\d{4}-\d{2}-\d{2})\]`)
 	logIndexHashRe    = regexp.MustCompile("(?:^|[^a-f0-9])([a-f0-9]{6})(?:[^a-f0-9]|$)")
@@ -40,7 +31,7 @@ var (
 
 // Index returns the last n entries from the log index. If n <= 0, all entries.
 func (s *LogService) Index(n int) ([]LogEntry, error) {
-	f, err := s.storage.OpenFile(s.logIndexPath(), os.O_RDONLY, 0)
+	f, err := s.storage.OpenFile(metaLogIndexPath(), os.O_RDONLY, 0)
 	if err != nil {
 		return nil, fmt.Errorf("no log index found: %w", err)
 	}
@@ -115,7 +106,7 @@ func (s *LogService) Day(date string, detail bool) (*DayLog, error) {
 	if !validDate(date) {
 		return nil, fmt.Errorf("invalid date format: %s (expected YYYY-MM-DD)", date)
 	}
-	fileRelPath := filepath.Join(s.activityDir(), date+".md")
+	fileRelPath := filepath.Join(metaActivityDir(), date+".md")
 	if _, err := s.storage.Stat(fileRelPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("no activity file for %s", date)
 	}
@@ -178,8 +169,8 @@ type LogLintIssue struct {
 
 // Lint checks the activity log for issues.
 func (s *LogService) Lint() ([]LogLintIssue, error) {
-	logIndex := s.logIndexPath()
-	activityDir := s.activityDir()
+	logIndex := metaLogIndexPath()
+	activityDir := metaActivityDir()
 
 	if _, err := s.storage.Stat(logIndex); os.IsNotExist(err) {
 		return nil, fmt.Errorf("log index missing at %s", logIndex)
@@ -242,7 +233,7 @@ func (s *LogService) Lint() ([]LogLintIssue, error) {
 			continue
 		}
 
-		actualHash := fmt.Sprintf("%x", sha256.Sum256(data))[:6]
+		actualHash := shortHash(data)
 		if storedHash != actualHash {
 			issues = append(issues, LogLintIssue{
 				Message: fmt.Sprintf("Hash mismatch for %s (index: %s, actual: %s)", date, storedHash, actualHash),

@@ -3,8 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"path/filepath"
-	"strings"
 
 	"github.com/jedwards1230/my-wiki/internal/notify"
 	"github.com/jedwards1230/my-wiki/internal/service"
@@ -47,10 +45,20 @@ func WithPageService(ps *service.PageService) HandlerOption {
 	}
 }
 
+// WithInstanceName sets the human-readable instance identifier reported by
+// /api/whoami (parity with the MCP whoami tool). Empty (the default) omits the
+// field.
+func WithInstanceName(name string) HandlerOption {
+	return func(h *Handler) {
+		h.instanceName = name
+	}
+}
+
 // Handler holds all API services and registers routes.
 type Handler struct {
 	vault           *vault.Vault
 	vaultDir        string
+	instanceName    string
 	lint            *service.LintService
 	directory       *service.DirectoryService
 	activity        *service.ActivityService
@@ -100,20 +108,6 @@ func (h *Handler) wrapRead(handler http.Handler) http.Handler {
 		return handler
 	}
 	return h.authMW(handler)
-}
-
-// markDirty notifies the rebuild notifier about a mutated vault path.
-// path is a relative path within the vault; the .md extension is added if
-// missing. action tells downstream sinks what kind of mutation occurred
-// (see notify.ChangeKind). No-op when the notifier is not configured.
-func (h *Handler) markDirty(relPath string, action notify.ChangeKind) {
-	if h.notifier == nil {
-		return
-	}
-	if !strings.HasSuffix(relPath, ".md") {
-		relPath += ".md"
-	}
-	h.notifier.MarkDirty(filepath.Clean(filepath.Join(h.vaultDir, relPath)), action)
 }
 
 // response is the JSON envelope for API responses.

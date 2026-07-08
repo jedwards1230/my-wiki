@@ -59,7 +59,13 @@ func (s *TagService) CountTags() (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
+	return countTagsFromPages(pages), nil
+}
 
+// countTagsFromPages tallies tag usage across the given page paths, skipping
+// generated and untagged pages. Callers that already hold the page list share
+// it here to avoid re-walking the vault.
+func countTagsFromPages(pages []string) map[string]int {
 	counts := make(map[string]int)
 	for _, page := range pages {
 		fm, fmErr := vault.ParseFrontmatter(page)
@@ -80,20 +86,16 @@ func (s *TagService) CountTags() (map[string]int, error) {
 			}
 		}
 	}
-	return counts, nil
+	return counts
 }
 
 // List returns all used tags with counts, sorted by frequency descending.
 func (s *TagService) List() (*TagReport, error) {
-	counts, err := s.CountTags()
-	if err != nil {
-		return nil, err
-	}
-
 	pages, err := s.vault.FindWikiPages()
 	if err != nil {
 		return nil, err
 	}
+	counts := countTagsFromPages(pages)
 
 	var used []TagUsage
 	for tag, count := range counts {

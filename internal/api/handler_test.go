@@ -462,7 +462,7 @@ func TestWhoamiEndpoint(t *testing.T) {
 	}
 
 	var resp struct {
-		Data ServerInfo `json:"data"`
+		Data service.ServerInfo `json:"data"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
@@ -498,7 +498,7 @@ func TestWhoamiEndpoint_WithUser(t *testing.T) {
 	}
 
 	var resp struct {
-		Data ServerInfo `json:"data"`
+		Data service.ServerInfo `json:"data"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)

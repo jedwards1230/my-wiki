@@ -27,12 +27,34 @@ func NewActivityService(storage vault.Storage) *ActivityService {
 	return &ActivityService{storage: storage}
 }
 
-func (s *ActivityService) activityDir() string {
+// metaActivityDir is the vault-relative directory holding per-day activity
+// files (meta/activity). Shared by ActivityService and LogService.
+func metaActivityDir() string {
 	return filepath.Join("meta", "activity")
 }
 
-func (s *ActivityService) logIndexPath() string {
+// metaLogIndexPath is the vault-relative path of the activity log index
+// (meta/log.md). Shared by ActivityService and LogService.
+func metaLogIndexPath() string {
 	return filepath.Join("meta", "log.md")
+}
+
+// shortHash returns the first 6 hex chars of the SHA-256 of data — the digest
+// stamped on each log-index line to detect activity-file drift.
+func shortHash(data []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(data))[:6]
+}
+
+// DirtyPaths returns the vault-relative markdown paths an Append mutation
+// touches for the current day: the day's activity file and the log index.
+// Callers mark these dirty so the renderer rebuilds the activity page and the
+// log index. Paths carry the .md extension.
+func (s *ActivityService) DirtyPaths() []string {
+	today := time.Now().Format("2006-01-02")
+	return []string{
+		filepath.Join(metaActivityDir(), today+".md"),
+		metaLogIndexPath(),
+	}
 }
 
 // Append adds an activity entry to today's log file and updates the log index.
@@ -67,7 +89,7 @@ func (s *ActivityService) Append(entry ActivityEntry) error {
 		}
 	}
 
-	activityDir := s.activityDir()
+	activityDir := metaActivityDir()
 	today := time.Now().Format("2006-01-02")
 	dailyRelPath := filepath.Join(activityDir, today+".md")
 
@@ -174,7 +196,7 @@ func BuildDescription(summary string, touched []string) string {
 }
 
 func (s *ActivityService) updateLogIndex(dailyRelPath, today string) error {
-	logIndex := s.logIndexPath()
+	logIndex := metaLogIndexPath()
 
 	data, err := s.storage.ReadFile(dailyRelPath)
 	if err != nil {
@@ -190,7 +212,7 @@ func (s *ActivityService) updateLogIndex(dailyRelPath, today string) error {
 		}
 	}
 
-	hash := fmt.Sprintf("%x", sha256.Sum256(data))[:6]
+	hash := shortHash(data)
 
 	// Summary precedence: an explicit frontmatter summary (tier 1) wins;
 	// otherwise compute a digest from the day's entries (tier 2). Sanitize so

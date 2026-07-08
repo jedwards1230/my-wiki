@@ -100,19 +100,19 @@ func (b *Builder) RenderFragment(urlPath string) ([]byte, bool) {
 	b.mu.Lock()
 	r := b.lastRenderer
 	p := b.lastPages[strings.ToLower(slug)]
-	allPages := make([]*Page, 0, len(b.lastPages))
-	for _, pg := range b.lastPages {
-		allPages = append(allPages, pg)
-	}
+	// Reuse the cached explorer tree (same pattern as RenderRawPage/
+	// RenderRawGallery) rather than rebuilding it from the page set — the base
+	// tree was already computed by the last Build(). lastExplorer is published
+	// together with lastRenderer under this lock, so a non-nil renderer implies
+	// a populated tree.
+	explorer := cloneExplorerTree(b.lastExplorer)
 	b.mu.Unlock()
 	if r == nil || p == nil {
 		return nil, false
 	}
-	// Build a per-request explorer tree with this page's branch active.
-	// htmx fragment swaps don't replace the sidebar, so this is only used
-	// when the user lands on a page directly (e.g. opening a deep URL in
-	// a new tab) — once per session.
-	explorer := cloneExplorerTree(BuildExplorerTree(allPages, ""))
+	// Mark this page's branch active. htmx fragment swaps don't replace the
+	// sidebar, so this only matters when the user lands on a page directly
+	// (e.g. opening a deep URL in a new tab).
 	markActiveRoots(explorer, slug)
 	td := TemplateData{Page: p, SiteTitle: b.cfg.SiteTitle, ActivePath: p.RelativeURL, Version: version.Value, BaseURL: b.cfg.BaseURL, Explorer: explorer}
 	buf, err := r.RenderFragment(p, td)

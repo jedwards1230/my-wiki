@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -261,9 +260,9 @@ func makeActivityCallback(activitySvc *service.ActivityService, notifier *notify
 		if notifier == nil {
 			return
 		}
-		today := time.Now().Format("2006-01-02")
-		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "activity", today+".md"), notify.ChangeModified)
-		notifier.MarkDirty(filepath.Join(vaultDir, "meta", "log.md"), notify.ChangeModified)
+		for _, p := range activitySvc.DirtyPaths() {
+			notify.MarkDirtyRelative(notifier, vaultDir, p, notify.ChangeModified)
+		}
 	}
 }
 
@@ -369,35 +368,15 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("webhook dispatcher setup: %w", err)
 	}
-	defer func() {
-		if pipeline != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if cerr := pipeline.closer(shutdownCtx); cerr != nil {
-				logger.Warn("webhook dispatcher close", "error", cerr)
-			}
-		}
-	}()
+	defer closePipeline(pipeline, logger)
 
 	// Start filesystem watcher to detect external changes (Obsidian Sync,
 	// git pull, manual edits) and feed them into the rebuild notifier.
 	// When the dispatch pipeline is enabled, the watcher sink fans out to
 	// both the rebuild notifier and the dispatch pipeline sink.
 	if watchEnabled {
-		var watcherSink notify.Sink = notifier
-		if pipeline != nil {
-			watcherSink = notify.NewFanoutSink(notifier, pipeline.sink)
-		}
-		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, watcherSink,
-			notify.WithExcludeDirs(excludeDirsFromEnv()),
-			notify.WithWatcherLogger(logger),
-		)
-		if watchErr != nil {
-			logger.Warn("filesystem watcher failed to start", "error", watchErr)
-		} else {
-			go vaultWatcher.Run()
-			defer func() { _ = vaultWatcher.Close() }()
-			logger.Info("filesystem watcher started", "vaultDir", vaultDir)
+		if stopWatcher := startVaultWatcher(vaultDir, notifier, pipeline, logger); stopWatcher != nil {
+			defer stopWatcher()
 		}
 	}
 
@@ -413,23 +392,16 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// Startup reconciliation: when enabled and the dispatcher is wired,
 	// synthesize an inbox.changed event for any existing inbox/*.md files
 	// so consumers pick up the backlog on boot.
-	if pipeline != nil && pipeline.cfg.ReconcileOnStart {
-		// Rename any unsafe inbox filenames to their canonical slug first, so
-		// the reconcile (and the agent it triggers) only ever sees addressable
-		// names.
-		if n := normalizeInboxFilenames(vaultDir, logger); n > 0 {
-			logger.Info("reconcile on start normalized inbox filenames", "renamed", n)
-		}
-		paths := scanInboxForReconcile(vaultDir, logger)
-		if len(paths) > 0 {
-			logger.Info("reconcile on start found pending inbox items", "count", len(paths))
-			pipeline.router.RecordReconcile(paths)
-		}
-	}
+	reconcileInboxOnStart(vaultDir, pipeline, logger)
+
+	instanceName, _ := cmd.Flags().GetString("instance-name")
 
 	var apiOpts []api.HandlerOption
 	if authMWs != nil {
 		apiOpts = append(apiOpts, api.WithAuthMiddleware(authMWs.api))
+	}
+	if instanceName != "" {
+		apiOpts = append(apiOpts, api.WithInstanceName(instanceName))
 	}
 	if strings.EqualFold(os.Getenv(EnvAuthReads), "true") {
 		apiOpts = append(apiOpts, api.WithAuthReads(true))
@@ -461,13 +433,7 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// volume, where inotify is blind; stat mtimes propagate over NFS, so a
 	// periodic diff reliably sees clipper drops. Gated on the dispatcher being
 	// enabled — without it there is nothing to feed.
-	if pipeline != nil {
-		if interval := inboxPollIntervalFromEnv(logger); interval > 0 {
-			poller := newInboxPoller(vaultDir, pipeline.router, interval, logger)
-			go poller.Run(ctx)
-			logger.Info("inbox poller started", "interval", interval.String())
-		}
-	}
+	startInboxPoller(ctx, vaultDir, pipeline, logger)
 
 	// Start periodic search index rebuild (only if registered)
 	if len(engines) > 1 {
@@ -511,7 +477,6 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// server itself is built via the shared helper so option wiring stays
 	// identical across all three transports.
 	if mcpPort > 0 {
-		instanceName, _ := cmd.Flags().GetString("instance-name")
 		mcpSrv := buildMCPServer(v, searchSvc, notifier, pageSvc, instanceName)
 		httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 

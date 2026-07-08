@@ -1,9 +1,13 @@
 package search
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/jedwards1230/my-wiki/internal/vault"
 )
 
 // Searcher is the interface that search backends must implement.
@@ -22,6 +26,57 @@ type Result struct {
 	Snippet string  `json:"snippet"`
 	Match   string  `json:"match"`  // "title", "tags", or "content"
 	Engine  string  `json:"engine"` // which backend produced this result
+}
+
+// loadedPage is the normalized content of a wiki page for indexing/searching:
+// its vault-relative path, resolved title, raw tag string, and frontmatter-
+// stripped body.
+type loadedPage struct {
+	rel   string
+	title string
+	tags  string
+	body  string
+}
+
+// loadPage reads and normalizes the wiki page at absPath (relative to vaultDir).
+// It returns ok=false for pages that should be skipped by both search backends:
+// activity logs, generated index files, and unreadable files. The title falls
+// back to the filename when frontmatter has no title.
+func loadPage(vaultDir, absPath string) (loadedPage, bool) {
+	rel, _ := filepath.Rel(vaultDir, absPath)
+
+	// Skip activity logs (OS-aware separator).
+	activityPrefix := filepath.Join("meta", "activity") + string(filepath.Separator)
+	if strings.HasPrefix(rel, activityPrefix) {
+		return loadedPage{}, false
+	}
+	// Skip generated index files.
+	if filepath.Base(rel) == "index.md" {
+		return loadedPage{}, false
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return loadedPage{}, false
+	}
+
+	fm, _ := vault.ParseFrontmatter(absPath)
+
+	title := strings.TrimSuffix(filepath.Base(absPath), ".md")
+	tags := ""
+	if fm != nil {
+		if fm["title"] != "" {
+			title = fm["title"]
+		}
+		tags = fm["tags"]
+	}
+
+	return loadedPage{
+		rel:   rel,
+		title: title,
+		tags:  tags,
+		body:  StripFrontmatter(string(data)),
+	}, true
 }
 
 // StripFrontmatter removes YAML frontmatter (between --- markers) from content,

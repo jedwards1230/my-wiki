@@ -130,35 +130,15 @@ func runMCP(ctx context.Context, vaultDir string, cfg mcpRunConfig, logger *slog
 			return fmt.Errorf("webhook dispatcher setup: %w", err)
 		}
 		pipeline = p
-		defer func() {
-			if pipeline != nil {
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if cerr := pipeline.closer(shutdownCtx); cerr != nil {
-					logger.Warn("webhook dispatcher close", "error", cerr)
-				}
-			}
-		}()
+		defer closePipeline(pipeline, logger)
 	}
 
 	// Filesystem watcher — fan out to notifier and dispatch sink when both
 	// are present. Exclusions go through excludeDirsFromEnv() so the
 	// WIKI_WATCH_EXCLUDE_DIRS override applies uniformly to every runner.
 	if cfg.EnableWatcher {
-		var watcherSink notify.Sink = notifier
-		if pipeline != nil {
-			watcherSink = notify.NewFanoutSink(notifier, pipeline.sink)
-		}
-		vaultWatcher, watchErr := notify.NewVaultWatcher(vaultDir, watcherSink,
-			notify.WithExcludeDirs(excludeDirsFromEnv()),
-			notify.WithWatcherLogger(logger),
-		)
-		if watchErr != nil {
-			logger.Warn("filesystem watcher failed to start", "error", watchErr)
-		} else {
-			go vaultWatcher.Run()
-			defer func() { _ = vaultWatcher.Close() }()
-			logger.Info("filesystem watcher started", "vaultDir", vaultDir)
+		if stopWatcher := startVaultWatcher(vaultDir, notifier, pipeline, logger); stopWatcher != nil {
+			defer stopWatcher()
 		}
 	}
 
@@ -174,31 +154,13 @@ func runMCP(ctx context.Context, vaultDir string, cfg mcpRunConfig, logger *slog
 	// Startup reconciliation: when dispatch is enabled and configured for
 	// reconcile-on-start, synthesize inbox.changed events for any pending
 	// inbox/*.md files so consumers see the backlog.
-	if pipeline != nil && pipeline.cfg.ReconcileOnStart {
-		// Rename any unsafe inbox filenames to their canonical slug first, so
-		// the reconcile (and the agent it triggers) only ever sees addressable
-		// names.
-		if n := normalizeInboxFilenames(vaultDir, logger); n > 0 {
-			logger.Info("reconcile on start normalized inbox filenames", "renamed", n)
-		}
-		paths := scanInboxForReconcile(vaultDir, logger)
-		if len(paths) > 0 {
-			logger.Info("reconcile on start found pending inbox items", "count", len(paths))
-			pipeline.router.RecordReconcile(paths)
-		}
-	}
+	reconcileInboxOnStart(vaultDir, pipeline, logger)
 
 	// Periodic inbox poll: a stat()/mtime fallback that catches inbox writes
 	// the fsnotify watcher misses across an NFS (RWX) volume, where inotify is
 	// blind to writes made on another node. Gated on the dispatcher being
 	// enabled — without it there is nothing to feed.
-	if pipeline != nil {
-		if interval := inboxPollIntervalFromEnv(logger); interval > 0 {
-			poller := newInboxPoller(vaultDir, pipeline.router, interval, logger)
-			go poller.Run(ctx)
-			logger.Info("inbox poller started", "interval", interval.String())
-		}
-	}
+	startInboxPoller(ctx, vaultDir, pipeline, logger)
 
 	mcpSrv := buildMCPServer(v, searchSvc, notifier, pageSvc, cfg.InstanceName)
 

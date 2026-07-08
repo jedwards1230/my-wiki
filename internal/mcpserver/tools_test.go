@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1171,6 +1172,44 @@ func TestWhoamiHandler_WithUser(t *testing.T) {
 	}
 }
 
+// TestWhoamiHandler_PartialUserOmitsEmptyClaims locks in the omitempty contract
+// of the shared service.UserInfo: for an authenticated user with only a
+// username (empty email/name, nil groups), those optional claims must NOT appear
+// in the serialized whoami JSON as ""/null. Guards against a future change
+// silently flipping the fields back to always-present. The assertion marshals
+// just the user object so the top-level ServerInfo "name" field can't be
+// mistaken for the (absent) user "name" claim.
+func TestWhoamiHandler_PartialUserOmitsEmptyClaims(t *testing.T) {
+	v := setupTestVault(t)
+	handler := whoamiHandler(v.Dir, "")
+
+	ctx := middleware.WithUser(context.Background(), &middleware.UserInfo{
+		Username: "agent",
+		// Email, Name, Groups intentionally left zero.
+	})
+
+	result, err := handler(ctx, makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, ok := result.StructuredContent.(service.ServerInfo)
+	if !ok {
+		t.Fatalf("expected structuredContent to be service.ServerInfo, got %T", result.StructuredContent)
+	}
+	if info.User == nil {
+		t.Fatal("expected user info with auth context")
+	}
+
+	userJSON, err := json.Marshal(info.User)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(userJSON); got != `{"username":"agent"}` {
+		t.Errorf("expected empty email/name/groups claims to be omitted, got user JSON: %s", got)
+	}
+}
+
 func TestNewCreatesServer(t *testing.T) {
 	v := setupTestVault(t)
 	s := New(v, nil)
@@ -1259,7 +1298,7 @@ func TestWhoamiHandler_StructuredContent(t *testing.T) {
 	if result.StructuredContent == nil {
 		t.Fatal("expected structuredContent to be present")
 	}
-	info, ok := result.StructuredContent.(ServerInfo)
+	info, ok := result.StructuredContent.(service.ServerInfo)
 	if !ok {
 		t.Fatalf("expected structuredContent to be ServerInfo, got %T", result.StructuredContent)
 	}

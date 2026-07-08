@@ -63,7 +63,7 @@ func (h *Handler) handlePageWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.markDirty(path, notify.ChangeModified)
+	notify.MarkDirtyRelative(h.notifier, h.vaultDir, path, notify.ChangeModified)
 	warnings := h.lint.LintPage(path)
 	writeJSONWithWarnings(w, http.StatusOK, map[string]string{
 		"status": "ok",
@@ -83,7 +83,7 @@ func (h *Handler) handlePageDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.markDirty(path, notify.ChangeDeleted)
+	notify.MarkDirtyRelative(h.notifier, h.vaultDir, path, notify.ChangeDeleted)
 	warnings := h.lint.LintDelete(path)
 	writeJSONWithWarnings(w, http.StatusOK, map[string]string{"status": "deleted"}, warnings)
 }
@@ -130,7 +130,7 @@ func (h *Handler) handlePagePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.markDirty(path, notify.ChangeModified)
+	notify.MarkDirtyRelative(h.notifier, h.vaultDir, path, notify.ChangeModified)
 	warnings := h.lint.LintPage(path)
 	writeJSONWithWarnings(w, http.StatusOK, map[string]string{
 		"path":    path,

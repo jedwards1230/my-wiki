@@ -368,7 +368,7 @@ func registerTools(
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
-			mcp.WithOutputSchema[ServerInfo](),
+			mcp.WithOutputSchema[service.ServerInfo](),
 		),
 		whoamiHandler(vaultDir, instanceName),
 	)

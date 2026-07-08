@@ -287,12 +287,7 @@ func (r *Renderer) ParsePage(path string, source []byte) (*ParsedPage, parser.Co
 			title = v
 		}
 	}
-	if title == "" {
-		title = firstHeadingText(doc, source)
-	}
-	if title == "" {
-		title = humanizeSegment(filepath.Base(slug))
-	}
+	title = resolveTitle(title, doc, source, slug)
 	return &ParsedPage{
 		Slug:   slug,
 		Title:  title,
@@ -420,12 +415,7 @@ func (r *Renderer) RenderPage(path string, source []byte, modTime time.Time) (*P
 	default:
 		p.RelativeURL = "/" + slug + "/"
 	}
-	if p.Title == "" {
-		p.Title = firstHeadingText(doc, source)
-	}
-	if p.Title == "" {
-		p.Title = humanizeSegment(filepath.Base(slug))
-	}
+	p.Title = resolveTitle(p.Title, doc, source, slug)
 
 	// Heuristic gating for client-side runtimes.
 	src := string(source)
@@ -714,6 +704,19 @@ func hasInlineMath(s string) bool {
 		}
 	}
 	return false
+}
+
+// resolveTitle applies the page title fallback chain: an explicit frontmatter
+// title wins; otherwise the document's first H1; otherwise the humanized last
+// segment of the slug. fmTitle is the frontmatter title (may be empty).
+func resolveTitle(fmTitle string, doc ast.Node, source []byte, slug string) string {
+	if fmTitle != "" {
+		return fmTitle
+	}
+	if h := firstHeadingText(doc, source); h != "" {
+		return h
+	}
+	return humanizeSegment(filepath.Base(slug))
 }
 
 // firstHeadingText returns the first H1 text in the document, or "" if
