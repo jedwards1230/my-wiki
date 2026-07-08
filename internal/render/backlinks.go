@@ -44,8 +44,6 @@ func (b *BacklinkIndex) Lookup(slug string) []BacklinkEntry {
 // resolve to a real page.
 //
 // Each backlink entry stores the source page's title and canonical URL.
-// Snippets are deliberately omitted in v1 — keeping the structure simple
-// and the map size bounded. Snippets are tracked as a v2 follow-up.
 func BuildBacklinks(pages []*Page, allLinks map[string][]string, slugs map[string]string) map[string][]BacklinkEntry {
 	out := make(map[string][]BacklinkEntry)
 	for _, src := range pages {

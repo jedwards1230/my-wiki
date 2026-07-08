@@ -118,12 +118,8 @@ func TestFindWikiPages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Convert to relative paths for easier testing
-	var rels []string
-	for _, p := range pages {
-		rel, _ := filepath.Rel(dir, p)
-		rels = append(rels, rel)
-	}
+	// FindWikiPages returns storage-relative, forward-slash paths.
+	rels := append([]string(nil), pages...)
 	sort.Strings(rels)
 
 	// Should include wiki pages (including private/ AND raw/ markdown, now
@@ -152,6 +148,7 @@ func TestFindWikiPages(t *testing.T) {
 
 func TestParseFrontmatter(t *testing.T) {
 	dir := setupTestVault(t)
+	v := New(dir)
 
 	tests := []struct {
 		name     string
@@ -178,7 +175,7 @@ func TestParseFrontmatter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fm, err := ParseFrontmatter(filepath.Join(dir, tt.file))
+			fm, err := v.ParseFrontmatter(tt.file)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -199,8 +196,9 @@ func TestParseFrontmatter(t *testing.T) {
 
 func TestParseFrontmatter_Values(t *testing.T) {
 	dir := setupTestVault(t)
+	v := New(dir)
 
-	fm, err := ParseFrontmatter(filepath.Join(dir, "raw/source1.md"))
+	fm, err := v.ParseFrontmatter("raw/source1.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +221,7 @@ func TestParseFrontmatter_QuotedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fm, err := ParseFrontmatter(filepath.Join(dir, "test.md"))
+	fm, err := New(dir).ParseFrontmatter("test.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +233,7 @@ func TestParseFrontmatter_QuotedValues(t *testing.T) {
 func TestExtractWikilinks(t *testing.T) {
 	dir := setupTestVault(t)
 
-	links, err := ExtractWikilinks(filepath.Join(dir, "project/alpha.md"))
+	links, err := New(dir).ExtractWikilinks("project/alpha.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +254,7 @@ func TestExtractWikilinks_WithAliasAndAnchor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	links, err := ExtractWikilinks(filepath.Join(dir, "test.md"))
+	links, err := New(dir).ExtractWikilinks("test.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +279,7 @@ func TestExtractWikilinks_EscapedPipe(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	links, err := ExtractWikilinks(filepath.Join(dir, "test.md"))
+	links, err := New(dir).ExtractWikilinks("test.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +346,7 @@ func TestParseFrontmatter_ListValues(t *testing.T) {
 			if err := os.WriteFile(f, []byte(tt.content), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			fm, err := ParseFrontmatter(f)
+			fm, err := New(dir).ParseFrontmatter(tt.name + ".md")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -373,7 +371,7 @@ func TestParseFrontmatter_ExistingFixture(t *testing.T) {
 	dir := setupTestVault(t)
 
 	// index.md has tags: \n  - root
-	fm, err := ParseFrontmatter(filepath.Join(dir, "index.md"))
+	fm, err := New(dir).ParseFrontmatter("index.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +391,7 @@ func TestParseFrontmatter_Unterminated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := ParseFrontmatter(f)
+	_, err := New(dir).ParseFrontmatter("broken.md")
 	if err == nil {
 		t.Fatal("expected error for unterminated frontmatter, got nil")
 	}
@@ -415,7 +413,7 @@ func TestValidateYAMLSyntax_Valid(t *testing.T) {
 	f := filepath.Join(dir, "valid.md")
 	_ = os.WriteFile(f, []byte(content), 0o644)
 
-	if err := ValidateYAMLSyntax(f); err != nil {
+	if err := New(dir).ValidateYAMLSyntax("valid.md"); err != nil {
 		t.Errorf("expected valid YAML, got error: %v", err)
 	}
 }
@@ -426,7 +424,7 @@ func TestValidateYAMLSyntax_BrokenBrackets(t *testing.T) {
 	f := filepath.Join(dir, "broken.md")
 	_ = os.WriteFile(f, []byte(content), 0o644)
 
-	err := ValidateYAMLSyntax(f)
+	err := New(dir).ValidateYAMLSyntax("broken.md")
 	if err == nil {
 		t.Fatal("expected error for broken YAML brackets, got nil")
 	}
@@ -441,7 +439,7 @@ func TestValidateYAMLSyntax_BrokenBraces(t *testing.T) {
 	f := filepath.Join(dir, "broken.md")
 	_ = os.WriteFile(f, []byte(content), 0o644)
 
-	err := ValidateYAMLSyntax(f)
+	err := New(dir).ValidateYAMLSyntax("broken.md")
 	if err == nil {
 		t.Fatal("expected error for broken YAML braces, got nil")
 	}
@@ -456,7 +454,7 @@ func TestValidateYAMLSyntax_NoFrontmatter(t *testing.T) {
 	f := filepath.Join(dir, "plain.md")
 	_ = os.WriteFile(f, []byte(content), 0o644)
 
-	if err := ValidateYAMLSyntax(f); err != nil {
+	if err := New(dir).ValidateYAMLSyntax("plain.md"); err != nil {
 		t.Errorf("expected no error for no frontmatter, got: %v", err)
 	}
 }
@@ -536,11 +534,7 @@ func TestCustomExcludedDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rels []string
-	for _, p := range pages {
-		rel, _ := filepath.Rel(dir, p)
-		rels = append(rels, rel)
-	}
+	rels := append([]string(nil), pages...)
 	sort.Strings(rels)
 
 	expected := []string{".obsidian/conf.md", "index.md", "public/page.md"}
@@ -633,11 +627,8 @@ func TestWithStorage_MemStorage(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		var rels []string
-		for _, p := range pages {
-			rel, _ := filepath.Rel("/fake/vault", p)
-			rels = append(rels, rel)
-		}
+		// FindWikiPages returns storage-relative, forward-slash paths.
+		rels := append([]string(nil), pages...)
 		sort.Strings(rels)
 
 		// raw/ markdown is now a first-class page (.obsidian/ still excluded).

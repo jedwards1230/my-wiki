@@ -2,9 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/jedwards1230/my-wiki/internal/notify"
 	"github.com/jedwards1230/my-wiki/internal/service"
@@ -22,8 +20,8 @@ func (h *Handler) handleActivityAppend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	today := time.Now().Format("2006-01-02")
-	h.markDirty(fmt.Sprintf("meta/activity/%s", today), notify.ChangeModified)
-	h.markDirty("meta/log", notify.ChangeModified)
+	for _, p := range h.activity.DirtyPaths() {
+		notify.MarkDirtyRelative(h.notifier, h.vaultDir, p, notify.ChangeModified)
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok"})
 }

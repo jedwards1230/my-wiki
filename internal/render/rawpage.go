@@ -218,9 +218,9 @@ func (b *Builder) RenderRawPage(relPath string, source []byte, modTime time.Time
 
 	// Reframe as a source document.
 	p.ContentHTML = rawSourceBanner(rawURL, frontmatterScalar(source, "source")) + p.ContentHTML
-	p.Slug = ""       // suppresses graph / backlinks / default view-source link
-	p.Tags = nil      // raw docs aren't tag-graph members
-	p.Backlinks = nil //
+	p.Slug = ""  // suppresses graph / backlinks / default view-source link
+	p.Tags = nil // raw docs aren't tag-graph members
+	p.Backlinks = nil
 	p.RelativeURL = rawURL
 	p.BreadcrumbItems = rawBreadcrumb(rawURL)
 

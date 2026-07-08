@@ -125,11 +125,8 @@ func (s *DirectoryService) List(prefix string) ([]DirectoryEntry, error) {
 
 	var result []DirectoryEntry
 	for _, p := range pages {
-		rel, err := filepath.Rel(s.vault.Dir, p)
-		if err != nil {
-			return nil, fmt.Errorf("compute relative path for %q from %q: %w", p, s.vault.Dir, err)
-		}
-		rel = filepath.ToSlash(rel)
+		// FindWikiPages returns storage-relative, forward-slash paths.
+		rel := filepath.ToSlash(p)
 
 		if normalizedPrefix != "" && rel != normalizedPrefix && !strings.HasPrefix(rel, normalizedPrefix+"/") {
 			continue
@@ -137,10 +134,10 @@ func (s *DirectoryService) List(prefix string) ([]DirectoryEntry, error) {
 
 		entry := DirectoryEntry{
 			Path:  rel,
-			Title: strings.TrimSuffix(filepath.Base(p), ".md"),
+			Title: strings.TrimSuffix(filepath.Base(rel), ".md"),
 		}
 
-		fm, err := vault.ParseFrontmatter(p)
+		fm, err := s.vault.ParseFrontmatter(rel)
 		if err == nil && fm != nil {
 			if t := fm["title"]; t != "" {
 				entry.Title = t
@@ -153,7 +150,7 @@ func (s *DirectoryService) List(prefix string) ([]DirectoryEntry, error) {
 			}
 		}
 
-		if fi, statErr := os.Stat(p); statErr == nil {
+		if fi, statErr := s.vault.Storage.Stat(rel); statErr == nil {
 			entry.Modified = fi.ModTime()
 		}
 

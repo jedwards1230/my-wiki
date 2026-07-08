@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -100,19 +99,19 @@ func (b *Builder) RenderFragment(urlPath string) ([]byte, bool) {
 	b.mu.Lock()
 	r := b.lastRenderer
 	p := b.lastPages[strings.ToLower(slug)]
-	allPages := make([]*Page, 0, len(b.lastPages))
-	for _, pg := range b.lastPages {
-		allPages = append(allPages, pg)
-	}
+	// Reuse the cached explorer tree (same pattern as RenderRawPage/
+	// RenderRawGallery) rather than rebuilding it from the page set — the base
+	// tree was already computed by the last Build(). lastExplorer is published
+	// together with lastRenderer under this lock, so a non-nil renderer implies
+	// a populated tree.
+	explorer := cloneExplorerTree(b.lastExplorer)
 	b.mu.Unlock()
 	if r == nil || p == nil {
 		return nil, false
 	}
-	// Build a per-request explorer tree with this page's branch active.
-	// htmx fragment swaps don't replace the sidebar, so this is only used
-	// when the user lands on a page directly (e.g. opening a deep URL in
-	// a new tab) — once per session.
-	explorer := cloneExplorerTree(BuildExplorerTree(allPages, ""))
+	// Mark this page's branch active. htmx fragment swaps don't replace the
+	// sidebar, so this only matters when the user lands on a page directly
+	// (e.g. opening a deep URL in a new tab).
 	markActiveRoots(explorer, slug)
 	td := TemplateData{Page: p, SiteTitle: b.cfg.SiteTitle, ActivePath: p.RelativeURL, Version: version.Value, BaseURL: b.cfg.BaseURL, Explorer: explorer}
 	buf, err := r.RenderFragment(p, td)
@@ -181,21 +180,18 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 			if err := pgCtx.Err(); err != nil {
 				return err
 			}
-			rel, err := filepath.Rel(v.Dir, page)
-			if err != nil {
-				return fmt.Errorf("relpath %s: %w", page, err)
-			}
-			rel = filepath.ToSlash(rel)
-			data, err := os.ReadFile(page)
+			// FindWikiPages returns storage-relative, forward-slash paths.
+			rel := filepath.ToSlash(page)
+			data, err := v.Storage.ReadFile(rel)
 			if err != nil {
 				return fmt.Errorf("read %s: %w", rel, err)
 			}
-			info, err := os.Stat(page)
+			info, err := v.Storage.Stat(rel)
 			if err != nil {
 				return fmt.Errorf("stat %s: %w", rel, err)
 			}
 			pp, _, _ := r.ParsePage(rel, data)
-			links, _ := vault.ExtractWikilinks(page)
+			links, _ := v.ExtractWikilinks(rel)
 			parseResults[i] = parsedInfo{
 				relPath: rel,
 				source:  data,
@@ -254,7 +250,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		return nil, err
 	}
 
-	// 5. Backlink index — built from the full result set, replaces the
+	// 6. Backlink index — built from the full result set, replaces the
 	// atomic pointer so /api/backlinks readers see the new map.
 	all := make([]*Page, 0, len(results))
 	linkMap := make(map[string][]string, len(results))
@@ -274,7 +270,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		p.Backlinks = backlinks[p.Slug]
 	}
 
-	// 6. Build the snapshot — full-page HTML for each, plus aggregate
+	// 7. Build the snapshot — full-page HTML for each, plus aggregate
 	// artifacts.
 	snap := memfs.NewSnapshot()
 	now := time.Now()
@@ -329,7 +325,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		}
 	}
 
-	// 7. Tag pages — collect tag → pages, render one listing per tag.
+	// 8. Tag pages — collect tag → pages, render one listing per tag.
 	tagPages := groupByTag(all)
 	for tag, ps := range tagPages {
 		listSlug := "tags/" + tag
@@ -359,7 +355,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		}
 	}
 
-	// 8. Sitemap + RSS.
+	// 9. Sitemap + RSS.
 	if sm, err := BuildSitemap(all, b.cfg.BaseURL); err == nil {
 		if err := snap.AddFile("sitemap.xml", sm, now); err != nil {
 			return nil, err
@@ -375,7 +371,7 @@ func (b *Builder) Build(ctx context.Context) (*memfs.Snapshot, error) {
 		b.logger.Warn("rss render failed", "error", err)
 	}
 
-	// 9. 404 page. Same chrome as a regular page so the user has a
+	// 10. 404 page. Same chrome as a regular page so the user has a
 	// sidebar/footer to navigate away from the dead URL.
 	notFoundData := TemplateData{
 		Page: &Page{

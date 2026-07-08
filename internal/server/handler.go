@@ -199,7 +199,7 @@ func NewRawHandler(fsys fs.FS, render RawRenderer, static http.Handler) *RawHand
 	return &RawHandler{fsys: fsys, render: render, static: static}
 }
 
-// Custom MIME types matching the nginx config.
+// Custom MIME types for raw file serving.
 var rawMIMETypes = map[string]string{
 	".md":     "text/plain",
 	".txt":    "text/plain",

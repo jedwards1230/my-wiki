@@ -36,7 +36,7 @@ func NewRootCmd() *cobra.Command {
 
 	// Persistent flag: --instance-name. Read by every MCP transport (embedded
 	// HTTP via serve --mcp-port, standalone serve mcp http, and serve mcp
-	// stdio) and surfaced via the whoami MCP tool. Lives at root so all four
+	// stdio) and surfaced via the whoami MCP tool. Lives at root so all three
 	// surfaces can read it consistently — scoping to `serve mcp` would leave
 	// the embedded path env-only, which is a leaky abstraction.
 	cmd.PersistentFlags().String(

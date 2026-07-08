@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jedwards1230/my-wiki/internal/service"
 )
 
 func setupActivityVault(t *testing.T) string {
@@ -260,7 +262,7 @@ func TestBuildDescription(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildDescription(tt.summary, tt.touched)
+			got := service.BuildDescription(tt.summary, tt.touched)
 			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
@@ -280,9 +282,9 @@ func TestSanitize(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := sanitize(tt.input)
+		got := service.Sanitize(tt.input)
 		if got != tt.want {
-			t.Errorf("sanitize(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("Sanitize(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }

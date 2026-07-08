@@ -47,6 +47,12 @@ const EnvPort = "WIKI_PORT"
 // Default: empty (relative links only).
 const EnvBaseURL = "WIKI_BASE_URL"
 
+// EnvSiteTitle is the site name the native renderer uses for the header,
+// page <title> suffix, and RSS/OpenGraph metadata.
+//
+// Default: "My Wiki".
+const EnvSiteTitle = "WIKI_SITE_TITLE"
+
 // ---------------------------------------------------------------------------
 // Filesystem watcher
 // ---------------------------------------------------------------------------

@@ -587,6 +587,11 @@ components:
         version: { type: string }
         vault_dir: { type: string }
         go_version: { type: string }
+        instance_name:
+          type: string
+          description: >
+            Human-readable instance identifier (WIKI_INSTANCE_NAME). Omitted when
+            unset. Mirrors the MCP whoami tool for cross-surface parity.
         user: { $ref: "#/components/schemas/UserInfo" }
       required: [name, version, vault_dir, go_version]
     UserInfo:

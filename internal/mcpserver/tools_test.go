@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -551,6 +552,71 @@ func TestEditHandlerFindNotFound(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected error result for missing find string")
+	}
+}
+
+// TestEditHandlerOmittedReplace verifies that omitting the "replace" key errors
+// (the MCP surface requires the key) and leaves the file unchanged.
+func TestEditHandlerOmittedReplace(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+
+	before, err := svc.Read("project/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "project/alpha",
+		"operations": []interface{}{
+			map[string]interface{}{"find": "Content."}, // no "replace" key
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Error("expected error result for omitted replace key")
+	}
+
+	after, err := svc.Read("project/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("file modified despite rejected patch:\nbefore: %q\nafter:  %q", before, after)
+	}
+}
+
+// TestEditHandlerExplicitEmptyReplace verifies that an explicit empty replace is
+// accepted and deletes the found text.
+func TestEditHandlerExplicitEmptyReplace(t *testing.T) {
+	v := setupTestVault(t)
+	svc := service.NewPageService(v.Storage)
+	lint := service.NewLintService(v, nil)
+	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+
+	result, err := handler(context.Background(), makeReq(map[string]any{
+		"path": "project/alpha",
+		"operations": []interface{}{
+			map[string]interface{}{"find": "Content.", "replace": ""},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("explicit empty replace should succeed, got error: %s", getTextContent(result))
+	}
+
+	readText, err := svc.Read("project/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(readText, "Content.") {
+		t.Errorf("expected 'Content.' to be deleted, still present in:\n%s", readText)
 	}
 }
 
@@ -1106,6 +1172,44 @@ func TestWhoamiHandler_WithUser(t *testing.T) {
 	}
 }
 
+// TestWhoamiHandler_PartialUserOmitsEmptyClaims locks in the omitempty contract
+// of the shared service.UserInfo: for an authenticated user with only a
+// username (empty email/name, nil groups), those optional claims must NOT appear
+// in the serialized whoami JSON as ""/null. Guards against a future change
+// silently flipping the fields back to always-present. The assertion marshals
+// just the user object so the top-level ServerInfo "name" field can't be
+// mistaken for the (absent) user "name" claim.
+func TestWhoamiHandler_PartialUserOmitsEmptyClaims(t *testing.T) {
+	v := setupTestVault(t)
+	handler := whoamiHandler(v.Dir, "")
+
+	ctx := middleware.WithUser(context.Background(), &middleware.UserInfo{
+		Username: "agent",
+		// Email, Name, Groups intentionally left zero.
+	})
+
+	result, err := handler(ctx, makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, ok := result.StructuredContent.(service.ServerInfo)
+	if !ok {
+		t.Fatalf("expected structuredContent to be service.ServerInfo, got %T", result.StructuredContent)
+	}
+	if info.User == nil {
+		t.Fatal("expected user info with auth context")
+	}
+
+	userJSON, err := json.Marshal(info.User)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(userJSON); got != `{"username":"agent"}` {
+		t.Errorf("expected empty email/name/groups claims to be omitted, got user JSON: %s", got)
+	}
+}
+
 func TestNewCreatesServer(t *testing.T) {
 	v := setupTestVault(t)
 	s := New(v, nil)
@@ -1194,7 +1298,7 @@ func TestWhoamiHandler_StructuredContent(t *testing.T) {
 	if result.StructuredContent == nil {
 		t.Fatal("expected structuredContent to be present")
 	}
-	info, ok := result.StructuredContent.(ServerInfo)
+	info, ok := result.StructuredContent.(service.ServerInfo)
 	if !ok {
 		t.Fatalf("expected structuredContent to be ServerInfo, got %T", result.StructuredContent)
 	}

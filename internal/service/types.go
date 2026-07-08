@@ -48,9 +48,13 @@ type ActivityEntry struct {
 }
 
 // PatchOp represents a single find-and-replace operation.
+//
+// Replace is a pointer so an omitted "replace" key (nil) is distinguishable
+// from an explicit empty string (pointer to ""). An omitted key is rejected by
+// Patch; an explicit empty string is a legitimate "delete this text" op.
 type PatchOp struct {
-	Find    string `json:"find"`
-	Replace string `json:"replace"`
+	Find    string  `json:"find"`
+	Replace *string `json:"replace"`
 }
 
 // SearchResponse is the result of a search across one or more engines.

@@ -19,14 +19,16 @@ import (
 // to memfs's atomic pointer swap.
 //
 // The closer is currently a no-op; reserved so the signature can grow a
-// real teardown later without touching call sites.
+// real teardown later without touching call sites. It is a real
+// func() error { return nil } (not a bare nil) so callers can invoke it
+// unconditionally without a nil-func panic.
 func buildNativePublicFS(v *vault.Vault, logger *slog.Logger) (fs.FS, func() error, *render.Builder, error) {
 	mf := memfs.New()
 	builder := render.NewBuilder(render.BuilderConfig{
 		Vault:     v,
-		SiteTitle: envOr("WIKI_SITE_TITLE", "My Wiki"),
+		SiteTitle: envOr(EnvSiteTitle, "My Wiki"),
 		BaseURL:   envOr(EnvBaseURL, ""),
 		Logger:    logger,
 	})
-	return mf, nil, builder, nil
+	return mf, func() error { return nil }, builder, nil
 }

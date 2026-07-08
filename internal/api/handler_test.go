@@ -321,6 +321,64 @@ func TestPagePatchEndpointFindNotFound(t *testing.T) {
 	}
 }
 
+// TestPagePatchEndpointOmittedReplace verifies that omitting the "replace" key
+// is rejected with a 4xx and leaves the page unchanged (a missing key must not
+// be treated as an empty-string delete).
+func TestPagePatchEndpointOmittedReplace(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	// Capture the page content before the patch attempt.
+	rBefore := httptest.NewRequest(http.MethodGet, "/api/pages/project/alpha.md", nil)
+	wBefore := httptest.NewRecorder()
+	mux.ServeHTTP(wBefore, rBefore)
+	before, _ := io.ReadAll(wBefore.Body)
+
+	body := `{"operations":[{"find":"Content."}]}`
+	r := httptest.NewRequest(http.MethodPatch, "/api/pages/project/alpha.md", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for omitted replace, got %d", w.Code)
+	}
+
+	// Page must be unchanged.
+	rAfter := httptest.NewRequest(http.MethodGet, "/api/pages/project/alpha.md", nil)
+	wAfter := httptest.NewRecorder()
+	mux.ServeHTTP(wAfter, rAfter)
+	after, _ := io.ReadAll(wAfter.Body)
+	if string(after) != string(before) {
+		t.Fatalf("page modified despite rejected patch:\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
+// TestPagePatchEndpointExplicitEmptyReplace verifies that an explicit empty
+// replace string is a legitimate "delete this text" op that succeeds.
+func TestPagePatchEndpointExplicitEmptyReplace(t *testing.T) {
+	mux, _ := setupTestMux(t)
+
+	body := `{"operations":[{"find":"Content.","replace":""}]}`
+	r := httptest.NewRequest(http.MethodPatch, "/api/pages/project/alpha.md", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		b, _ := io.ReadAll(w.Body)
+		t.Fatalf("expected 200 for explicit empty replace, got %d: %s", w.Code, string(b))
+	}
+
+	// The found text must be gone.
+	r2 := httptest.NewRequest(http.MethodGet, "/api/pages/project/alpha.md", nil)
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, r2)
+	b, _ := io.ReadAll(w2.Body)
+	if strings.Contains(string(b), "Content.") {
+		t.Fatalf("expected 'Content.' to be deleted, still present: %s", string(b))
+	}
+}
+
 func TestDirectoryEndpoint(t *testing.T) {
 	mux, _ := setupTestMux(t)
 
@@ -404,7 +462,7 @@ func TestWhoamiEndpoint(t *testing.T) {
 	}
 
 	var resp struct {
-		Data ServerInfo `json:"data"`
+		Data service.ServerInfo `json:"data"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
@@ -440,7 +498,7 @@ func TestWhoamiEndpoint_WithUser(t *testing.T) {
 	}
 
 	var resp struct {
-		Data ServerInfo `json:"data"`
+		Data service.ServerInfo `json:"data"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)

@@ -12,7 +12,8 @@ import (
 
 // MutationEvent is the router's local shape for a vault mutation. We do not
 // import internal/service here to keep the dispatch package standalone; the
-// adapter in serve.go (Phase 4) maps service.MutationEvent → dispatch.MutationEvent.
+// adapter in internal/cli/dispatch_pipeline.go maps
+// service.MutationEvent → dispatch.MutationEvent.
 type MutationEvent struct {
 	Kind string
 	Path string
@@ -163,7 +164,7 @@ func (r *EventRouter) RecordReconcile(paths []string) {
 	ctx := context.Background()
 	ts := time.Now().UTC()
 
-	// Phase 2 only dispatches EventInboxChanged; when future events arrive
+	// Only EventInboxChanged is dispatched today; when future events arrive
 	// we can add a parameter or a per-event scan.
 	for _, consumer := range r.consumersFor(EventInboxChanged) {
 		filtered := filterPaths(paths, consumer.PathFilters)
@@ -188,9 +189,9 @@ func (r *EventRouter) RecordReconcile(paths []string) {
 	}
 }
 
-// Close stops pending timers and prevents further dispatches. Phase 2 policy
-// is to drop in-flight work; Phase 3 may choose to flush synchronously.
-// Subsequent Record* calls become no-ops.
+// Close stops pending timers and prevents further dispatches. In-flight work
+// is dropped rather than flushed synchronously. Subsequent Record* calls
+// become no-ops.
 func (r *EventRouter) Close() error {
 	r.mu.Lock()
 	if r.closed {
@@ -272,7 +273,7 @@ func (r *EventRouter) onDebounceFlush(key DebounceKey, batch DebounceBatch) {
 	env := r.buildEnvelope(key.Event, SourceFsnotify, filtered, coalesced, time.Now().UTC())
 	// SourceFsnotify is a reasonable default for debounced flushes; API and
 	// fsnotify events coalesce into the same bucket, so no single source
-	// label is strictly correct. Phase 3 may track the source set per entry.
+	// label is strictly correct.
 
 	if err := r.dispatcher.Dispatch(context.Background(), consumer, env); err != nil {
 		r.logger.Error("dispatch.flush.error",

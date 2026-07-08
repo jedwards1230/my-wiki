@@ -1,8 +1,6 @@
 package search
 
 import (
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -35,39 +33,12 @@ func (s *SubstringSearcher) Search(query string, limit int) ([]Result, error) {
 	lowerQ := strings.ToLower(query)
 	var results []Result
 
-	for _, absPath := range pages {
-		rel, _ := filepath.Rel(s.vault.Dir, absPath)
-
-		// Skip activity log files (OS-aware separator)
-		activityPrefix := filepath.Join("meta", "activity") + string(filepath.Separator)
-		if strings.HasPrefix(rel, activityPrefix) {
+	for _, rel := range pages {
+		lp, ok := loadPage(s.vault, rel)
+		if !ok {
 			continue
 		}
-
-		// Skip generated index files
-		if filepath.Base(rel) == "index.md" {
-			continue
-		}
-
-		data, err := os.ReadFile(absPath)
-		if err != nil {
-			continue
-		}
-		content := string(data)
-
-		fm, _ := vault.ParseFrontmatter(absPath)
-
-		title := strings.TrimSuffix(filepath.Base(absPath), ".md")
-		if fm != nil && fm["title"] != "" {
-			title = fm["title"]
-		}
-
-		tags := ""
-		if fm != nil {
-			tags = fm["tags"]
-		}
-
-		body := StripFrontmatter(content)
+		rel, title, tags, body := lp.rel, lp.title, lp.tags, lp.body
 
 		var score float64
 		match := ""

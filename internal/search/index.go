@@ -3,8 +3,6 @@ package search
 import (
 	"context"
 	"math"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -71,41 +69,15 @@ func (s *IndexSearcher) Build() error {
 		postings: make(map[string][]posting),
 	}
 
-	for _, absPath := range pages {
-		rel, _ := filepath.Rel(s.vault.Dir, absPath)
-
-		// Skip activity logs (OS-aware separator)
-		activityPrefix := filepath.Join("meta", "activity") + string(filepath.Separator)
-		if strings.HasPrefix(rel, activityPrefix) {
+	for _, rel := range pages {
+		lp, ok := loadPage(s.vault, rel)
+		if !ok {
 			continue
 		}
-
-		// Skip generated index files
-		if filepath.Base(rel) == "index.md" {
-			continue
-		}
-
-		data, err := os.ReadFile(absPath)
-		if err != nil {
-			continue
-		}
-		content := string(data)
-
-		fm, _ := vault.ParseFrontmatter(absPath)
-
-		title := strings.TrimSuffix(filepath.Base(absPath), ".md")
-		tags := ""
-		if fm != nil {
-			if fm["title"] != "" {
-				title = fm["title"]
-			}
-			tags = fm["tags"]
-		}
-
-		body := StripFrontmatter(content)
+		title, tags, body := lp.title, lp.tags, lp.body
 
 		doc := document{
-			path:    rel,
+			path:    lp.rel,
 			title:   title,
 			tags:    tags,
 			content: body,

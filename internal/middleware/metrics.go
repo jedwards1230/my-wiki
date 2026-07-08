@@ -38,33 +38,6 @@ func Metrics(next http.Handler) http.Handler {
 	})
 }
 
-type statusWriter struct {
-	http.ResponseWriter
-	status      int
-	wroteHeader bool
-}
-
-func (w *statusWriter) WriteHeader(code int) {
-	if w.wroteHeader {
-		return
-	}
-	w.status = code
-	w.wroteHeader = true
-	w.ResponseWriter.WriteHeader(code)
-}
-
-func (w *statusWriter) Write(b []byte) (int, error) {
-	if !w.wroteHeader {
-		w.status = http.StatusOK
-		w.wroteHeader = true
-	}
-	return w.ResponseWriter.Write(b)
-}
-
-func (w *statusWriter) Unwrap() http.ResponseWriter {
-	return w.ResponseWriter
-}
-
 // routePattern extracts the matched route pattern from Go 1.22+ ServeMux.
 // Falls back to a generic label to avoid high-cardinality explosion.
 func routePattern(r *http.Request) string {

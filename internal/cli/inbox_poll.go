@@ -17,7 +17,7 @@ import (
 // NFS server (one shallow inbox/ walk per minute).
 const defaultInboxPollInterval = 60 * time.Second
 
-// inboxChangeRecorder is the slice of *dispatch.EventRouter the poller needs.
+// inboxChangeRecorder is the subset of *dispatch.EventRouter the poller needs.
 // Narrowing to an interface lets tests inject a recording fake instead of
 // standing up a full router + debouncer + dispatcher.
 type inboxChangeRecorder interface {

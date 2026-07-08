@@ -2,7 +2,6 @@ package service
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,7 +22,6 @@ func isRawPath(rel string) bool {
 type LintService struct {
 	vault     *vault.Vault
 	logSvc    *LogService
-	tagSvc    *TagService
 	config    LintConfig
 	configErr error // non-nil when meta/lint-config.yaml exists but failed to parse
 }
@@ -37,7 +35,6 @@ func NewLintService(v *vault.Vault, logSvc *LogService) *LintService {
 	return &LintService{
 		vault:     v,
 		logSvc:    logSvc,
-		tagSvc:    NewTagService(v),
 		config:    cfg,
 		configErr: err,
 	}
@@ -48,30 +45,36 @@ func NewLintService(v *vault.Vault, logSvc *LogService) *LintService {
 func (s *LintService) Run(check string) (*LintReport, error) {
 	report := &LintReport{}
 
+	// Walk the vault page list once and share it across every page-walking
+	// check instead of re-walking per check. pagesErr is threaded through so a
+	// walk failure surfaces under each check exactly as it did when each check
+	// walked independently.
+	pages, pagesErr := s.vault.FindWikiPages()
+
 	switch check {
 	case "all":
-		s.checkFrontmatter(report)
-		s.checkTags(report, false)
-		s.checkLinks(report)
-		s.checkOrphans(report)
-		s.checkSize(report)
-		s.checkClippings(report)
-		s.checkStub(report)
+		s.checkFrontmatter(report, pages, pagesErr)
+		s.checkTags(report, pages, pagesErr)
+		s.checkLinks(report, pages, pagesErr)
+		s.checkOrphans(report, pages, pagesErr)
+		s.checkSize(report, pages, pagesErr)
+		s.checkClippings(report, pages, pagesErr)
+		s.checkStub(report, pages, pagesErr)
 		s.checkLog(report)
 	case "frontmatter":
-		s.checkFrontmatter(report)
+		s.checkFrontmatter(report, pages, pagesErr)
 	case "tags":
-		s.checkTags(report, true)
+		s.checkTags(report, pages, pagesErr)
 	case "links":
-		s.checkLinks(report)
+		s.checkLinks(report, pages, pagesErr)
 	case "orphans":
-		s.checkOrphans(report)
+		s.checkOrphans(report, pages, pagesErr)
 	case "size":
-		s.checkSize(report)
+		s.checkSize(report, pages, pagesErr)
 	case "clippings":
-		s.checkClippings(report)
+		s.checkClippings(report, pages, pagesErr)
 	case "stub":
-		s.checkStub(report)
+		s.checkStub(report, pages, pagesErr)
 	case "log":
 		s.checkLog(report)
 	default:
@@ -105,17 +108,17 @@ func (s *LintService) checkLog(report *LintReport) {
 	}
 }
 
-func (s *LintService) checkFrontmatter(report *LintReport) {
-	pages, err := s.vault.FindWikiPages()
-	if err != nil {
+func (s *LintService) checkFrontmatter(report *LintReport, pages []string, pagesErr error) {
+	if pagesErr != nil {
 		report.Issues = append(report.Issues, LintIssue{
-			Check: "frontmatter", Level: "ERROR", Message: err.Error(),
+			Check: "frontmatter", Level: "ERROR", Message: pagesErr.Error(),
 		})
 		return
 	}
 
 	for _, page := range pages {
-		rel, _ := filepath.Rel(s.vault.Dir, page)
+		// FindWikiPages returns storage-relative, forward-slash paths.
+		rel := page
 
 		// Pages under raw/ are verbatim source imports (clippings, etc.) and
 		// carry whatever frontmatter the original had — they're exempt from the
@@ -125,14 +128,14 @@ func (s *LintService) checkFrontmatter(report *LintReport) {
 			continue
 		}
 
-		if err := vault.ValidateYAMLSyntax(page); err != nil {
+		if err := s.vault.ValidateYAMLSyntax(rel); err != nil {
 			report.Issues = append(report.Issues, LintIssue{
 				File: rel, Check: "frontmatter", Level: "FAIL", Message: err.Error(),
 			})
 			continue
 		}
 
-		fm, err := vault.ParseFrontmatter(page)
+		fm, err := s.vault.ParseFrontmatter(rel)
 		if err != nil {
 			report.Issues = append(report.Issues, LintIssue{
 				File: rel, Check: "frontmatter", Level: "FAIL", Message: err.Error(),
@@ -166,27 +169,20 @@ func (s *LintService) checkFrontmatter(report *LintReport) {
 	}
 }
 
-func (s *LintService) checkTags(report *LintReport, _ bool) {
-	tagCounts, err := s.tagSvc.CountTags()
-	if err != nil {
+func (s *LintService) checkTags(report *LintReport, pages []string, pagesErr error) {
+	if pagesErr != nil {
 		report.Issues = append(report.Issues, LintIssue{
-			Check: "tags", Level: "ERROR", Message: err.Error(),
+			Check: "tags", Level: "ERROR", Message: pagesErr.Error(),
 		})
 		return
 	}
 
-	pages, err := s.vault.FindWikiPages()
-	if err != nil {
-		report.Issues = append(report.Issues, LintIssue{
-			Check: "tags", Level: "ERROR", Message: err.Error(),
-		})
-		return
-	}
+	tagCounts := countTagsFromPages(s.vault, pages)
 
 	// Per-page structural checks.
 	for _, page := range pages {
-		rel, _ := filepath.Rel(s.vault.Dir, page)
-		fm, fmErr := vault.ParseFrontmatter(page)
+		rel := page
+		fm, fmErr := s.vault.ParseFrontmatter(page)
 		if fmErr != nil || fm == nil {
 			continue
 		}
@@ -238,7 +234,7 @@ func (s *LintService) checkTags(report *LintReport, _ bool) {
 	}
 }
 
-func (s *LintService) checkLinks(report *LintReport) {
+func (s *LintService) checkLinks(report *LintReport, pages []string, pagesErr error) {
 	slugs, err := s.vault.BuildSlugIndex()
 	if err != nil {
 		report.Issues = append(report.Issues, LintIssue{
@@ -247,10 +243,9 @@ func (s *LintService) checkLinks(report *LintReport) {
 		return
 	}
 
-	pages, err := s.vault.FindWikiPages()
-	if err != nil {
+	if pagesErr != nil {
 		report.Issues = append(report.Issues, LintIssue{
-			Check: "links", Level: "ERROR", Message: err.Error(),
+			Check: "links", Level: "ERROR", Message: pagesErr.Error(),
 		})
 		return
 	}
@@ -264,8 +259,8 @@ func (s *LintService) checkLinks(report *LintReport) {
 	var order []string                   // insertion order
 
 	for _, page := range pages {
-		rel, _ := filepath.Rel(s.vault.Dir, page)
-		links, err := vault.ExtractWikilinks(page)
+		rel := page
+		links, err := s.vault.ExtractWikilinks(page)
 		if err != nil {
 			continue
 		}
@@ -298,9 +293,7 @@ func (s *LintService) checkLinks(report *LintReport) {
 // mutation. It checks frontmatter completeness and outbound wikilink validity.
 // Returns only issues introduced by this specific page — not vault-wide issues.
 func (s *LintService) LintPage(relPath string) []LintIssue {
-	if !strings.HasSuffix(relPath, ".md") {
-		relPath += ".md"
-	}
+	relPath = ensureMD(relPath)
 
 	var issues []LintIssue
 	issues = append(issues, s.lintPageFrontmatter(relPath)...)
@@ -311,9 +304,7 @@ func (s *LintService) LintPage(relPath string) []LintIssue {
 // LintDelete checks for newly broken inbound links after a page deletion.
 // It identifies pages that now reference a slug that no longer resolves.
 func (s *LintService) LintDelete(relPath string) []LintIssue {
-	if !strings.HasSuffix(relPath, ".md") {
-		relPath += ".md"
-	}
+	relPath = ensureMD(relPath)
 
 	// Compute slugs the deleted page contributed. Normalize relPath to
 	// forward slashes to match BuildSlugIndex's canonical key form — without
@@ -360,8 +351,8 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 
 	var issues []LintIssue
 	for _, page := range pages {
-		rel, _ := filepath.Rel(s.vault.Dir, page)
-		links, err := vault.ExtractWikilinks(page)
+		rel := page
+		links, err := s.vault.ExtractWikilinks(page)
 		if err != nil {
 			continue
 		}
@@ -381,16 +372,15 @@ func (s *LintService) LintDelete(relPath string) []LintIssue {
 
 // lintPageFrontmatter checks frontmatter for a single page file.
 func (s *LintService) lintPageFrontmatter(relPath string) []LintIssue {
-	absPath := filepath.Join(s.vault.Dir, relPath)
 	const check = "frontmatter"
 
 	// Validate YAML syntax before field checks — catches malformed YAML
 	// that the lenient key-value parser would silently skip.
-	if err := vault.ValidateYAMLSyntax(absPath); err != nil {
+	if err := s.vault.ValidateYAMLSyntax(relPath); err != nil {
 		return []LintIssue{{File: relPath, Check: check, Level: "FAIL", Message: err.Error()}}
 	}
 
-	fm, err := vault.ParseFrontmatter(absPath)
+	fm, err := s.vault.ParseFrontmatter(relPath)
 	if err != nil {
 		return []LintIssue{{File: relPath, Check: check, Level: "FAIL", Message: err.Error()}}
 	}
@@ -417,7 +407,6 @@ func (s *LintService) lintPageFrontmatter(relPath string) []LintIssue {
 
 // lintPageLinks checks outbound wikilinks for a single page.
 func (s *LintService) lintPageLinks(relPath string) []LintIssue {
-	absPath := filepath.Join(s.vault.Dir, relPath)
 	slugs, err := s.vault.BuildSlugIndex()
 	if err != nil {
 		return []LintIssue{{
@@ -426,7 +415,7 @@ func (s *LintService) lintPageLinks(relPath string) []LintIssue {
 		}}
 	}
 
-	links, err := vault.ExtractWikilinks(absPath)
+	links, err := s.vault.ExtractWikilinks(relPath)
 	if err != nil {
 		return []LintIssue{{
 			File: relPath, Check: "links", Level: "ERROR",
@@ -482,7 +471,7 @@ func stripFrontmatter(content string) string {
 // Both the tag name and the raw-path prefix are read from
 // meta/lint-config.yaml so this check stays in sync with the schema
 // without a code change. See [[LintConfig]].
-func (s *LintService) checkClippings(report *LintReport) {
+func (s *LintService) checkClippings(report *LintReport, pages []string, pagesErr error) {
 	// Surface a config parse error up-front: if the file exists but
 	// failed to load, the check is effectively running on defaults and
 	// the user almost certainly wants to know.
@@ -496,16 +485,15 @@ func (s *LintService) checkClippings(report *LintReport) {
 	clippingTag := s.config.Clippings.Tag
 	rawPrefix := s.config.Clippings.RawPathPrefix
 
-	pages, err := s.vault.FindWikiPages()
-	if err != nil {
+	if pagesErr != nil {
 		report.Issues = append(report.Issues, LintIssue{
-			Check: "clippings", Level: "ERROR", Message: err.Error(),
+			Check: "clippings", Level: "ERROR", Message: pagesErr.Error(),
 		})
 		return
 	}
 
 	for _, page := range pages {
-		fm, err := vault.ParseFrontmatter(page)
+		fm, err := s.vault.ParseFrontmatter(page)
 		if err != nil || fm == nil {
 			continue
 		}
@@ -521,7 +509,7 @@ func (s *LintService) checkClippings(report *LintReport) {
 			continue
 		}
 
-		data, err := os.ReadFile(page)
+		data, err := s.vault.Storage.ReadFile(page)
 		if err != nil {
 			continue
 		}
@@ -530,7 +518,7 @@ func (s *LintService) checkClippings(report *LintReport) {
 		// Permissive substring match — accepts markdown URLs, root-relative
 		// paths, and wikilinks all targeting the raw-path prefix.
 		if !strings.Contains(body, rawPrefix) {
-			rel, _ := filepath.Rel(s.vault.Dir, page)
+			rel := page
 			report.Issues = append(report.Issues, LintIssue{
 				File: rel, Check: "clippings", Level: "WARN",
 				Message: fmt.Sprintf("page tagged %q has no link into %q in body — add a '## Sources' section", clippingTag, rawPrefix),
@@ -558,7 +546,7 @@ func (s *LintService) checkClippings(report *LintReport) {
 //
 // Action is delegated to the maintenance audit agent (LLM judgment in
 // the loop) — this check only emits WARNs.
-func (s *LintService) checkStub(report *LintReport) {
+func (s *LintService) checkStub(report *LintReport, pages []string, pagesErr error) {
 	// Surface a config parse error up-front: if the file exists but
 	// failed to load, the check is running on default cooldown and the
 	// user almost certainly wants to know — silently honoring defaults
@@ -570,10 +558,9 @@ func (s *LintService) checkStub(report *LintReport) {
 		})
 	}
 
-	pages, err := s.vault.FindWikiPages()
-	if err != nil {
+	if pagesErr != nil {
 		report.Issues = append(report.Issues, LintIssue{
-			Check: "stub", Level: "ERROR", Message: err.Error(),
+			Check: "stub", Level: "ERROR", Message: pagesErr.Error(),
 		})
 		return
 	}
@@ -582,8 +569,7 @@ func (s *LintService) checkStub(report *LintReport) {
 	cutoff := time.Now().Add(-idle)
 
 	for _, page := range pages {
-		rel, _ := filepath.Rel(s.vault.Dir, page)
-		rel = filepath.ToSlash(rel)
+		rel := page
 
 		// Vault root only.
 		if strings.ContainsRune(rel, '/') {
@@ -594,7 +580,7 @@ func (s *LintService) checkStub(report *LintReport) {
 			continue
 		}
 
-		info, err := os.Stat(page)
+		info, err := s.vault.Storage.Stat(page)
 		if err != nil {
 			continue
 		}
@@ -603,7 +589,7 @@ func (s *LintService) checkStub(report *LintReport) {
 			continue
 		}
 
-		data, err := os.ReadFile(page)
+		data, err := s.vault.Storage.ReadFile(page)
 		if err != nil {
 			continue
 		}
@@ -622,19 +608,18 @@ func (s *LintService) checkStub(report *LintReport) {
 // maxPageWords is the word-count threshold above which a page gets a size warning.
 const maxPageWords = 1000
 
-func (s *LintService) checkSize(report *LintReport) {
-	pages, err := s.vault.FindWikiPages()
-	if err != nil {
+func (s *LintService) checkSize(report *LintReport, pages []string, pagesErr error) {
+	if pagesErr != nil {
 		report.Issues = append(report.Issues, LintIssue{
-			Check: "size", Level: "ERROR", Message: err.Error(),
+			Check: "size", Level: "ERROR", Message: pagesErr.Error(),
 		})
 		return
 	}
 
 	for _, page := range pages {
-		rel, _ := filepath.Rel(s.vault.Dir, page)
+		rel := page
 
-		data, err := os.ReadFile(page)
+		data, err := s.vault.Storage.ReadFile(page)
 		if err != nil {
 			continue
 		}
@@ -651,18 +636,17 @@ func (s *LintService) checkSize(report *LintReport) {
 	}
 }
 
-func (s *LintService) checkOrphans(report *LintReport) {
-	pages, err := s.vault.FindWikiPages()
-	if err != nil {
+func (s *LintService) checkOrphans(report *LintReport, pages []string, pagesErr error) {
+	if pagesErr != nil {
 		report.Issues = append(report.Issues, LintIssue{
-			Check: "orphans", Level: "ERROR", Message: err.Error(),
+			Check: "orphans", Level: "ERROR", Message: pagesErr.Error(),
 		})
 		return
 	}
 
 	targets := make(map[string]bool)
 	for _, page := range pages {
-		links, err := vault.ExtractWikilinks(page)
+		links, err := s.vault.ExtractWikilinks(page)
 		if err != nil {
 			continue
 		}
@@ -672,7 +656,7 @@ func (s *LintService) checkOrphans(report *LintReport) {
 	}
 
 	for _, page := range pages {
-		rel, _ := filepath.Rel(s.vault.Dir, page)
+		rel := page
 		base := strings.TrimSuffix(filepath.Base(page), ".md")
 
 		// Skip index and log

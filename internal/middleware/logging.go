@@ -12,7 +12,7 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			lw := &logStatusWriter{ResponseWriter: w, status: http.StatusOK}
+			lw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(lw, r)
 
 			logger.Info("request",
@@ -24,31 +24,4 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 			)
 		})
 	}
-}
-
-type logStatusWriter struct {
-	http.ResponseWriter
-	status      int
-	wroteHeader bool
-}
-
-func (w *logStatusWriter) WriteHeader(code int) {
-	if w.wroteHeader {
-		return
-	}
-	w.status = code
-	w.wroteHeader = true
-	w.ResponseWriter.WriteHeader(code)
-}
-
-func (w *logStatusWriter) Write(b []byte) (int, error) {
-	if !w.wroteHeader {
-		w.status = http.StatusOK
-		w.wroteHeader = true
-	}
-	return w.ResponseWriter.Write(b)
-}
-
-func (w *logStatusWriter) Unwrap() http.ResponseWriter {
-	return w.ResponseWriter
 }
