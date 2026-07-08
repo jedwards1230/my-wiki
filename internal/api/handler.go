@@ -84,34 +84,6 @@ func NewHandler(v *vault.Vault, searchSvc *service.SearchService, opts ...Handle
 	return h
 }
 
-// RegisterRoutes registers all API routes on the given mux.
-// Read-only GET routes are unauthenticated by default. When authReads is enabled,
-// they are also wrapped with the auth middleware. Mutating routes (PUT, DELETE,
-// PATCH, POST) are always wrapped with the auth middleware when configured.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	// Read-only routes — optionally auth-protected when read auth is enabled
-	mux.Handle("GET /api/lint", h.wrapRead(http.HandlerFunc(h.handleLint)))
-	mux.Handle("GET /api/directory", h.wrapRead(http.HandlerFunc(h.handleDirectoryList)))
-	mux.Handle("GET /api/pages/{path...}", h.wrapRead(http.HandlerFunc(h.handlePageRead)))
-	mux.Handle("GET /api/pages", h.wrapRead(http.HandlerFunc(h.handlePageList)))
-	mux.Handle("GET /api/recent", h.wrapRead(http.HandlerFunc(h.handleRecentList)))
-	mux.Handle("GET /api/search", h.wrapRead(http.HandlerFunc(h.handleSearch)))
-	mux.Handle("GET /api/graph.json", h.wrapRead(http.HandlerFunc(h.handleGraph)))
-	mux.Handle("GET /api/tags", h.wrapRead(http.HandlerFunc(h.handleTags)))
-	mux.Handle("GET /api/whoami", h.wrapRead(http.HandlerFunc(h.handleWhoami)))
-
-	// Mutating routes — protected by auth middleware when configured
-	mux.Handle("POST /api/directory/generate", h.wrapMutating(http.HandlerFunc(h.handleDirectoryGenerate)))
-	mux.Handle("POST /api/activity", h.wrapMutating(http.HandlerFunc(h.handleActivityAppend)))
-	mux.Handle("PUT /api/pages/{path...}", h.wrapMutating(http.HandlerFunc(h.handlePageWrite)))
-	mux.Handle("DELETE /api/pages/{path...}", h.wrapMutating(http.HandlerFunc(h.handlePageDelete)))
-	mux.Handle("PATCH /api/pages/{path...}", h.wrapMutating(http.HandlerFunc(h.handlePagePatch)))
-
-	// Renderer fragment endpoints (popover + backlinks). Wired only when
-	// WithRenderEndpoints was applied — i.e. native renderer mode.
-	h.registerRenderRoutes(mux)
-}
-
 // wrapMutating wraps a handler with the auth middleware when configured.
 // Returns the handler unchanged when auth is disabled.
 func (h *Handler) wrapMutating(handler http.Handler) http.Handler {

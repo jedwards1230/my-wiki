@@ -39,18 +39,9 @@ func WithRenderEndpoints(pages RenderPage, backlinks RenderBacklinks) HandlerOpt
 	}
 }
 
-// Extend Handler with renderer hooks. Stored on the Handler so existing
-// HandlerOption wiring continues to work.
-//
-//nolint:unused // fields are written by WithRenderEndpoints and read by registerRenderRoutes
-func (h *Handler) registerRenderRoutes(mux *http.ServeMux) {
-	if h.renderPages != nil {
-		mux.Handle("GET /api/popover/{slug...}", h.wrapRead(http.HandlerFunc(h.handlePopover)))
-	}
-	if h.renderBacklinks != nil {
-		mux.Handle("GET /api/backlinks", h.wrapRead(http.HandlerFunc(h.handleBacklinks)))
-	}
-}
+// The renderer fragment routes (popover + backlinks) are registered from the
+// central apiRoutes table in routes.go, guarded on renderPages / renderBacklinks
+// being wired by WithRenderEndpoints (native-renderer mode only).
 
 func (h *Handler) handlePopover(w http.ResponseWriter, r *http.Request) {
 	slug := strings.Trim(r.PathValue("slug"), "/")

@@ -1,0 +1,603 @@
+openapi: 3.1.0
+info:
+  title: my-wiki REST API
+  version: "1.0"
+  description: >
+    REST API of the wiki-server binary — a primary agent surface for reading and
+    mutating an Obsidian vault. Every JSON response is wrapped in an envelope:
+    `{ "data": <payload> }` on success, `{ "error": <message> }` on failure.
+    Mutating page endpoints may add a `warnings` array of lint findings.
+
+
+    Auth is OIDC bearer-JWT (issuer/audience from `WIKI_AUTH_ISSUER` /
+    `WIKI_AUTH_AUDIENCE`). Read routes are unauthenticated by default and become
+    auth-gated only when `WIKI_AUTH_READS=true`; mutating routes are always
+    auth-gated when auth is configured. The renderer fragment routes
+    (`/api/popover/{slug}`, `/api/backlinks`) exist only in native-renderer mode.
+
+
+    This spec is the machine-readable contract for the routes registered in
+    internal/api; TestOpenAPISync keeps it in exact sync with the code.
+servers:
+  - url: /
+    description: Same origin as the wiki-server instance.
+
+tags:
+  - name: pages
+    description: Vault page CRUD and patch operations.
+  - name: discovery
+    description: Listing, search, tags, graph, and directory index.
+  - name: activity
+    description: Structured activity-log append.
+  - name: meta
+    description: Server identity and lint.
+  - name: fragments
+    description: HTML fragments for htmx (native-renderer mode only).
+
+paths:
+  /api/lint:
+    get:
+      tags: [meta]
+      summary: Run vault lint checks
+      description: Runs lint checks over the vault and returns a report.
+      parameters:
+        - name: check
+          in: query
+          description: >
+            Which check to run: all, frontmatter, tags, links, orphans, size,
+            clippings, stub, or log. Defaults to all.
+          schema:
+            type: string
+            default: all
+      responses:
+        "200":
+          description: Lint report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/LintReport" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /api/directory:
+    get:
+      tags: [discovery]
+      summary: List all pages with metadata
+      description: Returns every wiki page with title, description, and tags.
+      responses:
+        "200":
+          description: Directory listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/DirectoryEntry" }
+        "500": { $ref: "#/components/responses/Error" }
+
+  /api/directory/generate:
+    post:
+      tags: [discovery]
+      summary: Regenerate directory index pages
+      description: >
+        Regenerates the auto-maintained directory index pages and returns the
+        number of pages indexed. Mutating — auth-gated when auth is configured.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Generation result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      pages_indexed: { type: integer }
+        "401": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+
+  /api/pages:
+    get:
+      tags: [pages]
+      summary: List pages
+      description: Lists vault pages, optionally filtered by prefix and sorted.
+      parameters:
+        - name: prefix
+          in: query
+          description: Restrict to pages whose path starts with this prefix.
+          schema: { type: string }
+        - name: sort_by
+          in: query
+          description: >
+            Sort order. When "modified", each entry includes an RFC 3339
+            `modified` timestamp.
+          schema:
+            type: string
+            enum: [modified]
+        - name: limit
+          in: query
+          description: Maximum number of pages to return (positive integer).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Page listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PageInfo" }
+        "500": { $ref: "#/components/responses/Error" }
+
+  /api/pages/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: >
+          Vault-relative page path, without the .md extension. May contain
+          slashes (registered as a trailing wildcard).
+        schema: { type: string }
+    get:
+      tags: [pages]
+      summary: Read a page
+      description: Returns the raw markdown content of a page.
+      responses:
+        "200":
+          description: Page content.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/PageContent" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [pages]
+      summary: Create or overwrite a page
+      description: >
+        Writes the request body (raw markdown, max 10 MB) to the page. Mutating —
+        auth-gated when auth is configured. The response may carry lint warnings.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          text/markdown:
+            schema: { type: string }
+      responses:
+        "200":
+          description: Write result, with optional lint warnings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, example: ok }
+                      path: { type: string }
+                  warnings:
+                    type: array
+                    items: { $ref: "#/components/schemas/LintIssue" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [pages]
+      summary: Delete a page
+      description: >
+        Deletes the page. Mutating — auth-gated when auth is configured. The
+        response may carry lint warnings (e.g. resulting broken links).
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Delete result, with optional lint warnings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, example: deleted }
+                  warnings:
+                    type: array
+                    items: { $ref: "#/components/schemas/LintIssue" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [pages]
+      summary: Patch a page with find/replace operations
+      description: >
+        Applies an ordered list of find/replace operations to the page and
+        returns the new content. Mutating — auth-gated when auth is configured.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchRequest" }
+      responses:
+        "200":
+          description: Patched content, with optional lint warnings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/PageContent" }
+                  warnings:
+                    type: array
+                    items: { $ref: "#/components/schemas/LintIssue" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+
+  /api/recent:
+    get:
+      tags: [discovery]
+      summary: List recently modified pages
+      description: >
+        Convenience alias for GET /api/pages?sort_by=modified&limit=20. Entries
+        carry an RFC 3339 `modified` timestamp.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of pages to return (defaults to 20).
+          schema: { type: integer, minimum: 1, default: 20 }
+      responses:
+        "200":
+          description: Recently modified pages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PageInfo" }
+        "500": { $ref: "#/components/responses/Error" }
+
+  /api/search:
+    get:
+      tags: [discovery]
+      summary: Search the vault
+      description: >
+        Full-text search across one or more engines. Returns 501 when no search
+        engine is configured.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Query string (minimum 2 characters).
+          schema: { type: string, minLength: 2 }
+        - name: limit
+          in: query
+          description: Maximum number of results (defaults to 20).
+          schema: { type: integer, minimum: 1, default: 20 }
+        - name: engine
+          in: query
+          description: Restrict the search to a named engine.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Search results.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/SearchResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /api/graph.json:
+    get:
+      tags: [discovery]
+      summary: Vault link graph
+      description: >
+        Returns the wiki link graph ({nodes, links}) consumed by the right-rail
+        graph widget. Returns 501 when no vault is configured.
+      responses:
+        "200":
+          description: Graph nodes and links.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/GraphResponse" }
+        "500": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /api/tags:
+    get:
+      tags: [discovery]
+      summary: Tag usage report
+      description: Returns all tags in use with per-tag page counts.
+      responses:
+        "200":
+          description: Tag report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/TagReport" }
+        "500": { $ref: "#/components/responses/Error" }
+
+  /api/whoami:
+    get:
+      tags: [meta]
+      summary: Server identity and caller info
+      description: >
+        Returns server identity (name, version, vault dir, Go version). When the
+        request is authenticated, also returns the caller's user claims.
+      responses:
+        "200":
+          description: Server info.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/ServerInfo" }
+
+  /api/activity:
+    post:
+      tags: [activity]
+      summary: Append an activity-log entry
+      description: >
+        Appends a structured entry to the day's activity log. Mutating —
+        auth-gated when auth is configured.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivityEntry" }
+      responses:
+        "201":
+          description: Entry appended.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, example: ok }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /api/popover/{slug}:
+    get:
+      tags: [fragments]
+      summary: Page popover HTML fragment
+      description: >
+        Returns a small HTML fragment (not JSON) describing a page, for htmx
+        hover popovers. Native-renderer mode only; 404 when the page is unknown.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Canonical page slug (may contain slashes).
+          schema: { type: string }
+      responses:
+        "200":
+          description: HTML fragment.
+          content:
+            text/html:
+              schema: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/backlinks:
+    get:
+      tags: [fragments]
+      summary: Backlinks HTML fragment
+      description: >
+        Returns an HTML fragment (not JSON) listing pages that link to the given
+        slug, for htmx. Native-renderer mode only.
+      parameters:
+        - name: slug
+          in: query
+          required: true
+          description: Canonical page slug to list backlinks for.
+          schema: { type: string }
+      responses:
+        "200":
+          description: HTML fragment (an empty-state message when there are none).
+          content:
+            text/html:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        OIDC-issued JWT. The issuer and audience are configured via
+        WIKI_AUTH_ISSUER and WIKI_AUTH_AUDIENCE; group access via
+        WIKI_AUTH_ALLOWED_GROUPS.
+
+  responses:
+    Error:
+      description: Error envelope.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+    PageContent:
+      type: object
+      properties:
+        path: { type: string }
+        content: { type: string }
+    PageInfo:
+      type: object
+      properties:
+        path: { type: string }
+        title: { type: string }
+        has_meta: { type: boolean }
+        modified:
+          type: string
+          description: RFC 3339 timestamp; present only when sort_by=modified.
+      required: [path, has_meta]
+    PatchRequest:
+      type: object
+      properties:
+        operations:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/PatchOp" }
+      required: [operations]
+    PatchOp:
+      type: object
+      properties:
+        find: { type: string }
+        replace: { type: string }
+    LintReport:
+      type: object
+      properties:
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/LintIssue" }
+        total: { type: integer }
+        errors:
+          type: integer
+          description: Count of FAIL + WARN + ERROR (excludes INFO).
+    LintIssue:
+      type: object
+      properties:
+        file: { type: string }
+        check: { type: string }
+        level:
+          type: string
+          enum: [FAIL, WARN, ERROR, INFO]
+        message: { type: string }
+    DirectoryEntry:
+      type: object
+      properties:
+        path: { type: string }
+        title: { type: string }
+        description: { type: string }
+        tags: { type: string }
+      required: [path, title]
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/SearchResult" }
+        engines:
+          type: array
+          items: { type: string }
+        elapsed_ms:
+          type: object
+          additionalProperties: { type: number }
+    SearchResult:
+      type: object
+      properties:
+        path: { type: string }
+        title: { type: string }
+        score: { type: number }
+        snippet: { type: string }
+        match: { type: string }
+        engine: { type: string }
+    TagReport:
+      type: object
+      properties:
+        used:
+          type: array
+          items: { $ref: "#/components/schemas/TagUsage" }
+        total_pages: { type: integer }
+    TagUsage:
+      type: object
+      properties:
+        tag: { type: string }
+        count: { type: integer }
+    GraphResponse:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items: { $ref: "#/components/schemas/GraphNode" }
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/GraphLink" }
+    GraphNode:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        url: { type: string }
+      required: [id, url]
+    GraphLink:
+      type: object
+      properties:
+        source: { type: string }
+        target: { type: string }
+    ServerInfo:
+      type: object
+      properties:
+        name: { type: string }
+        version: { type: string }
+        vault_dir: { type: string }
+        go_version: { type: string }
+        user: { $ref: "#/components/schemas/UserInfo" }
+      required: [name, version, vault_dir, go_version]
+    UserInfo:
+      type: object
+      properties:
+        username: { type: string }
+        email: { type: string }
+        name: { type: string }
+        groups:
+          type: array
+          items: { type: string }
+      required: [username]
+    ActivityEntry:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        time: { type: string }
+        summary: { type: string }
+        touched:
+          type: array
+          items: { type: string }
+        auto_logged: { type: boolean }
+        day_summary:
+          type: string
+          description: >
+            When set, stored in the day file's frontmatter and used verbatim as
+            the meta/log index line for the day.
+      required: [type, title, time]
