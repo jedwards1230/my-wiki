@@ -11,8 +11,20 @@ import (
 	"github.com/jedwards1230/my-wiki/internal/middleware"
 	"github.com/jedwards1230/my-wiki/internal/notify"
 	"github.com/jedwards1230/my-wiki/internal/service"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// Logging levels used by mcpLog. mcp.LoggingLevel has no exported constants
+// in the go-sdk (it is a bare string type mirroring RFC-5424 syslog
+// severities), so the small set this package actually emits is named here.
+const (
+	logLevelDebug     mcp.LoggingLevel = "debug"
+	logLevelInfo      mcp.LoggingLevel = "info"
+	logLevelWarning   mcp.LoggingLevel = "warning"
+	logLevelError     mcp.LoggingLevel = "error"
+	logLevelCritical  mcp.LoggingLevel = "critical"
+	logLevelAlert     mcp.LoggingLevel = "alert"
+	logLevelEmergency mcp.LoggingLevel = "emergency"
 )
 
 // mcpLog sends a structured log message to the current MCP client session and tees
@@ -20,9 +32,13 @@ import (
 // regardless of whether the client is subscribed to MCP log notifications (the
 // streamable-http transport is stateless and the client may not be listening).
 //
+// session is the requesting call's *mcp.ServerSession (req.Session); it is nil
+// in a unit test that builds a bare *mcp.CallToolRequest with no live session —
+// the client-facing notification is skipped in that case (slog still fires).
+//
 // Authenticated user identity (from the request context) is added to both sinks.
 // MCP delivery errors are silently ignored since the slog tee already recorded it.
-func mcpLog(ctx context.Context, s *server.MCPServer, level mcp.LoggingLevel, logger string, data map[string]any) {
+func mcpLog(ctx context.Context, session *mcp.ServerSession, level mcp.LoggingLevel, logger string, data map[string]any) {
 	if user := middleware.UserFromContext(ctx); user != nil {
 		if data == nil {
 			data = map[string]any{}
@@ -44,21 +60,35 @@ func mcpLog(ctx context.Context, s *server.MCPServer, level mcp.LoggingLevel, lo
 	}
 	msg := fmt.Sprintf("mcp %s", logger)
 	switch level {
-	case mcp.LoggingLevelError, mcp.LoggingLevelCritical, mcp.LoggingLevelAlert, mcp.LoggingLevelEmergency:
+	case logLevelError, logLevelCritical, logLevelAlert, logLevelEmergency:
 		slog.Default().Error(msg, attrs...)
-	case mcp.LoggingLevelWarning:
+	case logLevelWarning:
 		slog.Default().Warn(msg, attrs...)
-	case mcp.LoggingLevelDebug:
+	case logLevelDebug:
 		slog.Default().Debug(msg, attrs...)
 	default:
 		slog.Default().Info(msg, attrs...)
 	}
 
-	_ = s.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(level, logger, data))
+	if session != nil {
+		_ = session.Log(ctx, &mcp.LoggingMessageParams{Level: level, Logger: logger, Data: data})
+	}
 }
 
-func getStringArg(req mcp.CallToolRequest, key string) string {
-	args := req.GetArguments()
+// unmarshalArgs decodes a tool call's raw JSON arguments into a map. A
+// nil/empty payload decodes to a nil map (every lookup below misses, same as
+// the pre-migration mcp-go GetArguments() default).
+func unmarshalArgs(req *mcp.CallToolRequest) (map[string]any, error) {
+	var raw map[string]any
+	if len(req.Params.Arguments) > 0 {
+		if err := json.Unmarshal(req.Params.Arguments, &raw); err != nil {
+			return nil, err
+		}
+	}
+	return raw, nil
+}
+
+func getStringArg(args map[string]any, key string) string {
 	if v, ok := args[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -67,8 +97,7 @@ func getStringArg(req mcp.CallToolRequest, key string) string {
 	return ""
 }
 
-func getIntArg(req mcp.CallToolRequest, key string) int {
-	args := req.GetArguments()
+func getIntArg(args map[string]any, key string) int {
 	if v, ok := args[key]; ok {
 		switch n := v.(type) {
 		case float64:
@@ -80,8 +109,7 @@ func getIntArg(req mcp.CallToolRequest, key string) int {
 	return 0
 }
 
-func getBoolArg(req mcp.CallToolRequest, key string) bool {
-	args := req.GetArguments()
+func getBoolArg(args map[string]any, key string) bool {
 	if v, ok := args[key]; ok {
 		if b, ok := v.(bool); ok {
 			return b
@@ -90,8 +118,7 @@ func getBoolArg(req mcp.CallToolRequest, key string) bool {
 	return false
 }
 
-func getStringArrayArg(req mcp.CallToolRequest, key string) []string {
-	args := req.GetArguments()
+func getStringArrayArg(args map[string]any, key string) []string {
 	v, ok := args[key]
 	if !ok {
 		return nil
@@ -109,18 +136,45 @@ func getStringArrayArg(req mcp.CallToolRequest, key string) []string {
 	return out
 }
 
+// textResult wraps text in a successful CallToolResult.
+func textResult(text string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: text}},
+	}
+}
+
+// structuredResult wraps a typed value as StructuredContent, with fallbackText
+// as the TextContent fallback for non-structured-aware clients — mirroring
+// mcp-go's NewToolResultStructured(structured, fallbackText).
+func structuredResult(structured any, fallbackText string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: fallbackText}},
+		StructuredContent: structured,
+	}
+}
+
+// errorResult wraps an expected, user-facing failure (bad input, a service
+// error) as a tool-level error: IsError with a text message the agent can
+// read, per the MCP convention of surfacing tool failures as errors in the
+// result rather than protocol-level errors.
+func errorResult(msg string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		IsError: true,
+		Content: []mcp.Content{&mcp.TextContent{Text: msg}},
+	}
+}
+
 // resultWithLintWarnings constructs a tool result with the given text and
 // optional lint warnings. When warnings are present they are appended as a
 // second text content block and emitted as an MCP log notification at warning
 // level per the 2025-11-25 spec (notifications/message).
-func resultWithLintWarnings(ctx context.Context, s *server.MCPServer, text string, warnings []service.LintIssue) *mcp.CallToolResult {
-	result := mcp.NewToolResultText(text)
+func resultWithLintWarnings(ctx context.Context, session *mcp.ServerSession, text string, warnings []service.LintIssue) *mcp.CallToolResult {
+	result := textResult(text)
 	if len(warnings) > 0 {
-		result.Content = append(result.Content, mcp.TextContent{
-			Type: "text",
+		result.Content = append(result.Content, &mcp.TextContent{
 			Text: "Lint warnings:\n" + toJSON(warnings),
 		})
-		mcpLog(ctx, s, mcp.LoggingLevelWarning, "lint", map[string]any{
+		mcpLog(ctx, session, logLevelWarning, "lint", map[string]any{
 			"issues": len(warnings),
 		})
 	}
@@ -137,34 +191,38 @@ func toJSON(v any) string {
 
 // --- Tool handlers ---
 
-func lintHandler(lint *service.LintService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		check := getStringArg(req, "check")
+func lintHandler(lint *service.LintService) mcp.ToolHandler {
+	return func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, err := unmarshalArgs(req)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		check := getStringArg(args, "check")
 		if check == "" {
 			check = "all"
 		}
 
 		report, err := lint.Run(check)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 
-		return mcp.NewToolResultStructured(report, toJSON(report)), nil
+		return structuredResult(report, toJSON(report)), nil
 	}
 }
 
-func tagsHandler(svc *service.TagService) server.ToolHandlerFunc {
-	return func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func tagsHandler(svc *service.TagService) mcp.ToolHandler {
+	return func(_ context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		report, err := svc.List()
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
-		return mcp.NewToolResultStructured(report, toJSON(report)), nil
+		return structuredResult(report, toJSON(report)), nil
 	}
 }
 
-func whoamiHandler(vaultDir, instanceName string) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func whoamiHandler(vaultDir, instanceName string) mcp.ToolHandler {
+	return func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var user *service.UserInfo
 		if u := middleware.UserFromContext(ctx); u != nil {
 			user = &service.UserInfo{
@@ -175,23 +233,27 @@ func whoamiHandler(vaultDir, instanceName string) server.ToolHandlerFunc {
 			}
 		}
 		info := service.BuildServerInfo(vaultDir, instanceName, user)
-		return mcp.NewToolResultStructured(info, toJSON(info)), nil
+		return structuredResult(info, toJSON(info)), nil
 	}
 }
 
-func readHandler(svc *service.PageService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path := getStringArg(req, "path")
+func readHandler(svc *service.PageService) mcp.ToolHandler {
+	return func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, err := unmarshalArgs(req)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		path := getStringArg(args, "path")
 		if path == "" {
-			return mcp.NewToolResultError("path is required"), nil
+			return errorResult("path is required"), nil
 		}
 
 		content, err := svc.Read(path)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 
-		return mcp.NewToolResultText(content), nil
+		return textResult(content), nil
 	}
 }
 
@@ -247,77 +309,85 @@ func buildFrontmatter(title string, tags []string, date, description, extraFront
 	return b.String()
 }
 
-func writeHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path := getStringArg(req, "path")
-		title := getStringArg(req, "title")
-		tags := getStringArrayArg(req, "tags")
-		content := getStringArg(req, "content")
-		date := getStringArg(req, "date")
-		description := getStringArg(req, "description")
-		extraFrontmatter := getStringArg(req, "extra_frontmatter")
+func writeHandler(svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, err := unmarshalArgs(req)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		path := getStringArg(args, "path")
+		title := getStringArg(args, "title")
+		tags := getStringArrayArg(args, "tags")
+		content := getStringArg(args, "content")
+		date := getStringArg(args, "date")
+		description := getStringArg(args, "description")
+		extraFrontmatter := getStringArg(args, "extra_frontmatter")
 
 		if path == "" {
-			return mcp.NewToolResultError("path is required"), nil
+			return errorResult("path is required"), nil
 		}
 		if title == "" {
-			return mcp.NewToolResultError("title is required"), nil
+			return errorResult("title is required"), nil
 		}
 		if len(tags) == 0 {
-			return mcp.NewToolResultError("tags is required and must not be empty"), nil
+			return errorResult("tags is required and must not be empty"), nil
 		}
 		if content == "" {
-			return mcp.NewToolResultError("content is required"), nil
+			return errorResult("content is required"), nil
 		}
 		if date == "" {
 			date = time.Now().Format("2006-01-02")
 		}
 		if extraFrontmatter != "" {
 			if err := validateExtraFrontmatter(extraFrontmatter); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return errorResult(err.Error()), nil
 			}
 		}
 
 		fullContent := buildFrontmatter(title, tags, date, description, extraFrontmatter) + "\n" + content
 
 		if err := svc.Write(path, fullContent); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 
 		notify.MarkDirtyRelative(notifier, vaultDir, path, notify.ChangeModified)
-		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+		mcpLog(ctx, req.Session, logLevelInfo, "vault", map[string]any{
 			"action": "write", "path": path,
 		})
-		return resultWithLintWarnings(ctx, s, fmt.Sprintf("Wrote page: %s", path), lint.LintPage(path)), nil
+		return resultWithLintWarnings(ctx, req.Session, fmt.Sprintf("Wrote page: %s", path), lint.LintPage(path)), nil
 	}
 }
 
-func editHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path := getStringArg(req, "path")
+func editHandler(svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, err := unmarshalArgs(req)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		path := getStringArg(args, "path")
 		if path == "" {
-			return mcp.NewToolResultError("path is required"), nil
+			return errorResult("path is required"), nil
 		}
 
-		ops, err := getPatchOps(req)
+		ops, err := getPatchOps(args)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 
 		if len(ops) == 0 {
-			return mcp.NewToolResultError("operations is required and must not be empty"), nil
+			return errorResult("operations is required and must not be empty"), nil
 		}
 
 		content, err := svc.Patch(path, ops)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 
 		notify.MarkDirtyRelative(notifier, vaultDir, path, notify.ChangeModified)
-		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+		mcpLog(ctx, req.Session, logLevelInfo, "vault", map[string]any{
 			"action": "edit", "path": path, "operations": len(ops),
 		})
-		return resultWithLintWarnings(ctx, s, content, lint.LintPage(path)), nil
+		return resultWithLintWarnings(ctx, req.Session, content, lint.LintPage(path)), nil
 	}
 }
 
@@ -332,20 +402,24 @@ type ListResponse struct {
 	Entries []service.DirectoryEntry `json:"entries,omitempty"`
 }
 
-func listHandler(pageSvc *service.PageService, dirSvc *service.DirectoryService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		prefix := getStringArg(req, "prefix")
-		detail := getBoolArg(req, "detail")
-		sortBy := getStringArg(req, "sort_by")
-		limit := getIntArg(req, "limit")
+func listHandler(pageSvc *service.PageService, dirSvc *service.DirectoryService) mcp.ToolHandler {
+	return func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, err := unmarshalArgs(req)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		prefix := getStringArg(args, "prefix")
+		detail := getBoolArg(args, "detail")
+		sortBy := getStringArg(args, "sort_by")
+		limit := getIntArg(args, "limit")
 
 		if detail {
 			entries, err := dirSvc.List(prefix)
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return errorResult(err.Error()), nil
 			}
 			// Fallback text keeps the bare array shape for back-compat.
-			return mcp.NewToolResultStructured(
+			return structuredResult(
 				ListResponse{Detail: true, Entries: entries},
 				toJSON(entries),
 			), nil
@@ -357,114 +431,129 @@ func listHandler(pageSvc *service.PageService, dirSvc *service.DirectoryService)
 			Limit:  limit,
 		})
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
-		return mcp.NewToolResultStructured(
+		return structuredResult(
 			ListResponse{Detail: false, Pages: pages},
 			toJSON(pages),
 		), nil
 	}
 }
 
-func searchHandler(svc *service.SearchService) server.ToolHandlerFunc {
-	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query := getStringArg(req, "query")
+func searchHandler(svc *service.SearchService) mcp.ToolHandler {
+	return func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, err := unmarshalArgs(req)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		query := getStringArg(args, "query")
 		if query == "" {
-			return mcp.NewToolResultError("query is required"), nil
+			return errorResult("query is required"), nil
 		}
 		if len(query) < 2 {
-			return mcp.NewToolResultError("query must be at least 2 characters"), nil
+			return errorResult("query must be at least 2 characters"), nil
 		}
 
-		limit := getIntArg(req, "limit")
+		limit := getIntArg(args, "limit")
 		if limit <= 0 {
 			limit = 20
 		}
 
-		engine := getStringArg(req, "engine")
+		engine := getStringArg(args, "engine")
 
 		resp, err := svc.Search(query, limit, engine)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 
-		return mcp.NewToolResultStructured(resp, toJSON(resp)), nil
+		return structuredResult(resp, toJSON(resp)), nil
 	}
 }
 
-func deleteHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path := getStringArg(req, "path")
+func deleteHandler(svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, err := unmarshalArgs(req)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		path := getStringArg(args, "path")
 		if path == "" {
-			return mcp.NewToolResultError("path is required"), nil
+			return errorResult("path is required"), nil
 		}
 
 		if err := svc.Delete(path); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 
 		notify.MarkDirtyRelative(notifier, vaultDir, path, notify.ChangeDeleted)
-		mcpLog(ctx, s, mcp.LoggingLevelWarning, "vault", map[string]any{
+		mcpLog(ctx, req.Session, logLevelWarning, "vault", map[string]any{
 			"action": "delete", "path": path,
 		})
-		return resultWithLintWarnings(ctx, s, fmt.Sprintf("deleted: %s", path), lint.LintDelete(path)), nil
+		return resultWithLintWarnings(ctx, req.Session, fmt.Sprintf("deleted: %s", path), lint.LintDelete(path)), nil
 	}
 }
 
-func moveHandler(s *server.MCPServer, svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		source := getStringArg(req, "source")
-		destination := getStringArg(req, "destination")
+func moveHandler(svc *service.PageService, lint *service.LintService, vaultDir string, notifier *notify.RebuildNotifier) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, err := unmarshalArgs(req)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		source := getStringArg(args, "source")
+		destination := getStringArg(args, "destination")
 
 		if source == "" {
-			return mcp.NewToolResultError("source is required"), nil
+			return errorResult("source is required"), nil
 		}
 		if destination == "" {
-			return mcp.NewToolResultError("destination is required"), nil
+			return errorResult("destination is required"), nil
 		}
 
 		if err := svc.Move(source, destination); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 
 		notify.MarkDirtyRelative(notifier, vaultDir, source, notify.ChangeDeleted)
 		notify.MarkDirtyRelative(notifier, vaultDir, destination, notify.ChangeCreated)
-		mcpLog(ctx, s, mcp.LoggingLevelInfo, "vault", map[string]any{
+		mcpLog(ctx, req.Session, logLevelInfo, "vault", map[string]any{
 			"action": "move", "source": source, "destination": destination,
 		})
 		// Lint the source for broken inbound links caused by removing the old path.
-		return resultWithLintWarnings(ctx, s, fmt.Sprintf("moved: %s -> %s", source, destination), lint.LintDelete(source)), nil
+		return resultWithLintWarnings(ctx, req.Session, fmt.Sprintf("moved: %s -> %s", source, destination), lint.LintDelete(source)), nil
 	}
 }
 
-func activityHandler(s *server.MCPServer, svc *service.ActivityService, vaultDir string, notifier *notify.RebuildNotifier) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		touched := getStringArrayArg(req, "touched")
+func activityHandler(svc *service.ActivityService, vaultDir string, notifier *notify.RebuildNotifier) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args, err := unmarshalArgs(req)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
+		touched := getStringArrayArg(args, "touched")
 		entry := service.ActivityEntry{
-			Type:       getStringArg(req, "type"),
-			Title:      getStringArg(req, "title"),
-			Time:       getStringArg(req, "time"),
-			Summary:    getStringArg(req, "summary"),
+			Type:       getStringArg(args, "type"),
+			Title:      getStringArg(args, "title"),
+			Time:       getStringArg(args, "time"),
+			Summary:    getStringArg(args, "summary"),
 			Touched:    touched,
-			DaySummary: getStringArg(req, "day_summary"),
+			DaySummary: getStringArg(args, "day_summary"),
 		}
 
 		if err := svc.Append(entry); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return errorResult(err.Error()), nil
 		}
 
 		for _, p := range svc.DirtyPaths() {
 			notify.MarkDirtyRelative(notifier, vaultDir, p, notify.ChangeModified)
 		}
-		mcpLog(ctx, s, mcp.LoggingLevelInfo, "activity", map[string]any{
+		mcpLog(ctx, req.Session, logLevelInfo, "activity", map[string]any{
 			"action": "log", "type": entry.Type, "title": entry.Title,
 		})
-		return mcp.NewToolResultText("Activity logged successfully"), nil
+		return textResult("Activity logged successfully"), nil
 	}
 }
 
-func getPatchOps(req mcp.CallToolRequest) ([]service.PatchOp, error) {
-	args := req.GetArguments()
+func getPatchOps(args map[string]any) ([]service.PatchOp, error) {
 	v, ok := args["operations"]
 	if !ok {
 		return nil, fmt.Errorf("operations is required")
