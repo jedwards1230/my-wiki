@@ -17,7 +17,7 @@ import (
 	"github.com/jedwards1230/my-wiki/internal/search"
 	"github.com/jedwards1230/my-wiki/internal/service"
 	"github.com/jedwards1230/my-wiki/internal/vault"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // mcpTransport identifies the wire transport for a standalone MCP runner.
@@ -55,7 +55,7 @@ func buildMCPServer(
 	notifier *notify.RebuildNotifier,
 	pages *service.PageService,
 	instanceName string,
-) *server.MCPServer {
+) *mcp.Server {
 	opts := []mcpserver.Option{
 		mcpserver.WithInstanceName(instanceName),
 		mcpserver.WithBaseURL(os.Getenv(EnvBaseURL)),
@@ -177,7 +177,7 @@ func runMCP(ctx context.Context, vaultDir string, cfg mcpRunConfig, logger *slog
 // runMCPHTTP mounts mcpSrv on a streamable-http listener, optionally wraps
 // the handler in JWT auth, and blocks until ctx is canceled or the listener
 // fails.
-func runMCPHTTP(ctx context.Context, mcpSrv *server.MCPServer, cfg mcpRunConfig, vaultDir string, logger *slog.Logger) error {
+func runMCPHTTP(ctx context.Context, mcpSrv *mcp.Server, cfg mcpRunConfig, vaultDir string, logger *slog.Logger) error {
 	httpTransport := mcpserver.NewStreamableHTTPServer(mcpSrv)
 
 	var mcpAuthMW func(http.Handler) http.Handler
@@ -237,17 +237,15 @@ func runMCPHTTP(ctx context.Context, mcpSrv *server.MCPServer, cfg mcpRunConfig,
 
 // runMCPStdio drives mcpSrv over stdin/stdout. Logs are already routed to
 // stderr by the caller (runServeMCPStdio) so this helper only manages the
-// mcp-go stdio Listen lifecycle and surfaces clean-shutdown errors as nil.
-func runMCPStdio(ctx context.Context, mcpSrv *server.MCPServer, vaultDir, instanceName string, logger *slog.Logger) error {
-	stdio := server.NewStdioServer(mcpSrv)
-
+// go-sdk stdio Run lifecycle and surfaces clean-shutdown errors as nil.
+func runMCPStdio(ctx context.Context, mcpSrv *mcp.Server, vaultDir, instanceName string, logger *slog.Logger) error {
 	logger.Info("starting wiki MCP stdio server",
 		"version", version,
 		"vaultDir", vaultDir,
 		"instanceName", instanceName,
 	)
 
-	if err := stdio.Listen(ctx, os.Stdin, os.Stdout); err != nil && !isShutdownErr(ctx, err) {
+	if err := mcpSrv.Run(ctx, &mcp.StdioTransport{}); err != nil && !isShutdownErr(ctx, err) {
 		return fmt.Errorf("stdio server: %w", err)
 	}
 
@@ -256,8 +254,8 @@ func runMCPStdio(ctx context.Context, mcpSrv *server.MCPServer, vaultDir, instan
 }
 
 // isShutdownErr returns true when err is a normal shutdown signal (context
-// cancellation from SIGINT/SIGTERM). The mcp-go stdio Listen returns
-// context.Canceled on signal-driven shutdown; treat that as success. We do
+// cancellation from SIGINT/SIGTERM). Server.Run returns ctx.Err() (typically
+// context.Canceled) on signal-driven shutdown; treat that as success. We do
 // NOT treat context.DeadlineExceeded as success — these helpers run under
 // signal.NotifyContext (no deadline), so a deadline error would indicate a
 // real bug rather than a clean shutdown.

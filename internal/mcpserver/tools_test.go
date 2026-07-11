@@ -12,8 +12,7 @@ import (
 	"github.com/jedwards1230/my-wiki/internal/middleware"
 	"github.com/jedwards1230/my-wiki/internal/service"
 	"github.com/jedwards1230/my-wiki/internal/vault"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func setupTestVault(t *testing.T) *vault.Vault {
@@ -43,23 +42,21 @@ func setupTestVault(t *testing.T) *vault.Vault {
 	return vault.New(dir)
 }
 
-func makeReq(args map[string]any) mcp.CallToolRequest {
-	return mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Arguments: args,
-		},
+func makeReq(args map[string]any) *mcp.CallToolRequest {
+	raw, err := json.Marshal(args)
+	if err != nil {
+		panic(err)
 	}
-}
-
-func testServer() *server.MCPServer {
-	return server.NewMCPServer("test", "0.0.0", server.WithLogging())
+	return &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Arguments: raw},
+	}
 }
 
 func getTextContent(result *mcp.CallToolResult) string {
 	if result == nil || len(result.Content) == 0 {
 		return ""
 	}
-	tc, ok := mcp.AsTextContent(result.Content[0])
+	tc, ok := result.Content[0].(*mcp.TextContent)
 	if !ok {
 		return ""
 	}
@@ -120,7 +117,7 @@ func TestWriteHandlerCreateNew(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "new-page.md",
@@ -162,7 +159,7 @@ func TestWriteHandlerDateDefaultsToToday(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "no-date.md",
@@ -192,7 +189,7 @@ func TestWriteHandlerWithDescription(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":        "with-desc.md",
@@ -223,7 +220,7 @@ func TestWriteHandlerWithExtraFrontmatter(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":              "with-extra.md",
@@ -258,7 +255,7 @@ func TestWriteHandlerAllOptionalFields(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":              "full-page.md",
@@ -313,7 +310,7 @@ func TestWriteHandlerOverwriteExisting(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	// Overwrite existing index.md — should succeed (no existence check)
 	result, err := handler(context.Background(), makeReq(map[string]any{
@@ -345,7 +342,7 @@ func TestWriteHandlerEmptyContent(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "empty.md",
@@ -366,7 +363,7 @@ func TestWriteHandlerEmptyPath(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"title":   "X",
@@ -386,7 +383,7 @@ func TestWriteHandlerEmptyTitle(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "no-title.md",
@@ -406,7 +403,7 @@ func TestWriteHandlerEmptyTags(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":    "no-tags.md",
@@ -426,7 +423,7 @@ func TestWriteHandlerExtraFrontmatterDelimiter(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":              "bad-extra.md",
@@ -447,7 +444,7 @@ func TestWriteHandlerExtraFrontmatterReservedKey(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":              "bad-extra2.md",
@@ -468,7 +465,7 @@ func TestWriteHandlerLintWarnings(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := writeHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := writeHandler(svc, lint, v.Dir, nil)
 
 	// Create a page with a broken wikilink.
 	result, err := handler(context.Background(), makeReq(map[string]any{
@@ -490,7 +487,7 @@ func TestWriteHandlerLintWarnings(t *testing.T) {
 		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
 	}
 
-	tc, ok := mcp.AsTextContent(result.Content[1])
+	tc, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
 		t.Fatal("expected second content item to be TextContent")
 	}
@@ -505,7 +502,7 @@ func TestEditHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := editHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "project/alpha",
@@ -538,7 +535,7 @@ func TestEditHandlerFindNotFound(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := editHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "project/alpha",
@@ -561,7 +558,7 @@ func TestEditHandlerOmittedReplace(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := editHandler(svc, lint, v.Dir, nil)
 
 	before, err := svc.Read("project/alpha")
 	if err != nil {
@@ -596,7 +593,7 @@ func TestEditHandlerExplicitEmptyReplace(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := editHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "project/alpha",
@@ -624,7 +621,7 @@ func TestEditHandlerEmptyPath(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := editHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"operations": []interface{}{
@@ -644,7 +641,7 @@ func TestEditHandlerEmptyOperations(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := editHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path":       "project/alpha",
@@ -663,7 +660,7 @@ func TestEditHandlerPageNotFound(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := editHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "nonexistent",
@@ -684,7 +681,7 @@ func TestEditHandlerInvalidYAMLWarning(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := editHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := editHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"path": "index.md",
@@ -707,7 +704,7 @@ func TestEditHandlerInvalidYAMLWarning(t *testing.T) {
 		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
 	}
 
-	tc, ok := mcp.AsTextContent(result.Content[1])
+	tc, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
 		t.Fatal("expected second content item to be TextContent")
 	}
@@ -805,7 +802,7 @@ func TestDeleteHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := deleteHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := deleteHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
 	if err != nil {
@@ -832,7 +829,7 @@ func TestDeleteHandlerNotFound(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := deleteHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := deleteHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{"path": "nonexistent"}))
 	if err != nil {
@@ -848,7 +845,7 @@ func TestDeleteHandlerEmptyPath(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := deleteHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := deleteHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{}))
 	if err != nil {
@@ -864,7 +861,7 @@ func TestDeleteHandlerLintWarnings(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := deleteHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := deleteHandler(svc, lint, v.Dir, nil)
 
 	// about.md is linked from index.md — deleting it should produce warnings.
 	result, err := handler(context.Background(), makeReq(map[string]any{"path": "about.md"}))
@@ -880,7 +877,7 @@ func TestDeleteHandlerLintWarnings(t *testing.T) {
 		t.Fatalf("expected at least 2 content items (result + warnings), got %d", len(result.Content))
 	}
 
-	tc, ok := mcp.AsTextContent(result.Content[1])
+	tc, ok := result.Content[1].(*mcp.TextContent)
 	if !ok {
 		t.Fatal("expected second content item to be TextContent")
 	}
@@ -895,7 +892,7 @@ func TestMoveHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := moveHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := moveHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"source":      "project/alpha",
@@ -924,7 +921,7 @@ func TestMoveHandlerSourceNotFound(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := moveHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := moveHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"source":      "nonexistent",
@@ -947,7 +944,7 @@ func TestMoveHandlerDestinationExists(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := moveHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := moveHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"source":      "about",
@@ -970,7 +967,7 @@ func TestMoveHandlerEmptySource(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := moveHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := moveHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"destination": "project/beta",
@@ -988,7 +985,7 @@ func TestMoveHandlerEmptyDestination(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewPageService(v.Storage)
 	lint := service.NewLintService(v, nil)
-	handler := moveHandler(testServer(), svc, lint, v.Dir, nil)
+	handler := moveHandler(svc, lint, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"source": "about",
@@ -1060,7 +1057,7 @@ func TestListHandler_SortByModified(t *testing.T) {
 func TestActivityHandler(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewActivityService(v.Storage)
-	handler := activityHandler(testServer(), svc, v.Dir, nil)
+	handler := activityHandler(svc, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"type":  "note",
@@ -1080,7 +1077,7 @@ func TestActivityHandler(t *testing.T) {
 func TestActivityHandlerInvalidType(t *testing.T) {
 	v := setupTestVault(t)
 	svc := service.NewActivityService(v.Storage)
-	handler := activityHandler(testServer(), svc, v.Dir, nil)
+	handler := activityHandler(svc, v.Dir, nil)
 
 	result, err := handler(context.Background(), makeReq(map[string]any{
 		"type":  "invalid",
