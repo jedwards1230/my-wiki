@@ -325,14 +325,17 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	vaultFS := os.DirFS(vaultDir)
 
 	sub := search.NewSubstringSearcher(v)
-	engines := []search.Searcher{sub}
-
 	idx := search.NewIndexSearcher(v)
+	var engines []search.Searcher
 	if err := idx.Build(); err != nil {
 		logger.Warn("search index build failed, index engine not registered", "error", err)
+		engines = []search.Searcher{sub}
 	} else {
 		logger.Info("search index built")
-		engines = append(engines, idx)
+		// index first: it's the default engine (SearchService.Search uses
+		// engines[0] when engine == ""); substring stays registered as an
+		// explicit, always-fresh fallback.
+		engines = []search.Searcher{idx, sub}
 	}
 	searchSvc := service.NewSearchService(engines...)
 
@@ -357,6 +360,16 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 				return
 			}
 			nativeRebuildFS.Store(snap)
+		}
+		// Rebuild the search index so newly written pages are searchable via
+		// the default engine within this debounce window, instead of waiting
+		// up to 5 minutes for the periodic StartAutoRebuild timer. Only when
+		// the index engine was actually registered (see engines above) —
+		// idx.Build() is otherwise harmless but pointless work.
+		if len(engines) > 1 {
+			if err := idx.Build(); err != nil {
+				logger.Warn("rebuild notifier: search index rebuild failed", "error", err)
+			}
 		}
 		logger.Info("rebuild notifier: flushed", "dirty_files", len(paths))
 	})

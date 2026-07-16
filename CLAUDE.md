@@ -62,7 +62,7 @@ internal/
 - `vault.Vault` is the core abstraction — page discovery, frontmatter parsing, slug indexing, wikilink extraction
 - `service/` types are consumed by both `api/` (REST) and `mcpserver/` (MCP) — agents and humans get parity
 - MCP and HTTP servers run together (`--mcp-port`) or independently (`serve mcp`)
-- Search index (TF-IDF) auto-rebuilds every 5 minutes; substring is the fallback backend
+- Search index (TF-IDF) auto-rebuilds every 5 minutes and on write (debounced ~2s); substring is the fallback backend and default engine if index build fails
 
 ## Visual Verification
 
