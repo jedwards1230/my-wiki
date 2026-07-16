@@ -344,7 +344,7 @@ func registerTools(
 		s.AddTool(
 			&mcp.Tool{
 				Name:        "search",
-				Description: "Full-text search across wiki pages. Matches against title, tags, and content. Returns results ranked by relevance with snippets and timing. Use engine='all' to compare search backends side-by-side.",
+				Description: "Full-text search across wiki pages. Matches against title, tags, and content. Returns results ranked by relevance with snippets and timing. Fast by default (in-memory index).",
 				Annotations: &mcp.ToolAnnotations{
 					Title:           "Search Wiki",
 					ReadOnlyHint:    true,
@@ -365,8 +365,8 @@ func registerTools(
 						},
 						"engine": {
 							Type:        "string",
-							Enum:        []any{"substring", "index", "all"},
-							Description: "Search engine: 'substring' (default, walks files), 'index' (inverted index with TF-IDF), 'all' (run both, compare timing).",
+							Enum:        []any{"index", "substring", "all"},
+							Description: "Search engine. 'index' (default): fast in-memory TF-IDF, rebuilt on write. 'substring': exhaustive filesystem walk — always fresh but slow on large or network-backed vaults; use only when you need up-to-the-second results. 'all': runs both (includes the slow walk) — diagnostics only.",
 						},
 					},
 					Required: []string{"query"},
