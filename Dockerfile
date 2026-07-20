@@ -1,7 +1,7 @@
 # --- Go builder stage ---
 # Runs natively on the build host and cross-compiles to $TARGETARCH,
 # avoiding QEMU emulation for multi-arch builds.
-FROM --platform=$BUILDPLATFORM golang:1.25.6-alpine AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.26.5-alpine AS go-builder
 WORKDIR /src
 
 ARG TARGETOS
@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -ldflags="-s -w -X github.com/jedwards1230/my-wiki/internal/version.Value=${BUILD_VERSION}" -o /wiki-server ./cmd/wiki-server
 
 # --- Main image ---
-FROM node:24-alpine
+FROM node:26-alpine
 
 # obsidian-headless provides the `ob` CLI used by the sync sidecar
 # container (rarely changes — keep at top for caching).
