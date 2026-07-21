@@ -21,5 +21,5 @@ permissions:
 
 jobs:
   check:
-    uses: jedwards1230/claude-plugin-actions/.github/workflows/check-plugin-versions.yml@v0
+    uses: jedwards1230/claude-plugin-actions/.github/workflows/check-plugin-versions.yml@15c14feb3728fde8cbd0fd947f55728da1b712ca # v0
     secrets: inherit
