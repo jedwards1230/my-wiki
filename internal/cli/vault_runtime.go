@@ -3,8 +3,11 @@ package cli
 import (
 	"context"
 	"log/slog"
+	"os"
+	"strings"
 	"time"
 
+	"github.com/jedwards1230/my-wiki/internal/freshness"
 	"github.com/jedwards1230/my-wiki/internal/notify"
 )
 
@@ -75,4 +78,53 @@ func startInboxPoller(ctx context.Context, vaultDir string, pipeline *dispatchPi
 		go poller.Run(ctx)
 		logger.Info("inbox poller started", "interval", interval.String())
 	}
+}
+
+// startFreshnessObserver starts the vault freshness observer — the dead-man's
+// switch behind wiki_vault_last_scan_timestamp_seconds. Unlike startInboxPoller
+// it is NOT gated on the dispatch pipeline: gating it would reproduce the exact
+// problem it exists to solve (no signal in a default deployment). Disabled only
+// by a non-positive EnvVaultFreshnessInterval. A registration failure is logged
+// and the server continues — losing a metric must not take down the wiki.
+func startFreshnessObserver(ctx context.Context, vaultDir string, logger *slog.Logger) {
+	interval := vaultFreshnessIntervalFromEnv(logger)
+	if interval <= 0 {
+		logger.Info("vault freshness observer disabled", "env", EnvVaultFreshnessInterval)
+		return
+	}
+	syncStateDir := strings.TrimSpace(os.Getenv(EnvSyncStateDir))
+	observer, err := freshness.New(freshness.Config{
+		VaultDir:     vaultDir,
+		SyncStateDir: syncStateDir,
+		Interval:     interval,
+		Logger:       logger,
+	}, nil)
+	if err != nil {
+		logger.Warn("vault freshness observer failed to start", "error", err)
+		return
+	}
+	go observer.Run(ctx)
+	logger.Info("vault freshness observer started",
+		"interval", interval.String(), "syncStateDir", syncStateDir)
+}
+
+// vaultFreshnessIntervalFromEnv resolves the scan cadence from
+// EnvVaultFreshnessInterval. Unset/empty → freshness.DefaultInterval. A
+// non-positive duration disables the observer (returns 0). An unparseable value
+// falls back to the default and is logged. Mirrors inboxPollIntervalFromEnv.
+func vaultFreshnessIntervalFromEnv(logger *slog.Logger) time.Duration {
+	v := strings.TrimSpace(os.Getenv(EnvVaultFreshnessInterval))
+	if v == "" {
+		return freshness.DefaultInterval
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		logger.Warn("invalid "+EnvVaultFreshnessInterval+", using default",
+			"value", v, "default", freshness.DefaultInterval.String(), "error", err)
+		return freshness.DefaultInterval
+	}
+	if d <= 0 {
+		return 0
+	}
+	return d
 }

@@ -177,3 +177,31 @@ const EnvWebhooksConfig = "WIKI_WEBHOOKS_CONFIG"
 // dispatch pipeline is enabled (WIKI_WEBHOOKS_CONFIG); without a dispatcher
 // there is nothing to feed.
 const EnvInboxPollInterval = "WIKI_INBOX_POLL_INTERVAL"
+
+// ---------------------------------------------------------------------------
+// Vault freshness observer (Prometheus dead-man's switch)
+// ---------------------------------------------------------------------------
+
+// EnvVaultFreshnessInterval is the cadence of the vault freshness scan, which
+// exports wiki_vault_last_modified_timestamp_seconds and friends so a
+// deployment can alert on "the vault stopped changing" — a sync path that dies
+// is otherwise indistinguishable from a quiet week. Unlike the inbox poll this
+// runs unconditionally, independent of the webhook dispatch pipeline: a default
+// deployment must still emit the signal.
+//
+// Format: a Go duration (e.g. "5m", "15m"). Default: 5m — deliberately coarser
+// than the inbox poll, because a dead-man's switch alerting on "N days" needs
+// no finer granularity and a full vault walk over NFS is far more expensive
+// than the inbox/-only scan. A non-positive duration ("0", "-1s") disables the
+// observer entirely (no metrics registered). See docs/METRICS.md.
+const EnvVaultFreshnessInterval = "WIKI_VAULT_FRESHNESS_INTERVAL"
+
+// EnvSyncStateDir is an optional path to the sync process's state directory
+// (e.g. the obsidian-headless state dir). When set, the freshness observer also
+// exports wiki_sync_state_last_modified_timestamp_seconds — the newest mtime
+// under that directory, with no exclusions applied. A sync process that touches
+// its state on every tick keeps that gauge fresh even when the vault itself is
+// quiet, which separates "sync alive, vault quiet" from "sync dead".
+//
+// Default: empty — the gauge is neither registered nor emitted.
+const EnvSyncStateDir = "WIKI_SYNC_STATE_DIR"
