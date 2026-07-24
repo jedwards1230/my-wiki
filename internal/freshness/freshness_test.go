@@ -17,7 +17,7 @@ import (
 const (
 	mLastModified   = "wiki_vault_last_modified_timestamp_seconds"
 	mLastScan       = "wiki_vault_last_scan_timestamp_seconds"
-	mFiles          = "wiki_vault_files_total"
+	mFiles          = "wiki_vault_files"
 	mScanDuration   = "wiki_vault_scan_duration_seconds"
 	mScanErrors     = "wiki_vault_scan_errors_total"
 	mSyncStateMtime = "wiki_sync_state_last_modified_timestamp_seconds"

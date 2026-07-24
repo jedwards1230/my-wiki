@@ -6,8 +6,10 @@
 // the Obsidian-Sync sidecar dies, new clippings simply stop arriving, which is
 // indistinguishable from a quiet week. Downstream automation only fires on
 // change, so there is no positive signal to miss. The fix is to emit a positive
-// signal unconditionally — the observer runs in every server mode, independent
-// of the webhook dispatch pipeline, so a default deployment still gets it.
+// signal unconditionally: the observer runs wherever /metrics is served
+// (`serve` / `serve http`), independent of the webhook dispatch pipeline, so a
+// default deployment still gets it. The MCP-only entry points do not start it —
+// they expose no /metrics endpoint to scrape.
 //
 // Two gauges make the distinction alertable:
 //
@@ -58,8 +60,11 @@ var (
 		"Unix timestamp at which the last successful vault scan completed. This is the dead-man's switch: staleness or absence means the observer (or the whole server) is dead or every scan is failing, so wiki_vault_last_modified_timestamp_seconds cannot be trusted. Absent until the first successful scan.",
 		nil, nil,
 	)
-	filesTotalDesc = prometheus.NewDesc(
-		"wiki_vault_files_total",
+	// Named without a _total suffix: this is a Gauge (a current count that can
+	// go down), and Prometheus reserves _total for counters. promlint flags the
+	// mismatch.
+	filesDesc = prometheus.NewDesc(
+		"wiki_vault_files",
 		"Number of files counted by the last successful vault scan, excluding directories and excluded top-level directories. Counts all files, not just markdown. Absent until the first successful scan.",
 		nil, nil,
 	)
@@ -251,7 +256,7 @@ func (o *Observer) recordScanError(msg string, err error) {
 func (o *Observer) Describe(ch chan<- *prometheus.Desc) {
 	ch <- lastModifiedDesc
 	ch <- lastScanDesc
-	ch <- filesTotalDesc
+	ch <- filesDesc
 	ch <- scanDurationDesc
 	ch <- scanErrorsDesc
 	if o.syncStateDir != "" {
@@ -277,7 +282,7 @@ func (o *Observer) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	ch <- prometheus.MustNewConstMetric(lastScanDesc, prometheus.GaugeValue, timestamp(snap.lastScan))
-	ch <- prometheus.MustNewConstMetric(filesTotalDesc, prometheus.GaugeValue, float64(snap.files))
+	ch <- prometheus.MustNewConstMetric(filesDesc, prometheus.GaugeValue, float64(snap.files))
 	ch <- prometheus.MustNewConstMetric(scanDurationDesc, prometheus.GaugeValue, snap.scanDuration.Seconds())
 
 	// An empty vault has no newest mtime. Reporting 0 would be the same epoch

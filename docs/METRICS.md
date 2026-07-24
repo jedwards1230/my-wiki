@@ -17,14 +17,17 @@ happens. There is no positive signal to miss. These metrics *are* that positive
 signal.
 
 Emitted by `internal/freshness`, which walks the vault on an interval
-(`WIKI_VAULT_FRESHNESS_INTERVAL`, default `5m`) in every server mode,
-independent of the webhook dispatch pipeline.
+(`WIKI_VAULT_FRESHNESS_INTERVAL`, default `5m`) wherever `/metrics` is served —
+`serve` / `serve http`, including when MCP runs alongside via `--mcp-port`.
+Crucially it is **not** gated on the webhook dispatch pipeline: gating it the
+way the inbox poller is gated would leave a default deployment with no signal,
+which is the exact problem these metrics exist to solve.
 
 | Metric | Type | Meaning |
 |---|---|---|
 | `wiki_vault_last_modified_timestamp_seconds` | Gauge | Newest file mtime observed in the vault, Unix seconds. |
 | `wiki_vault_last_scan_timestamp_seconds` | Gauge | Unix time the last **successful** scan completed. |
-| `wiki_vault_files_total` | Gauge | Files counted in the last successful scan (all files, not just `.md`). |
+| `wiki_vault_files` | Gauge | Files counted in the last successful scan (all files, not just `.md`). |
 | `wiki_vault_scan_duration_seconds` | Gauge | Duration of the last successful scan. |
 | `wiki_vault_scan_errors_total` | Counter | Scan cycles that failed. Emitted from zero. |
 | `wiki_sync_state_last_modified_timestamp_seconds` | Gauge | Newest mtime under `WIKI_SYNC_STATE_DIR`. Only registered when that variable is set. |
@@ -42,7 +45,7 @@ every startup, permanently so for a CrashLooping pod. That is worse than no
 metric, so the exporter is a custom collector that emits nothing it has not
 measured. Two corollaries:
 
-- An **empty vault** exports `wiki_vault_files_total 0` and a fresh
+- An **empty vault** exports `wiki_vault_files 0` and a fresh
   `wiki_vault_last_scan_timestamp_seconds`, but no
   `wiki_vault_last_modified_timestamp_seconds` — there is no mtime to report.
 - A **failed scan** increments `wiki_vault_scan_errors_total` and keeps the
