@@ -170,6 +170,10 @@ there, including the errors it catches and swallows on each poll, so a wedged
 sync that error-loops keeps sync.log fresh indefinitely — a log-based check would
 sail straight through the exact failure it exists to catch. state.db and its WAL
 advance only when sync state actually changes.
+
+Linux-only: `stat -c %Y` is the GNU/BusyBox spelling. That is fine here — this
+only ever runs inside the container — but it does not port to BSD/macOS, where
+the equivalent is `stat -f %m`.
 */}}
 {{- define "my-wiki.syncFreshnessScript" -}}
 d=/data/home/.config/obsidian-headless/sync
