@@ -46,42 +46,7 @@ spec:
           command: ["sh", "-c"]
           args:
             - |
-              set -e
-              export HOME=/data/home
-              mkdir -p $HOME /data/vault
-
-              echo "Logging in to Obsidian..."
-              # `ob login` has no retry and exits non-zero on any failure —
-              # notably Obsidian's /user/signin origin intermittently returns
-              # HTTP 504 (Cloudflare gateway timeout) as an HTML page that the
-              # CLI's JSON parse chokes on. Retry with backoff so a transient
-              # failure doesn't crashloop the pod.
-              n=0
-              until ob login --email="$OBSIDIAN_EMAIL" --password="$OBSIDIAN_PASSWORD"; do
-                rc=$?
-                n=$((n+1))
-                if [ "$n" -ge 10 ]; then echo "ob login failed after $n attempts (last exit code $rc)" >&2; exit 1; fi
-                echo "ob login attempt $n failed (exit code $rc) — retrying in 30s..." >&2
-                sleep 30
-              done
-
-              if ! ob sync-status --path /data/vault 2>/dev/null; then
-                echo "Setting up sync for {{ .Values.obsidian.vault }}..."
-                ob sync-setup \
-                  --vault {{ .Values.obsidian.vault | quote }} \
-                  --path /data/vault \
-                  --password "$OBSIDIAN_E2E_PASSWORD" \
-                  --device-name {{ .Values.obsidian.deviceName | quote }}
-                ob sync-config \
-                  --path /data/vault \
-                  --excluded-folders {{ .Values.obsidian.excludedFolders | quote }} \
-                  --mode {{ .Values.obsidian.syncMode | quote }} \
-                  --device-name {{ .Values.obsidian.deviceName | quote }}
-              fi
-
-              echo "Running initial sync..."
-              ob sync --path /data/vault
-              echo "Init sync complete."
+              {{- regexReplaceAll "[ \t]+\n" (include "my-wiki.syncSetupScript" . | nindent 14) "\n" }}
           env:
             - name: OBSIDIAN_EMAIL
               valueFrom:
@@ -106,6 +71,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: sync-home
+              mountPath: /data/home
           resources:
             {{- toYaml .Values.resources.setupSync | nindent 12 }}
 
@@ -116,9 +83,7 @@ spec:
           command: ["sh", "-c"]
           args:
             - |
-              export HOME=/data/home
-              echo "Starting continuous sync..."
-              ob sync --path /data/vault --continuous
+              {{- regexReplaceAll "[ \t]+\n" (include "my-wiki.syncRunScript" . | nindent 14) "\n" }}
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
@@ -127,6 +92,34 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: sync-home
+              mountPath: /data/home
+          {{- if .Values.obsidianSync.probes.readiness.enabled }}
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  {{- regexReplaceAll "[ \t]+\n" (include "my-wiki.syncFreshnessScript" (dict "root" . "grace" false "staleAfter" .Values.obsidianSync.probes.readiness.staleAfterSeconds) | nindent 18) "\n" }}
+            initialDelaySeconds: {{ .Values.obsidianSync.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.obsidianSync.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.obsidianSync.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.obsidianSync.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.obsidianSync.probes.liveness.enabled }}
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  {{- regexReplaceAll "[ \t]+\n" (include "my-wiki.syncFreshnessScript" (dict "root" . "grace" true "staleAfter" .Values.obsidianSync.probes.liveness.staleAfterSeconds) | nindent 18) "\n" }}
+            initialDelaySeconds: {{ .Values.obsidianSync.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.obsidianSync.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.obsidianSync.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.obsidianSync.probes.liveness.failureThreshold }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources.sync | nindent 12 }}
 
@@ -144,6 +137,15 @@ spec:
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        # /data/home carries obsidian-headless's SQLite sync state, which cannot
+        # live on the shared RWX (NFS) volume — see obsidianSync.homePersistence.
+        - name: sync-home
+          {{- if .Values.obsidianSync.homePersistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-sync-home
           {{- else }}
           emptyDir: {}
           {{- end }}

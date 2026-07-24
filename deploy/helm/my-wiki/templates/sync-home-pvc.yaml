@@ -1,0 +1,20 @@
+{{- if and (eq (include "my-wiki.syncHomeSeparate" .) "true") .Values.obsidianSync.homePersistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-sync-home
+  labels:
+    app.kubernetes.io/name: wiki-sync
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - {{ .Values.obsidianSync.homePersistence.accessMode }}
+  {{- if .Values.obsidianSync.homePersistence.storageClass }}
+  storageClassName: {{ .Values.obsidianSync.homePersistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.obsidianSync.homePersistence.size }}
+{{- end }}
