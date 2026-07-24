@@ -384,6 +384,11 @@ func TestNewValidatesConfig(t *testing.T) {
 // tests only overlap Collect with a scan incidentally (one immediate scan, then
 // a long sleep), so without this the race detector never really exercises the
 // scrape path against a live scan.
+//
+// Scope note: -race proves the absence of unsynchronized memory access, not the
+// absence of lost updates. Scan cycles are serialized by scanMu, which is what
+// actually makes concurrent scan() sound; this test covers the memory-safety
+// half and that Gather stays coherent while a scan is in flight.
 func TestConcurrentScanAndCollect(t *testing.T) {
 	vaultDir := t.TempDir()
 	writeFile(t, vaultDir, "a.md", time.Now().Add(-time.Hour))

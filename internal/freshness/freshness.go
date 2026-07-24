@@ -131,6 +131,16 @@ type Observer struct {
 	// now is time.Now, overridable in tests.
 	now func() time.Time
 
+	// scanMu serializes whole scan cycles. mu alone is not enough: scan reads
+	// the previous snapshot, walks the tree without holding a lock (a walk can
+	// take seconds on NFS and must never block a scrape), then writes back. Two
+	// concurrent scans could interleave those halves and let the slower one
+	// write back a staler sync-state observation — a lost update, which the
+	// race detector cannot see because every individual access is synchronized.
+	// Held across the walk; uncontended in production, where only one Run
+	// goroutine scans.
+	scanMu sync.Mutex
+
 	mu         sync.Mutex
 	snap       snapshot
 	scanErrors float64
@@ -180,11 +190,14 @@ func (o *Observer) Interval() time.Duration { return o.interval }
 // full interval — a pod that restarts every few minutes still publishes a
 // timestamp instead of looking permanently unobserved.
 //
-// Call Run at most once per Observer. Scans are serialized only by that
-// constraint, not by a lock held across the walk: two concurrent scans could
-// interleave their read-then-write of the snapshot and let the slower one
-// write back a staler sync-state observation. Concurrent Collect is always
-// safe; it is only concurrent scanning that is not.
+// A scan already in flight when ctx is canceled runs to completion and writes
+// its result before Run returns; scans are not interrupted mid-walk. Since a
+// scan only reads the filesystem and updates in-memory gauges, letting it
+// finish is harmless and keeps the last observation as fresh as possible.
+//
+// Concurrent use is safe: Collect may be called from any goroutine, and scanMu
+// serializes scan cycles, so calling Run more than once is sound (each just
+// scans on its own schedule).
 func (o *Observer) Run(ctx context.Context) {
 	o.scan()
 	ticker := time.NewTicker(o.interval)
@@ -205,6 +218,12 @@ func (o *Observer) Run(ctx context.Context) {
 // observation to "never scanned", which would look identical to a dead
 // observer. This mirrors inboxPoller.poll's keep-previous-snapshot behavior.
 func (o *Observer) scan() {
+	// Serialize whole cycles so a slow scan cannot have its result clobbered by
+	// a faster one that started later. Deliberately NOT o.mu: that one is held
+	// only for the snapshot read/write, so a scrape never waits on the walk.
+	o.scanMu.Lock()
+	defer o.scanMu.Unlock()
+
 	start := o.now()
 
 	o.mu.Lock()
