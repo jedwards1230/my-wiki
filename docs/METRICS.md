@@ -62,9 +62,15 @@ quiet week: if the observer (or the whole server) is dead, its gauges freeze or
 disappear, and a stale `last_modified` proves nothing. `last_scan` is the
 liveness proof that makes `last_modified` interpretable.
 
+**Pair every staleness alert with an `absent()` alert.** Because these metrics
+are absent rather than zero (see above), `(time() - metric) > threshold`
+evaluates over an empty vector and **never fires** when the metric disappears.
+Staleness and absence are different queries; you need both, or the exact
+failure the absence design protects against becomes invisible instead of noisy.
+
 ```promql
 # 1. The vault has not changed in 7 days.
-#    Only trustworthy while alert 2 is quiet.
+#    Only trustworthy while alerts 2 and 3 are quiet.
 (time() - wiki_vault_last_modified_timestamp_seconds) > 7 * 86400
 
 # 2. The observer itself is dead, or every scan is failing.
@@ -72,7 +78,13 @@ liveness proof that makes `last_modified` interpretable.
 (time() - wiki_vault_last_scan_timestamp_seconds) > 900
 absent(wiki_vault_last_scan_timestamp_seconds)
 
-# Optional: scans are running but erroring (unreadable vault root).
+# 3. The vault reports zero files — an empty or unmounted volume. The
+#    last_modified gauge vanishes here, so alert 1 goes quiet exactly when
+#    something is most wrong. This is the alert that catches it.
+absent(wiki_vault_last_modified_timestamp_seconds)
+wiki_vault_files == 0
+
+# Optional: scans are running but erroring (unreadable vault or sync-state dir).
 rate(wiki_vault_scan_errors_total[15m]) > 0
 ```
 
@@ -83,7 +95,15 @@ dead" rather than "vault quiet".
 
 ```promql
 (time() - wiki_sync_state_last_modified_timestamp_seconds) > 3600
+absent(wiki_sync_state_last_modified_timestamp_seconds)
 ```
+
+This matters more than it looks. Any write to the vault refreshes
+`wiki_vault_last_modified_timestamp_seconds` — including agent/API writes, which
+also touch `meta/activity/*.md`. In a vault that agents write to regularly, a
+dead sync sidecar therefore leaves alert 1 **quiet**. The sync-state gauge is
+the one that isolates "the sync process stopped" from "the vault is quiet", so
+set `WIKI_SYNC_STATE_DIR` in any deployment that runs a sync sidecar.
 
 ### Configuration
 

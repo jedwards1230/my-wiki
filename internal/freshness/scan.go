@@ -1,6 +1,7 @@
 package freshness
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -33,17 +34,35 @@ type scanResult struct {
 //     exclusion list rather than inventing a third one.
 //   - Every file counts, not just markdown: a raw/ attachment is real vault
 //     content and a change there is a real change.
+//   - A symlinked root is resolved first (see below); symlinks inside the tree
+//     are not followed, so such a link counts as one file with its own mtime.
 func scanTree(root string, excludeTopLevel []string) (scanResult, error) {
 	var res scanResult
-	if _, err := os.Stat(root); err != nil {
+	fi, err := os.Stat(root)
+	if err != nil {
 		return res, err
 	}
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+	if !fi.IsDir() {
+		return res, fmt.Errorf("scan root %q is not a directory", root)
+	}
+	// os.Stat follows symlinks, but filepath.WalkDir lstats its root: handed a
+	// symlinked directory it yields the link itself as a single non-dir entry
+	// and descends no further. That reports one "file" whose mtime never
+	// changes — a permanently frozen gauge, with no scan error to explain it,
+	// which is exactly the false staleness alarm this package exists to
+	// prevent. Resolve the root before walking so a symlinked vault behaves
+	// like a real one. (Symlinks *inside* the tree are still not followed, so
+	// there is no loop or escape risk.)
+	walkRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return res, err
+	}
+	err = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
 		if d.IsDir() {
-			rel, relErr := filepath.Rel(root, p)
+			rel, relErr := filepath.Rel(walkRoot, p)
 			if relErr != nil {
 				return nil
 			}

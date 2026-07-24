@@ -86,11 +86,15 @@ func startInboxPoller(ctx context.Context, vaultDir string, pipeline *dispatchPi
 // problem it exists to solve (no signal in a default deployment). Disabled only
 // by a non-positive EnvVaultFreshnessInterval. A registration failure is logged
 // and the server continues — losing a metric must not take down the wiki.
-func startFreshnessObserver(ctx context.Context, vaultDir string, logger *slog.Logger) {
+//
+// It returns the started Observer, or nil when disabled or registration failed.
+// Production callers ignore it; tests use it to unregister from the default
+// registry so they do not leak a collector into one another.
+func startFreshnessObserver(ctx context.Context, vaultDir string, logger *slog.Logger) *freshness.Observer {
 	interval := vaultFreshnessIntervalFromEnv(logger)
 	if interval <= 0 {
 		logger.Info("vault freshness observer disabled", "env", EnvVaultFreshnessInterval)
-		return
+		return nil
 	}
 	syncStateDir := strings.TrimSpace(os.Getenv(EnvSyncStateDir))
 	observer, err := freshness.New(freshness.Config{
@@ -101,11 +105,12 @@ func startFreshnessObserver(ctx context.Context, vaultDir string, logger *slog.L
 	}, nil)
 	if err != nil {
 		logger.Warn("vault freshness observer failed to start", "error", err)
-		return
+		return nil
 	}
 	go observer.Run(ctx)
 	logger.Info("vault freshness observer started",
 		"interval", interval.String(), "syncStateDir", syncStateDir)
+	return observer
 }
 
 // vaultFreshnessIntervalFromEnv resolves the scan cadence from

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,12 +45,18 @@ func writeFile(t *testing.T, dir, rel string, mtime time.Time) {
 
 // newTestObserver builds an Observer on a private registry so tests never touch
 // the default one.
+//
+// The registry is *pedantic* on purpose: a plain prometheus.NewRegistry skips
+// the registered-desc check, so a metric emitted by Collect but never announced
+// by Describe would go unnoticed. With a pedantic registry, Gather fails, which
+// is what pins the Describe/Collect contract in every post-scan assertion —
+// not just the pre-scan one that testutil happens to check internally.
 func newTestObserver(t *testing.T, cfg Config) (*Observer, *prometheus.Registry) {
 	t.Helper()
 	if cfg.Logger == nil {
 		cfg.Logger = testLogger()
 	}
-	reg := prometheus.NewRegistry()
+	reg := prometheus.NewPedanticRegistry()
 	o, err := New(cfg, reg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -371,4 +378,58 @@ func TestNewValidatesConfig(t *testing.T) {
 	if _, err := New(Config{VaultDir: t.TempDir(), Logger: testLogger()}, reg); err == nil {
 		t.Error("re-registering on the same registry: want a collision error, got nil")
 	}
+}
+
+// TestConcurrentScanAndCollect pins the locking under -race. The Run-goroutine
+// tests only overlap Collect with a scan incidentally (one immediate scan, then
+// a long sleep), so without this the race detector never really exercises the
+// scrape path against a live scan.
+func TestConcurrentScanAndCollect(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "a.md", time.Now().Add(-time.Hour))
+	writeFile(t, vaultDir, "notes/b.md", time.Now().Add(-time.Minute))
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir})
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					o.scan()
+				}
+			}
+		}()
+	}
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					if _, err := reg.Gather(); err != nil {
+						t.Errorf("Gather during concurrent scan: %v", err)
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	close(stop)
+	wg.Wait()
+
+	// The collector must still be coherent afterwards.
+	mustValue(t, reg, mFiles, 2)
 }

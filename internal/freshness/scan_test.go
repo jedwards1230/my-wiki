@@ -109,3 +109,55 @@ func TestScanTreeMissingRoot(t *testing.T) {
 		t.Errorf("want a not-exist error, got %v", err)
 	}
 }
+
+// TestScanTreeSymlinkedRoot: os.Stat follows symlinks but filepath.WalkDir
+// lstats its root, so an unresolved symlinked vault would walk exactly one
+// entry — the link itself — and report a single "file" whose mtime never
+// changes. That is a permanently frozen gauge with no scan error to explain it,
+// i.e. exactly the false staleness alarm this package exists to prevent.
+func TestScanTreeSymlinkedRoot(t *testing.T) {
+	real := t.TempDir()
+	mtime := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	for _, rel := range []string{"a.md", "notes/b.md", "notes/deep/c.md"} {
+		abs := filepath.Join(real, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(abs, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if err := os.Chtimes(abs, mtime, mtime); err != nil {
+			t.Fatalf("chtimes: %v", err)
+		}
+	}
+
+	link := filepath.Join(t.TempDir(), "vault-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unsupported here: %v", err)
+	}
+
+	got, err := scanTree(link, nil)
+	if err != nil {
+		t.Fatalf("scanTree(symlinked root): %v", err)
+	}
+	if got.files != 3 {
+		t.Errorf("files = %d, want 3 (a symlinked root must walk the real tree)", got.files)
+	}
+	if !got.newest.Equal(mtime) {
+		t.Errorf("newest = %v, want %v (got the link's own mtime?)", got.newest, mtime)
+	}
+}
+
+// TestScanTreeRootNotADirectory: pointing --vault at a regular file would
+// otherwise "succeed" with files=1 and that file's mtime, silently masquerading
+// as a healthy one-file vault. It must be a scan error so the error counter
+// moves and the gauges stay absent.
+func TestScanTreeRootNotADirectory(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "not-a-dir.md")
+	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := scanTree(f, nil); err == nil {
+		t.Fatal("scanTree(regular file) returned nil error, want an error")
+	}
+}

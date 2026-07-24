@@ -179,6 +179,12 @@ func (o *Observer) Interval() time.Duration { return o.interval }
 // immediate scan means the metrics become valid at startup rather than after a
 // full interval — a pod that restarts every few minutes still publishes a
 // timestamp instead of looking permanently unobserved.
+//
+// Call Run at most once per Observer. Scans are serialized only by that
+// constraint, not by a lock held across the walk: two concurrent scans could
+// interleave their read-then-write of the snapshot and let the slower one
+// write back a staler sync-state observation. Concurrent Collect is always
+// safe; it is only concurrent scanning that is not.
 func (o *Observer) Run(ctx context.Context) {
 	o.scan()
 	ticker := time.NewTicker(o.interval)
