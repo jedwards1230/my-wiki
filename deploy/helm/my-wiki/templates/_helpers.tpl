@@ -150,6 +150,32 @@ max_bytes=$(( {{ .Values.obsidianSync.logRotation.maxSizeMB | int }} * 1024 * 10
   done
 ) &
 {{- end }}
+{{- if .Values.obsidianSync.heartbeat.enabled }}
+
+# Cross-pod sync-liveness signal. In standalone mode wiki-server cannot see the
+# obsidian-headless sync state at all — that lives on this pod's RWO volume, by
+# design (see obsidianSync.homePersistence). So mirror a timestamp onto the
+# shared data volume, which both pods do mount.
+#
+# The timestamp is COPIED from obsidian-headless's own sync lock with `touch -r`,
+# never generated here. That lock is a directory the sync process creates at
+# <vault>/.obsidian/.sync.lock and whose mtime its own `setInterval` refreshes
+# every second for as long as it holds it, releasing (rmdir) on clean shutdown.
+# Touching on our own timer instead would report "this shell's sleep loop is
+# alive" — which stays true long after sync has died, and is precisely the
+# worthless signal this whole workstream exists to stop trusting.
+#
+# When the lock is absent (not started yet, or cleanly released) we touch
+# nothing: a stale or missing heartbeat is the honest answer.
+sync_lock=/data/vault/.obsidian/.sync.lock
+(
+  while :; do
+    sleep {{ .Values.obsidianSync.heartbeat.intervalSeconds | int }}
+    [ -e "$sync_lock" ] || continue
+    touch -r "$sync_lock" {{ .Values.obsidianSync.heartbeat.path }} 2>/dev/null || true
+  done
+) &
+{{- end }}
 
 echo "Starting continuous sync..."
 # exec so `ob` becomes PID 1 and receives SIGTERM directly — its sync command
@@ -195,6 +221,40 @@ fi
 age=$(( $(date +%s) - newest ))
 if [ "$age" -gt {{ .staleAfter | int }} ]; then
   echo "sync state stale: newest write ${age}s ago (limit {{ .staleAfter | int }}s)" >&2
+  exit 1
+fi
+exit 0
+{{- end }}
+
+{{/*
+my-wiki.syncLockLivenessScript — is the sync process's event loop still running?
+
+Liveness must only fire on unambiguous death, because its consequence is a
+restart. Sync-state freshness cannot carry that burden: obsidian-headless's
+`_sync()` does no work on a tick with nothing to do, so a genuinely quiet vault
+and a sync stuck in an error loop produce the *identical* mtime signature —
+frozen state. Restarting on that would kill healthy containers overnight.
+
+The lock directory can carry it. Its mtime is refreshed every second by the sync
+process's own timer, independent of whether the vault changed, so a stale lock
+means the event loop has stopped — not that the vault is quiet. A missing lock
+means sync has not started or has exited; the container is then either still
+initializing (pass, and let the pod's own restart handle a dead PID 1) or being
+reported on by readiness instead.
+
+Readiness keeps the state-freshness check: it reports the ambiguous case
+honestly without taking an irreversible action on it.
+
+Linux-only: `stat -c %Y` is the GNU/BusyBox spelling (BSD/macOS is `stat -f %m`).
+*/}}
+{{- define "my-wiki.syncLockLivenessScript" -}}
+lock=/data/vault/.obsidian/.sync.lock
+# Not started, or cleanly released — nothing to judge.
+[ -e "$lock" ] || exit 0
+m=$(stat -c %Y "$lock" 2>/dev/null) || exit 0
+age=$(( $(date +%s) - m ))
+if [ "$age" -gt {{ .staleAfter | int }} ]; then
+  echo "sync lock stale: refreshed ${age}s ago (limit {{ .staleAfter | int }}s); the sync process refreshes it every second, so its event loop has stopped" >&2
   exit 1
 fi
 exit 0

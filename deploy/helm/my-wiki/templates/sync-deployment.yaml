@@ -114,7 +114,7 @@ spec:
                 - sh
                 - -c
                 - |
-                  {{- regexReplaceAll "[ \t]+\n" (include "my-wiki.syncFreshnessScript" (dict "root" . "grace" true "staleAfter" .Values.obsidianSync.probes.liveness.staleAfterSeconds) | nindent 18) "\n" }}
+                  {{- regexReplaceAll "[ \t]+\n" (include "my-wiki.syncLockLivenessScript" (dict "staleAfter" .Values.obsidianSync.probes.liveness.staleAfterSeconds) | nindent 18) "\n" }}
             initialDelaySeconds: {{ .Values.obsidianSync.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.obsidianSync.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .Values.obsidianSync.probes.liveness.timeoutSeconds }}
