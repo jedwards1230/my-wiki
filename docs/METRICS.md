@@ -117,8 +117,26 @@ touches **every tick, whether or not anything changed** — so staleness means
   ReadWriteOnce volume the server cannot mount: the two sides agree on a file on
   a *shared* volume instead. Keep it **outside the vault directory**, or it gets
   indexed as wiki content and synced back to Obsidian.
-- **a directory** — newest mtime within. Only usable where the server can
-  actually read the sync tool's state directory.
+- **a directory** — newest mtime among the sync **state DB** files within
+  (`state.db`, `state.db-wal`), matched at any depth. Only usable where the
+  server can actually read the sync tool's state directory.
+
+> **The directory form reads only the state DB files, by design.** Scanning the
+> whole tree would be actively harmful: obsidian-headless tees its log to
+> `sync.log` *including the errors it catches and swallows on each failed poll*,
+> so a wedged, error-looping sync keeps that file perpetually fresh — the gauge
+> would stay alive through exactly the outage it exists to catch. (A 113MB
+> `sync.log` against a 22MB vault was observed in the incident; in-place log
+> rotation bumps its mtime too.) `state.db-shm` is excluded for the same reason:
+> it is a 3-byte stub recreated on every crash, so its freshness proves the
+> process is *crashing*, not syncing.
+>
+> This is an **allowlist**, not an exclusion list, because a blocklist fails
+> open — any newly added log or lock file would silently re-contaminate the
+> gauge. An allowlist fails closed: an unrecognised file is ignored, and if
+> nothing matches, the gauge goes *absent*, which `absent()` alerts on. The set
+> is configurable (`freshness.Config.SyncStateFiles`) so the package stays
+> generic.
 
 ```promql
 (time() - wiki_sync_state_last_modified_timestamp_seconds) > 3600

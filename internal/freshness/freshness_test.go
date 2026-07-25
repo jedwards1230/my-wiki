@@ -286,7 +286,7 @@ func TestSyncStateGauge(t *testing.T) {
 		vaultDir := t.TempDir()
 		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
 		syncDir := t.TempDir()
-		writeFile(t, syncDir, "state/sync.json", syncMtime)
+		writeFile(t, syncDir, "vault-abc123/state.db", syncMtime)
 
 		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
 		o.scan()
@@ -384,7 +384,7 @@ func TestSyncStateGauge(t *testing.T) {
 		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
 		parent := t.TempDir()
 		syncDir := filepath.Join(parent, "state")
-		writeFile(t, syncDir, "sync.json", syncMtime)
+		writeFile(t, syncDir, "vault-abc123/state.db", syncMtime)
 
 		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
 		o.scan()
@@ -519,4 +519,109 @@ func TestConcurrentScanAndCollect(t *testing.T) {
 
 	// The collector must still be coherent afterwards.
 	mustValue(t, reg, mFiles, 2)
+}
+
+// TestSyncStateDirIgnoresLogNoise is the regression test for the sync.log
+// contamination bug, and the most consequential test for the directory form.
+//
+// obsidian-headless tees every log line into sync.log — INCLUDING the errors it
+// catches and swallows on each failed poll. A wedged, error-looping sync
+// therefore keeps sync.log perpetually fresh while state.db and state.db-wal
+// sit frozen. A gauge derived from "newest mtime anywhere in the tree" stays
+// fresh through exactly the outage it exists to catch: the alert never fires,
+// scan_errors stays 0, and nothing explains it.
+//
+// This is chart-owner's case F: a 5h-old state.db beside a just-written
+// sync.log must still report the STALE state.db timestamp.
+func TestSyncStateDirIgnoresLogNoise(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+	syncDir := t.TempDir()
+	stale := time.Now().Add(-5 * time.Hour).Truncate(time.Second)
+	fresh := time.Now().Truncate(time.Second)
+
+	// obsidian-headless nests state under a per-vault-id directory, so these
+	// are NOT top-level relative to the configured path — which is why the
+	// existing excludeTopLevel mechanism could never have filtered them.
+	writeFile(t, syncDir, "vault-abc123/state.db", stale)
+	writeFile(t, syncDir, "vault-abc123/state.db-wal", stale)
+	writeFile(t, syncDir, "vault-abc123/sync.log", fresh)
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
+	o.scan()
+
+	want := float64(stale.UnixNano()) / float64(time.Second)
+	got, ok := gaugeValue(t, reg, mSyncStateMtime)
+	if !ok {
+		t.Fatal(mSyncStateMtime + " absent; want the stale state.db timestamp")
+	}
+	if got != want {
+		t.Errorf("%s = %v, want %v (the stale state.db). A fresh sync.log must not "+
+			"keep the gauge alive — that is the wedged-sync failure this metric exists to catch",
+			mSyncStateMtime, got, want)
+	}
+}
+
+// TestSyncStateDirIgnoresShm: the WAL shared-memory file is a 3-byte stub
+// recreated on every crash. Its freshness proves the process is CRASHING, not
+// syncing — during the incident it was the one file constantly touched. Letting
+// it count would turn a crashloop into a healthy-looking gauge.
+func TestSyncStateDirIgnoresShm(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+	syncDir := t.TempDir()
+	stale := time.Now().Add(-8 * 24 * time.Hour).Truncate(time.Second) // the 8-day outage
+	fresh := time.Now().Truncate(time.Second)
+
+	writeFile(t, syncDir, "vault-abc123/state.db", stale)
+	writeFile(t, syncDir, "vault-abc123/state.db-wal", stale)
+	writeFile(t, syncDir, "vault-abc123/state.db-shm", fresh) // recreated each crash
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
+	o.scan()
+
+	want := float64(stale.UnixNano()) / float64(time.Second)
+	mustValue(t, reg, mSyncStateMtime, want)
+}
+
+// TestSyncStateDirNoMatchingFiles: a directory with no allowlisted file yields
+// an absent gauge, not a fresh-looking wrong one. Failing closed is the point
+// of using an allowlist — absence is alertable via absent(), a wrong value is
+// not.
+func TestSyncStateDirNoMatchingFiles(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+	syncDir := t.TempDir()
+	writeFile(t, syncDir, "vault-abc123/sync.log", time.Now())
+	writeFile(t, syncDir, "vault-abc123/README", time.Now())
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
+	o.scan()
+
+	mustAbsent(t, reg, mSyncStateMtime)
+	mustValue(t, reg, mSyncStateErrors, 0) // not an error, just nothing to report
+}
+
+// TestSyncStateFilesConfigurable: the allowlist is a Config knob, so the
+// package stays generic rather than hardcoding one tool's layout.
+func TestSyncStateFilesConfigurable(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+	syncDir := t.TempDir()
+	want := time.Now().Add(-time.Hour).Truncate(time.Second)
+	writeFile(t, syncDir, "deep/custom.state", want)
+	writeFile(t, syncDir, "deep/state.db", time.Now()) // default name, not allowed here
+
+	o, reg := newTestObserver(t, Config{
+		VaultDir:       vaultDir,
+		SyncStatePath:  syncDir,
+		SyncStateFiles: []string{"custom.state"},
+	})
+	o.scan()
+
+	mustValue(t, reg, mSyncStateMtime, float64(want.UnixNano())/float64(time.Second))
 }

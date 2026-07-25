@@ -84,6 +84,47 @@ func scanTree(root string, excludeTopLevel []string) (scanResult, error) {
 	return res, err
 }
 
+// newestMatching walks root and reports the newest mtime among files whose
+// BASENAME appears in names, plus how many matched.
+//
+// This is an allowlist, not an exclusion list, and that choice is load-bearing.
+// scanTree's excludeTopLevel cannot express what is needed here twice over: it
+// is checked only inside the d.IsDir() branch, so it can never exclude a *file*
+// at all, and it matches the path relative to the root, so a nested file would
+// not match even if it could. More importantly, a blocklist fails OPEN — any
+// newly added log or lock file silently re-contaminates the gauge with fresh
+// mtimes and nobody finds out, which is the precise failure mode this package
+// exists to eliminate. An allowlist fails CLOSED: an unrecognized file is
+// ignored, and if nothing matches, the gauge goes absent, which is visible.
+//
+// Matching is on basename so it works at any depth — obsidian-headless nests
+// its state under a per-vault-id directory (<vault-id>/state.db).
+func newestMatching(root string, names []string) (scanResult, error) {
+	var res scanResult
+	walkRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return res, err
+	}
+	err = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return nil
+		}
+		if !slices.Contains(names, filepath.Base(p)) {
+			return nil
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return nil
+		}
+		res.files++
+		if mt := info.ModTime(); mt.After(res.newest) {
+			res.newest = mt
+		}
+		return nil
+	})
+	return res, err
+}
+
 // readSyncState reports the newest mtime at path, which may be either a single
 // file or a directory.
 //
@@ -104,7 +145,13 @@ func scanTree(root string, excludeTopLevel []string) (scanResult, error) {
 //
 // An existing but empty directory returns (zero, false, nil) for the same
 // reason: there is no mtime to report, and reporting 0 would mean the epoch.
-func readSyncState(path string) (time.Time, bool, error) {
+// So does a directory containing none of the allowlisted names — better an
+// absent gauge, which alerts via absent(), than a fresh-looking wrong one.
+//
+// For the directory form, only files named in stateFiles are considered. See
+// newestMatching for why this is an allowlist; see DefaultSyncStateFiles for
+// why the default set is what it is.
+func readSyncState(path string, stateFiles []string) (time.Time, bool, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -113,11 +160,11 @@ func readSyncState(path string) (time.Time, bool, error) {
 		return time.Time{}, false, err
 	}
 	if !fi.IsDir() {
+		// The heartbeat-file form. Whatever the writer puts here is the signal;
+		// there is nothing to filter.
 		return fi.ModTime(), true, nil
 	}
-	// No exclusions: the sync-state directory is opaque to us on purpose, so
-	// this stays generic rather than encoding any particular tool's layout.
-	res, err := scanTree(path, nil)
+	res, err := newestMatching(path, stateFiles)
 	if err != nil {
 		return time.Time{}, false, err
 	}

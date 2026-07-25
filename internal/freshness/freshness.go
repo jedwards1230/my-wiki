@@ -48,6 +48,29 @@ import (
 // is far more expensive than the inbox/-only scan.
 const DefaultInterval = 5 * time.Minute
 
+// DefaultSyncStateFiles are the basenames treated as evidence that a sync
+// process is doing work, when SyncStatePath names a directory. Matched at any
+// depth, since obsidian-headless nests state under a per-vault-id directory.
+//
+// This is an allowlist because a blocklist fails open — see newestMatching.
+// Two exclusions are deliberate and worth stating, because both would silently
+// defeat the whole metric:
+//
+//   - sync.log — obsidian-headless tees every log line here, INCLUDING the
+//     errors it catches and swallows on each failed poll. A wedged, error-
+//     looping sync keeps this file perpetually fresh, so a gauge derived from
+//     it stays fresh through exactly the outage it is supposed to catch. (The
+//     production incident left a 113MB sync.log against a 22MB vault.) Log
+//     rotation that truncates in place bumps its mtime too.
+//   - state.db-shm — the WAL shared-memory file is a 3-byte stub recreated on
+//     every crash. Its freshness proves the process is CRASHING, not syncing;
+//     during the incident it was the one file being touched constantly.
+//
+// state.db (checkpoints) and state.db-wal (sync writes) both move only when
+// real sync work happens. During the incident the WAL sat dirty and never
+// checkpointed — i.e. correctly frozen, which is the signal we want.
+var DefaultSyncStateFiles = []string{"state.db", "state.db-wal"}
+
 // Metric descriptors. Package-level so Describe and Collect cannot disagree.
 var (
 	lastModifiedDesc = prometheus.NewDesc(
@@ -110,6 +133,11 @@ type Config struct {
 	// obsidian-headless's layout.
 	SyncStatePath string
 
+	// SyncStateFiles are the basenames considered when SyncStatePath is a
+	// directory. Nil uses DefaultSyncStateFiles. Ignored for the file form,
+	// where the named file IS the signal.
+	SyncStateFiles []string
+
 	// Interval is the scan cadence. Non-positive uses DefaultInterval;
 	// disabling the observer is the caller's decision, not this package's.
 	Interval time.Duration
@@ -136,10 +164,11 @@ type snapshot struct {
 // Observer periodically walks the vault and exports freshness metrics. It
 // implements prometheus.Collector.
 type Observer struct {
-	vaultDir      string
-	syncStatePath string
-	interval      time.Duration
-	logger        *slog.Logger
+	vaultDir       string
+	syncStatePath  string
+	syncStateFiles []string
+	interval       time.Duration
+	logger         *slog.Logger
 
 	// now is time.Now, overridable in tests.
 	now func() time.Time
@@ -179,16 +208,20 @@ func New(cfg Config, registerer prometheus.Registerer) (*Observer, error) {
 	if cfg.Interval <= 0 {
 		cfg.Interval = DefaultInterval
 	}
+	if cfg.SyncStateFiles == nil {
+		cfg.SyncStateFiles = DefaultSyncStateFiles
+	}
 	if registerer == nil {
 		registerer = prometheus.DefaultRegisterer
 	}
 
 	o := &Observer{
-		vaultDir:      cfg.VaultDir,
-		syncStatePath: cfg.SyncStatePath,
-		interval:      cfg.Interval,
-		logger:        cfg.Logger,
-		now:           time.Now,
+		vaultDir:       cfg.VaultDir,
+		syncStatePath:  cfg.SyncStatePath,
+		syncStateFiles: cfg.SyncStateFiles,
+		interval:       cfg.Interval,
+		logger:         cfg.Logger,
+		now:            time.Now,
 	}
 	if err := registerer.Register(o); err != nil {
 		return nil, fmt.Errorf("freshness: register collector: %w", err)
@@ -266,7 +299,7 @@ func (o *Observer) scan() {
 	}
 
 	if o.syncStatePath != "" {
-		switch mtime, present, serr := readSyncState(o.syncStatePath); {
+		switch mtime, present, serr := readSyncState(o.syncStatePath, o.syncStateFiles); {
 		case serr != nil:
 			// A real read failure (permissions, I/O). Keep the previous value
 			// and count it on the sync-state counter, not the vault one.

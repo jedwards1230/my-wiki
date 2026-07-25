@@ -212,8 +212,16 @@ const EnvVaultFreshnessInterval = "WIKI_VAULT_FRESHNESS_INTERVAL"
 //     ReadWriteOnce volume the server cannot mount: the two sides agree on a
 //     heartbeat path on a shared volume instead. Deliberately placed outside
 //     the vault, or it would be indexed as wiki content and synced back.
-//   - A directory — newest mtime within, no exclusions applied. Only usable
-//     where the server can actually read the sync tool's state directory.
+//   - A directory — newest mtime among the sync state DB files within
+//     (state.db, state.db-wal), matched at any depth. Only usable where the
+//     server can actually read the sync tool's state directory.
+//
+// The directory form deliberately considers ONLY those state DB files, not
+// every file in the tree. obsidian-headless tees its log to sync.log including
+// the errors it swallows on each failed poll, so a wedged sync keeps that file
+// perpetually fresh; and state.db-shm is recreated on every crash. A gauge
+// derived from either would stay fresh through exactly the outage it exists to
+// catch. See freshness.DefaultSyncStateFiles.
 //
 // A path that does not exist is not an error: "the sync process has not written
 // its heartbeat yet" is a legitimate state, reported by the gauge being absent
