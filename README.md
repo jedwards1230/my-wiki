@@ -55,7 +55,11 @@ A macOS LaunchAgent for daily lint (`--instance-name` is appended to the plist l
 
 Helm chart: `oci://ghcr.io/jedwards1230/charts/my-wiki`. Images: `ghcr.io/jedwards1230/my-wiki`. Both released by `release.yml` on push to `main` (semver via `semver:patch|minor|major` PR labels).
 
-Key Helm values (see `deploy/helm/my-wiki/values.yaml` for the full list): `instanceName` sets `WIKI_INSTANCE_NAME` and is surfaced by the `whoami` MCP tool so agents can distinguish multiple wiki instances. `obsidianSync.standalone: true` moves obsidian-headless to a separate Deployment (requires an RWX PVC).
+Key Helm values (see `deploy/helm/my-wiki/values.yaml` for the full list): `instanceName` sets `WIKI_INSTANCE_NAME` and is surfaced by the `whoami` MCP tool so agents can distinguish multiple wiki instances. `obsidianSync.standalone: true` moves obsidian-headless to a separate Deployment: the vault still needs an RWX PVC, but obsidian-headless's SQLite sync state lives under `$HOME` and SQLite's WAL shared memory can't run on NFS (which RWX means, including Longhorn RWX), so it also needs its own RWO volume — `obsidianSync.homePersistence`, on by default. The same applies to the in-pod sidecar whenever the shared PVC is RWX.
+
+Because that RWO volume is mounted by the sync pod alone, wiki-server cannot read the sync state directly in standalone mode. The sync container instead mirrors its liveness onto the shared volume at `obsidianSync.heartbeat.path`, which wiki-server exports as a freshness metric — see [docs/METRICS.md](docs/METRICS.md).
+
+Upgrading an existing RWX deployment moves `/data/home` to that new, empty volume: the first rollout re-runs `ob sync-setup` and re-syncs from scratch (cheaper than migrating a sub-megabyte state DB). The old home is left on the shared volume — delete `home/.config/obsidian-headless` there once the new pod is healthy.
 
 ## Documentation
 

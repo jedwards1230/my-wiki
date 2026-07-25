@@ -1,0 +1,684 @@
+package freshness
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
+)
+
+const (
+	mLastModified    = "wiki_vault_last_modified_timestamp_seconds"
+	mLastScan        = "wiki_vault_last_scan_timestamp_seconds"
+	mFiles           = "wiki_vault_files"
+	mScanDuration    = "wiki_vault_scan_duration_seconds"
+	mScanErrors      = "wiki_vault_scan_errors_total"
+	mSyncStateMtime  = "wiki_sync_state_last_modified_timestamp_seconds"
+	mSyncStateErrors = "wiki_sync_state_read_errors_total"
+)
+
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// writeFile writes content at dir/rel (creating parents) and stamps its mtime.
+func writeFile(t *testing.T, dir, rel string, mtime time.Time) {
+	t.Helper()
+	abs := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", rel, err)
+	}
+	if err := os.WriteFile(abs, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+	if err := os.Chtimes(abs, mtime, mtime); err != nil {
+		t.Fatalf("chtimes %s: %v", rel, err)
+	}
+}
+
+// newTestObserver builds an Observer on a private registry so tests never touch
+// the default one.
+//
+// The registry is *pedantic* on purpose: a plain prometheus.NewRegistry skips
+// the registered-desc check, so a metric emitted by Collect but never announced
+// by Describe would go unnoticed. With a pedantic registry, Gather fails, which
+// is what pins the Describe/Collect contract in every post-scan assertion —
+// not just the pre-scan one that testutil happens to check internally.
+func newTestObserver(t *testing.T, cfg Config) (*Observer, *prometheus.Registry) {
+	t.Helper()
+	if cfg.Logger == nil {
+		cfg.Logger = testLogger()
+	}
+	reg := prometheus.NewPedanticRegistry()
+	o, err := New(cfg, reg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return o, reg
+}
+
+// gaugeValue returns the sample value of a single-series metric family from
+// reg, plus whether the family was exported at all. Presence is the assertion
+// that matters for the zero-value trap; the value matters for the rest.
+func gaugeValue(t *testing.T, reg *prometheus.Registry, name string) (float64, bool) {
+	t.Helper()
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, fam := range families {
+		if fam.GetName() != name {
+			continue
+		}
+		metrics := fam.GetMetric()
+		if len(metrics) != 1 {
+			t.Fatalf("%s: want exactly 1 series, got %d", name, len(metrics))
+		}
+		return sampleValue(t, name, metrics[0]), true
+	}
+	return 0, false
+}
+
+func sampleValue(t *testing.T, name string, m *dto.Metric) float64 {
+	t.Helper()
+	switch {
+	case m.GetGauge() != nil:
+		return m.GetGauge().GetValue()
+	case m.GetCounter() != nil:
+		return m.GetCounter().GetValue()
+	default:
+		t.Fatalf("%s: unsupported metric type %v", name, m)
+		return 0
+	}
+}
+
+func mustAbsent(t *testing.T, reg *prometheus.Registry, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if _, ok := gaugeValue(t, reg, name); ok {
+			t.Errorf("%s: want absent, but it was exported", name)
+		}
+	}
+}
+
+func mustValue(t *testing.T, reg *prometheus.Registry, name string, want float64) {
+	t.Helper()
+	got, ok := gaugeValue(t, reg, name)
+	if !ok {
+		t.Fatalf("%s: want exported, but it was absent", name)
+	}
+	if got != want {
+		t.Errorf("%s = %v, want %v", name, got, want)
+	}
+}
+
+// TestCollectBeforeFirstScanEmitsNoSnapshotMetrics is the zero-value-trap test,
+// and the most important one in this file.
+//
+// A registered-but-never-Set gauge reports 0, which a consumer reads as "last
+// modified at the Unix epoch" — ~56 years stale. That would fire a false
+// staleness alarm on every startup and fire it permanently for a CrashLooping
+// pod: strictly worse than having no metric. So before the first successful
+// scan, Collect must emit NOTHING snapshot-derived. Only the error counter is
+// exported, because 0 scan errors is a true and meaningful value.
+//
+// If someone later replaces the const-metric collector with plain registered
+// gauges, or drops the `valid` guard in Collect, this test goes red.
+func TestCollectBeforeFirstScanEmitsNoSnapshotMetrics(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: t.TempDir()})
+
+	// No scan has run: every snapshot-derived metric must be absent.
+	mustAbsent(t, reg, mLastModified, mLastScan, mFiles, mScanDuration, mSyncStateMtime)
+
+	// The two error counters ARE exported from zero — unlike a timestamp, 0
+	// errors is a true and meaningful value, so absence would lose information.
+	mustValue(t, reg, mScanErrors, 0)
+	mustValue(t, reg, mSyncStateErrors, 0)
+	if got := testutil.CollectAndCount(o); got != 2 {
+		t.Fatalf("collected %d metrics before first scan, want exactly 2 (the two error counters)", got)
+	}
+
+	// Sanity: the very same collector does export them once a scan succeeds,
+	// so the assertions above are about scan state and not about the metric
+	// names being misspelled.
+	o.scan()
+	for _, name := range []string{mLastModified, mLastScan, mFiles, mScanDuration} {
+		if _, ok := gaugeValue(t, reg, name); !ok {
+			t.Errorf("%s: absent after a successful scan", name)
+		}
+	}
+}
+
+func TestScanExportsFreshness(t *testing.T) {
+	vaultDir := t.TempDir()
+	oldest := time.Unix(1_700_000_000, 0)
+	newest := oldest.Add(48 * time.Hour)
+
+	writeFile(t, vaultDir, "note.md", oldest)
+	writeFile(t, vaultDir, "deep/nested/clip.md", newest) // newest wins across subdirs
+	writeFile(t, vaultDir, "raw/scan.pdf", oldest)        // non-markdown counts too
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir})
+	o.scan()
+
+	mustValue(t, reg, mLastModified, float64(newest.UnixNano())/float64(time.Second))
+	mustValue(t, reg, mFiles, 3)
+	mustValue(t, reg, mScanErrors, 0)
+
+	lastScan, ok := gaugeValue(t, reg, mLastScan)
+	if !ok {
+		t.Fatal(mLastScan + " absent after a successful scan")
+	}
+	if delta := time.Since(time.Unix(0, int64(lastScan*float64(time.Second)))); delta > time.Minute || delta < 0 {
+		t.Errorf("%s is %v away from now, want ~0", mLastScan, delta)
+	}
+	if _, ok := gaugeValue(t, reg, mScanDuration); !ok {
+		t.Error(mScanDuration + " absent after a successful scan")
+	}
+}
+
+// TestScanExcludesObsidianDir pins the two exclusion rules that keep the gauge
+// honest: .obsidian/ churns on every editor action (it would mask a dead sync
+// by keeping last_modified fresh), and directory mtimes are inconsistent across
+// filesystems so they never contribute.
+func TestScanExcludesObsidianDir(t *testing.T) {
+	vaultDir := t.TempDir()
+	real := time.Unix(1_700_000_000, 0)
+	churn := real.Add(72 * time.Hour)
+
+	writeFile(t, vaultDir, "note.md", real)
+	writeFile(t, vaultDir, ".obsidian/workspace.json", churn)
+	writeFile(t, vaultDir, ".obsidian/plugins/x/data.json", churn)
+
+	// A directory stamped newer than every file must not contribute.
+	dir := filepath.Join(vaultDir, "empty-dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chtimes(dir, churn, churn); err != nil {
+		t.Fatalf("chtimes dir: %v", err)
+	}
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir})
+	o.scan()
+
+	mustValue(t, reg, mLastModified, float64(real.UnixNano())/float64(time.Second))
+	mustValue(t, reg, mFiles, 1)
+}
+
+// TestScanEmptyVault documents the empty-vault contract: the scan succeeded, so
+// the heartbeat and the file count are exported (files = 0), but there is no
+// newest mtime to report and reporting 0 would be the same epoch trap — so
+// last_modified stays absent.
+func TestScanEmptyVault(t *testing.T) {
+	o, reg := newTestObserver(t, Config{VaultDir: t.TempDir()})
+	o.scan()
+
+	mustValue(t, reg, mFiles, 0)
+	mustValue(t, reg, mScanErrors, 0)
+	if _, ok := gaugeValue(t, reg, mLastScan); !ok {
+		t.Error(mLastScan + " absent after a successful scan of an empty vault")
+	}
+	mustAbsent(t, reg, mLastModified)
+}
+
+// TestScanErrorKeepsPreviousSnapshot: a transient read failure must not regress
+// a good observation to "never scanned" — that would look identical to a dead
+// observer and defeat the dead-man's switch. Mirrors inboxPoller.poll.
+func TestScanErrorKeepsPreviousSnapshot(t *testing.T) {
+	parent := t.TempDir()
+	vaultDir := filepath.Join(parent, "vault")
+	mtime := time.Unix(1_700_000_000, 0)
+	writeFile(t, vaultDir, "note.md", mtime)
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir})
+	o.scan()
+	wantModified := float64(mtime.UnixNano()) / float64(time.Second)
+	mustValue(t, reg, mLastModified, wantModified)
+	lastScan, _ := gaugeValue(t, reg, mLastScan)
+
+	if err := os.RemoveAll(vaultDir); err != nil {
+		t.Fatalf("remove vault: %v", err)
+	}
+	o.scan()
+
+	mustValue(t, reg, mScanErrors, 1)
+	mustValue(t, reg, mLastModified, wantModified)
+	mustValue(t, reg, mFiles, 1)
+	if got, _ := gaugeValue(t, reg, mLastScan); got != lastScan {
+		t.Errorf("%s advanced on a failed scan: got %v, want %v", mLastScan, got, lastScan)
+	}
+}
+
+func TestSyncStateGauge(t *testing.T) {
+	syncMtime := time.Unix(1_700_100_000, 0)
+
+	t.Run("absent when unconfigured", func(t *testing.T) {
+		vaultDir := t.TempDir()
+		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir})
+		o.scan()
+
+		mustAbsent(t, reg, mSyncStateMtime)
+		descs := make(chan *prometheus.Desc, 16)
+		o.Describe(descs)
+		close(descs)
+		for d := range descs {
+			if d == syncStateLastModifiedDesc {
+				t.Error("sync-state descriptor advertised while the directory is unconfigured")
+			}
+		}
+	})
+
+	t.Run("present when configured", func(t *testing.T) {
+		vaultDir := t.TempDir()
+		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+		syncDir := t.TempDir()
+		writeFile(t, syncDir, "vault-abc123/state.db", syncMtime)
+
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
+		o.scan()
+
+		mustValue(t, reg, mSyncStateMtime, float64(syncMtime.UnixNano())/float64(time.Second))
+	})
+
+	t.Run("empty sync dir reports the sentinel", func(t *testing.T) {
+		vaultDir := t.TempDir()
+		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: t.TempDir()})
+		o.scan()
+
+		// Configured but nothing there: 0, so the staleness query fires.
+		mustValue(t, reg, mSyncStateMtime, 0)
+	})
+
+	// The heartbeat-file form is the one that works in the split-volume
+	// deployment: the sync process keeps its own state on an RWO volume the
+	// server cannot mount, so the two sides agree on a file on a shared volume
+	// that the sync process touches every tick.
+	t.Run("heartbeat file form", func(t *testing.T) {
+		vaultDir := t.TempDir()
+		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+		beatDir := t.TempDir()
+		beat := filepath.Join(beatDir, ".sync-heartbeat")
+		if err := os.WriteFile(beat, nil, 0o644); err != nil {
+			t.Fatalf("write heartbeat: %v", err)
+		}
+		if err := os.Chtimes(beat, syncMtime, syncMtime); err != nil {
+			t.Fatalf("chtimes heartbeat: %v", err)
+		}
+
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: beat})
+		o.scan()
+		mustValue(t, reg, mSyncStateMtime, float64(syncMtime.UnixNano())/float64(time.Second))
+
+		// A later tick moves the gauge — the property the whole design rests on:
+		// the heartbeat advances even though the vault never changed.
+		tick := syncMtime.Add(90 * time.Second)
+		if err := os.Chtimes(beat, tick, tick); err != nil {
+			t.Fatalf("chtimes heartbeat tick: %v", err)
+		}
+		o.scan()
+		mustValue(t, reg, mSyncStateMtime, float64(tick.UnixNano())/float64(time.Second))
+		mustValue(t, reg, mSyncStateErrors, 0)
+	})
+
+	// A missing path is a legitimate state ("sync has not written its heartbeat
+	// yet"), not a failure. It must report by absence and move no counter —
+	// otherwise every fresh deployment generates error signal before the sync
+	// side is wired, and a deleted heartbeat would keep looking alive.
+	t.Run("missing heartbeat reports the sentinel, not an error", func(t *testing.T) {
+		vaultDir := t.TempDir()
+		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+		beatDir := t.TempDir()
+		beat := filepath.Join(beatDir, ".sync-heartbeat")
+
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: beat})
+
+		// Never existed: sentinel 0, and NOT an error — the sync process
+		// simply has not written yet.
+		o.scan()
+		mustValue(t, reg, mSyncStateMtime, 0)
+		mustValue(t, reg, mSyncStateErrors, 0)
+		mustValue(t, reg, mScanErrors, 0)
+
+		// Appears.
+		if err := os.WriteFile(beat, nil, 0o644); err != nil {
+			t.Fatalf("write heartbeat: %v", err)
+		}
+		if err := os.Chtimes(beat, syncMtime, syncMtime); err != nil {
+			t.Fatalf("chtimes: %v", err)
+		}
+		o.scan()
+		mustValue(t, reg, mSyncStateMtime, float64(syncMtime.UnixNano())/float64(time.Second))
+
+		// Removed again: back to absent, still no error. Carrying the old value
+		// forward here would report a dead sync as alive indefinitely.
+		if err := os.Remove(beat); err != nil {
+			t.Fatalf("remove heartbeat: %v", err)
+		}
+		o.scan()
+		mustValue(t, reg, mSyncStateMtime, 0)
+		mustValue(t, reg, mSyncStateErrors, 0)
+		mustValue(t, reg, mScanErrors, 0)
+	})
+
+	// A real read failure is different from a missing path: keep the last good
+	// value and count it on the sync-state counter, never the vault one.
+	t.Run("unreadable path counts a sync-state error and keeps the value", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("running as root: permission bits do not deny access")
+		}
+		vaultDir := t.TempDir()
+		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+		parent := t.TempDir()
+		syncDir := filepath.Join(parent, "state")
+		writeFile(t, syncDir, "vault-abc123/state.db", syncMtime)
+
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
+		o.scan()
+		want := float64(syncMtime.UnixNano()) / float64(time.Second)
+		mustValue(t, reg, mSyncStateMtime, want)
+
+		// Deny traversal of the parent so stat on the child fails with EACCES
+		// rather than ENOENT.
+		if err := os.Chmod(parent, 0o000); err != nil {
+			t.Fatalf("chmod parent: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+
+		o.scan()
+		mustValue(t, reg, mSyncStateErrors, 1)
+		mustValue(t, reg, mSyncStateMtime, want) // previous value preserved
+		mustValue(t, reg, mScanErrors, 0)        // vault counter untouched
+	})
+}
+
+// TestRunScansImmediately covers the startup contract: the first scan happens on
+// Run entry, not one interval later, so a pod that restarts every few minutes
+// still publishes a heartbeat instead of looking permanently unobserved. It also
+// covers ctx cancellation.
+func TestRunScansImmediately(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, Interval: time.Hour})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		o.Run(ctx)
+	}()
+
+	deadline := time.After(5 * time.Second)
+	for {
+		if _, ok := gaugeValue(t, reg, mLastScan); ok {
+			break
+		}
+		select {
+		case <-deadline:
+			cancel()
+			<-done
+			t.Fatal("no scan observed within 5s of Run; the immediate first scan is missing")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after ctx cancellation")
+	}
+}
+
+func TestNewValidatesConfig(t *testing.T) {
+	if _, err := New(Config{}, prometheus.NewRegistry()); err == nil {
+		t.Fatal("New with an empty VaultDir: want error, got nil")
+	}
+
+	reg := prometheus.NewRegistry()
+	o, err := New(Config{VaultDir: t.TempDir(), Logger: testLogger()}, reg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if o.Interval() != DefaultInterval {
+		t.Errorf("Interval() = %v, want the %v default", o.Interval(), DefaultInterval)
+	}
+	if _, err := New(Config{VaultDir: t.TempDir(), Logger: testLogger()}, reg); err == nil {
+		t.Error("re-registering on the same registry: want a collision error, got nil")
+	}
+}
+
+// TestConcurrentScanAndCollect pins the locking under -race. The Run-goroutine
+// tests only overlap Collect with a scan incidentally (one immediate scan, then
+// a long sleep), so without this the race detector never really exercises the
+// scrape path against a live scan.
+//
+// Scope note: -race proves the absence of unsynchronized memory access, not the
+// absence of lost updates. Scan cycles are serialized by scanMu, which is what
+// actually makes concurrent scan() sound; this test covers the memory-safety
+// half and that Gather stays coherent while a scan is in flight.
+func TestConcurrentScanAndCollect(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "a.md", time.Now().Add(-time.Hour))
+	writeFile(t, vaultDir, "notes/b.md", time.Now().Add(-time.Minute))
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir})
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					o.scan()
+				}
+			}
+		}()
+	}
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					if _, err := reg.Gather(); err != nil {
+						t.Errorf("Gather during concurrent scan: %v", err)
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	close(stop)
+	wg.Wait()
+
+	// The collector must still be coherent afterwards.
+	mustValue(t, reg, mFiles, 2)
+}
+
+// TestSyncStateDirIgnoresLogNoise is the regression test for the sync.log
+// contamination bug, and the most consequential test for the directory form.
+//
+// obsidian-headless tees every log line into sync.log — INCLUDING the errors it
+// catches and swallows on each failed poll. A wedged, error-looping sync
+// therefore keeps sync.log perpetually fresh while state.db and state.db-wal
+// sit frozen. A gauge derived from "newest mtime anywhere in the tree" stays
+// fresh through exactly the outage it exists to catch: the alert never fires,
+// scan_errors stays 0, and nothing explains it.
+//
+// This is chart-owner's case F: a 5h-old state.db beside a just-written
+// sync.log must still report the STALE state.db timestamp.
+func TestSyncStateDirIgnoresLogNoise(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+	syncDir := t.TempDir()
+	stale := time.Now().Add(-5 * time.Hour).Truncate(time.Second)
+	fresh := time.Now().Truncate(time.Second)
+
+	// obsidian-headless nests state under a per-vault-id directory, so these
+	// are NOT top-level relative to the configured path — which is why the
+	// existing excludeTopLevel mechanism could never have filtered them.
+	writeFile(t, syncDir, "vault-abc123/state.db", stale)
+	writeFile(t, syncDir, "vault-abc123/state.db-wal", stale)
+	writeFile(t, syncDir, "vault-abc123/sync.log", fresh)
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
+	o.scan()
+
+	want := float64(stale.UnixNano()) / float64(time.Second)
+	got, ok := gaugeValue(t, reg, mSyncStateMtime)
+	if !ok {
+		t.Fatal(mSyncStateMtime + " absent; want the stale state.db timestamp")
+	}
+	if got != want {
+		t.Errorf("%s = %v, want %v (the stale state.db). A fresh sync.log must not "+
+			"keep the gauge alive — that is the wedged-sync failure this metric exists to catch",
+			mSyncStateMtime, got, want)
+	}
+}
+
+// TestSyncStateDirIgnoresShm: the WAL shared-memory file is a 3-byte stub
+// recreated on every crash. Its freshness proves the process is CRASHING, not
+// syncing — during the incident it was the one file constantly touched. Letting
+// it count would turn a crashloop into a healthy-looking gauge.
+func TestSyncStateDirIgnoresShm(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+	syncDir := t.TempDir()
+	stale := time.Now().Add(-8 * 24 * time.Hour).Truncate(time.Second) // the 8-day outage
+	fresh := time.Now().Truncate(time.Second)
+
+	writeFile(t, syncDir, "vault-abc123/state.db", stale)
+	writeFile(t, syncDir, "vault-abc123/state.db-wal", stale)
+	writeFile(t, syncDir, "vault-abc123/state.db-shm", fresh) // recreated each crash
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
+	o.scan()
+
+	want := float64(stale.UnixNano()) / float64(time.Second)
+	mustValue(t, reg, mSyncStateMtime, want)
+}
+
+// TestSyncStateDirNoMatchingFiles: a directory with no allowlisted file yields
+// an absent gauge, not a fresh-looking wrong one. Failing closed is the point
+// of using an allowlist — absence is alertable via absent(), a wrong value is
+// not.
+func TestSyncStateDirNoMatchingFiles(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+	syncDir := t.TempDir()
+	writeFile(t, syncDir, "vault-abc123/sync.log", time.Now())
+	writeFile(t, syncDir, "vault-abc123/README", time.Now())
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
+	o.scan()
+
+	mustValue(t, reg, mSyncStateMtime, 0)  // sentinel, not absence
+	mustValue(t, reg, mSyncStateErrors, 0) // not an error, just nothing to report
+}
+
+// TestSyncStateFilesConfigurable: the allowlist is a Config knob, so the
+// package stays generic rather than hardcoding one tool's layout.
+func TestSyncStateFilesConfigurable(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+
+	syncDir := t.TempDir()
+	want := time.Now().Add(-time.Hour).Truncate(time.Second)
+	writeFile(t, syncDir, "deep/custom.state", want)
+	writeFile(t, syncDir, "deep/state.db", time.Now()) // default name, not allowed here
+
+	o, reg := newTestObserver(t, Config{
+		VaultDir:       vaultDir,
+		SyncStatePath:  syncDir,
+		SyncStateFiles: []string{"custom.state"},
+	})
+	o.scan()
+
+	mustValue(t, reg, mSyncStateMtime, float64(want.UnixNano())/float64(time.Second))
+}
+
+// TestSyncStateNeverCreatedFiresStalenessQuery is the regression test for the
+// incident's actual shape, and the reason the sentinel exists.
+//
+// The 2026-07 outage was an INIT-CONTAINER crashloop: `ob sync --continuous`
+// never started, so the heartbeat file was never created — not "created then
+// went stale". If a configured-but-missing path reported by absence, then
+//
+//	(time() - wiki_sync_state_last_modified_timestamp_seconds) > threshold
+//
+// would evaluate over an empty vector and never fire, staying silent for the
+// full 8 days. Only a separately-written absent() rule would have caught it,
+// which makes "someone remembered the second rule" a single point of failure —
+// unacceptable in a metric whose entire purpose is to defeat silent inertness.
+//
+// So: configured + missing MUST export a value, and that value must be old
+// enough that the primary staleness comparison fires.
+func TestSyncStateNeverCreatedFiresStalenessQuery(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Now())
+
+	// Configured, but the sync process never ran, so nothing was ever written.
+	neverCreated := filepath.Join(t.TempDir(), ".sync-heartbeat")
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: neverCreated})
+	o.scan()
+
+	got, ok := gaugeValue(t, reg, mSyncStateMtime)
+	if !ok {
+		t.Fatalf("%s absent for a configured-but-missing path. The staleness "+
+			"query would evaluate over an empty vector and stay silent through "+
+			"exactly the init-crashloop outage this metric exists to catch", mSyncStateMtime)
+	}
+
+	// Simulate what Prometheus evaluates: (time() - gauge) > 1h must be true.
+	const threshold = 3600.0
+	if age := float64(time.Now().Unix()) - got; age <= threshold {
+		t.Errorf("(time() - %s) = %v, want > %v so the primary staleness alert fires; gauge was %v",
+			mSyncStateMtime, age, threshold, got)
+	}
+}
+
+// TestSyncStateUnconfiguredStaysAbsent is the other half of the split: absence
+// must still mean "not configured at all", so a deployment that never opted in
+// does not carry an alert-firing metric. Sentinel is for configured-but-missing
+// only.
+func TestSyncStateUnconfiguredStaysAbsent(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Now())
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir}) // no SyncStatePath
+	o.scan()
+
+	mustAbsent(t, reg, mSyncStateMtime, mSyncStateErrors)
+}

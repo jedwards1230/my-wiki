@@ -42,9 +42,125 @@ obsidian:
 # When true, obsidian-headless runs as a separate single-replica Deployment
 # instead of as init+sidecar in the main server pod. Requires
 # persistence.enabled=true and persistence.accessMode=ReadWriteMany so both
-# Deployments can mount the PVC and share data.
+# Deployments can mount the PVC and share the vault.
 obsidianSync:
   standalone: false
+
+  # Dedicated volume for the sync HOME (/data/home), mounted over the shared
+  # data volume in whichever pod runs obsidian-headless.
+  #
+  # obsidian-headless keeps a SQLite sync-state DB at
+  # $HOME/.config/obsidian-headless/sync/<vault-id>/state.db. SQLite's WAL
+  # shared-memory (-shm) file cannot be created or sized on NFS, and RWX always
+  # means NFS — Longhorn RWX included, since it exports volumes through an
+  # NFSv4 share-manager pod. So the vault wants RWX (plain file I/O over NFS is
+  # fine) while the sync home needs RWO.
+  #
+  # Applies whenever the shared data volume is ReadWriteMany: every standalone
+  # deployment (standalone mandates RWX) and any sidecar deployment on an RWX
+  # PVC, e.g. replicaCount > 1. With a default RWO or emptyDir /data there is
+  # nothing to fix and no extra volume is created. Note that replicaCount > 1
+  # with the in-pod sidecar was never a working topology — N obsidian-headless
+  # processes against one home — and now fails to schedule instead of quietly
+  # corrupting sync state.
+  #
+  # enabled=false falls back to an emptyDir: node-local, so SQLite still works,
+  # but sync state is discarded on every restart and re-created from scratch.
+  #
+  # storageClass empty uses the cluster default, which on many clusters is a
+  # node-local hostPath provisioner — that pins the sync pod to one node and
+  # keeps no replica. Prefer naming a replicated block storage class.
+  #
+  # Upgrading an existing standalone install: /data/home moves to this new,
+  # empty volume, so the first rollout re-runs `ob sync-setup` and re-syncs from
+  # an empty state.db (671 KB on the reference deployment — re-syncing is
+  # cheaper than migrating). The old home is left behind on the shared volume,
+  # including the unrotated sync.log; delete
+  # <shared-volume>/home/.config/obsidian-headless once the new pod is healthy.
+  homePersistence:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    # Holds the state DB plus the size-capped sync.log; it does not hold vault
+    # content. persistence.size no longer needs headroom for the log.
+    size: 2Gi
+
+  # Bounded retry around the initial `ob sync` in the init container.
+  # Failures matching a known-permanent signature (SQLite/disk I/O, permission,
+  # capacity) skip the retries and exit immediately with code 3; retry
+  # exhaustion exits with code 4. Backoff doubles between attempts.
+  initialSync:
+    maxAttempts: 5
+    backoffSeconds: 30
+
+  # Cross-pod sync-liveness heartbeat.
+  #
+  # In standalone mode wiki-server cannot read the obsidian-headless sync state
+  # — homePersistence deliberately puts it on the sync pod's own RWO volume. The
+  # sync container therefore mirrors a timestamp onto the shared data volume,
+  # which both pods mount, and wiki-server exports its mtime as
+  # wiki_sync_state_last_modified_timestamp_seconds (WIKI_SYNC_STATE_PATH).
+  #
+  # The timestamp is copied from obsidian-headless's own sync lock, whose mtime
+  # its internal timer refreshes every second while the process holds it — not
+  # generated on a timer of ours, which would report "the sync container's shell
+  # is alive" rather than "sync is alive".
+  #
+  # path is deliberately outside /data/vault: a file inside the vault would be
+  # indexed as wiki content and synced back to Obsidian.
+  heartbeat:
+    enabled: true
+    path: /data/.sync-heartbeat
+    intervalSeconds: 60
+
+  # obsidian-headless never rotates its sync.log. Truncate it in place once it
+  # exceeds the cap.
+  logRotation:
+    enabled: true
+    maxSizeMB: 16
+    intervalSeconds: 300
+
+  # Probes for the sync container. Both assert that obsidian-headless's SQLite
+  # sync state is still *advancing*, not merely that a process exists — a wedged
+  # `ob sync --continuous` otherwise keeps the pod Ready forever while the vault
+  # silently stops updating, which is the failure these exist to catch.
+  #
+  # Both are plain filesystem checks. They deliberately do not invoke `ob`:
+  # `ob sync-status` only reads a config file (so it would return 0 forever
+  # regardless of sync health) and starting a second Node process every probe
+  # interval risks OOM-killing the sync process against resources.sync — the
+  # unclean kill that leaves the dirty WAL behind.
+  #
+  # They watch two different things on purpose:
+  #
+  # - readiness → the SQLite state DB's mtime. That advances only on real sync
+  #   progress, but obsidian-headless does no work on a tick with nothing to do,
+  #   so a quiet vault and a sync stuck in an error loop look identical. That
+  #   ambiguity is fine to *report* (the sync Deployment has no Service, so
+  #   NotReady flapping is harmless and shows up in kube-state-metrics) and not
+  #   fine to act on.
+  # - liveness → the sync process's own lock, whose mtime its internal timer
+  #   refreshes every second regardless of vault activity. A stale lock means
+  #   the event loop has stopped, full stop. That is unambiguous enough to
+  #   justify a restart; state staleness is not.
+  probes:
+    readiness:
+      enabled: true
+      staleAfterSeconds: 1800
+      initialDelaySeconds: 30
+      periodSeconds: 60
+      timeoutSeconds: 5
+      failureThreshold: 3
+    liveness:
+      enabled: true
+      # The lock refreshes every second, so anything beyond a few minutes is
+      # already conclusive — no need for the long window a state-mtime check
+      # would have required to tolerate a quiet vault.
+      staleAfterSeconds: 300
+      initialDelaySeconds: 300
+      periodSeconds: 60
+      timeoutSeconds: 5
+      failureThreshold: 3
 
 persistence:
   enabled: true
