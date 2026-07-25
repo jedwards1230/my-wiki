@@ -5,13 +5,9 @@ run-name: "CI: ${{ github.event.pull_request.title || github.ref_name }}"
 
 on:
   push:
-    branches: [main, feat/sync-durability]
+    branches: [main]
   pull_request:
-    # feat/sync-durability is an integration branch: stacked PRs target it
-    # rather than main, and without it listed here they would run no CI at
-    # all (a `branches:` filter matches the PR's BASE branch). Remove this
-    # entry when the integration branch is retired.
-    branches: [main, feat/sync-durability]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
