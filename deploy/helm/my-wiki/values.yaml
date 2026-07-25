@@ -93,6 +93,26 @@ obsidianSync:
     maxAttempts: 5
     backoffSeconds: 30
 
+  # Cross-pod sync-liveness heartbeat.
+  #
+  # In standalone mode wiki-server cannot read the obsidian-headless sync state
+  # — homePersistence deliberately puts it on the sync pod's own RWO volume. The
+  # sync container therefore mirrors a timestamp onto the shared data volume,
+  # which both pods mount, and wiki-server exports its mtime as
+  # wiki_sync_state_last_modified_timestamp_seconds (WIKI_SYNC_STATE_PATH).
+  #
+  # The timestamp is copied from obsidian-headless's own sync lock, whose mtime
+  # its internal timer refreshes every second while the process holds it — not
+  # generated on a timer of ours, which would report "the sync container's shell
+  # is alive" rather than "sync is alive".
+  #
+  # path is deliberately outside /data/vault: a file inside the vault would be
+  # indexed as wiki content and synced back to Obsidian.
+  heartbeat:
+    enabled: true
+    path: /data/.sync-heartbeat
+    intervalSeconds: 60
+
   # obsidian-headless never rotates its sync.log. Truncate it in place once it
   # exceeds the cap.
   logRotation:
@@ -105,17 +125,24 @@ obsidianSync:
   # `ob sync --continuous` otherwise keeps the pod Ready forever while the vault
   # silently stops updating, which is the failure these exist to catch.
   #
-  # Both are plain filesystem checks on the state DB's mtime. They deliberately
-  # do not invoke `ob`: `ob sync-status` only reads a config file (so it would
-  # return 0 forever regardless of sync health) and starting a second Node
-  # process every probe interval risks OOM-killing the sync process against
-  # resources.sync — the unclean kill that leaves the dirty WAL behind.
+  # Both are plain filesystem checks. They deliberately do not invoke `ob`:
+  # `ob sync-status` only reads a config file (so it would return 0 forever
+  # regardless of sync health) and starting a second Node process every probe
+  # interval risks OOM-killing the sync process against resources.sync — the
+  # unclean kill that leaves the dirty WAL behind.
   #
-  # Readiness is the sensitive signal (short window, surfaces as NotReady and in
-  # kube-state-metrics; the sync Deployment has no Service, so flapping is
-  # harmless). Liveness is the blunt one: only prolonged silence restarts the
-  # container. Lengthen staleAfterSeconds, or disable, if your vault is quiet
-  # enough to trip them.
+  # They watch two different things on purpose:
+  #
+  # - readiness → the SQLite state DB's mtime. That advances only on real sync
+  #   progress, but obsidian-headless does no work on a tick with nothing to do,
+  #   so a quiet vault and a sync stuck in an error loop look identical. That
+  #   ambiguity is fine to *report* (the sync Deployment has no Service, so
+  #   NotReady flapping is harmless and shows up in kube-state-metrics) and not
+  #   fine to act on.
+  # - liveness → the sync process's own lock, whose mtime its internal timer
+  #   refreshes every second regardless of vault activity. A stale lock means
+  #   the event loop has stopped, full stop. That is unambiguous enough to
+  #   justify a restart; state staleness is not.
   probes:
     readiness:
       enabled: true
@@ -126,9 +153,12 @@ obsidianSync:
       failureThreshold: 3
     liveness:
       enabled: true
-      staleAfterSeconds: 14400
+      # The lock refreshes every second, so anything beyond a few minutes is
+      # already conclusive — no need for the long window a state-mtime check
+      # would have required to tolerate a quiet vault.
+      staleAfterSeconds: 300
       initialDelaySeconds: 300
-      periodSeconds: 300
+      periodSeconds: 60
       timeoutSeconds: 5
       failureThreshold: 3
 

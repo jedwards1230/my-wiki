@@ -142,7 +142,7 @@ spec:
                 - sh
                 - -c
                 - |
-                  {{- regexReplaceAll "[ \t]+\n" (include "my-wiki.syncFreshnessScript" (dict "root" . "grace" true "staleAfter" .Values.obsidianSync.probes.liveness.staleAfterSeconds) | nindent 18) "\n" }}
+                  {{- regexReplaceAll "[ \t]+\n" (include "my-wiki.syncLockLivenessScript" (dict "staleAfter" .Values.obsidianSync.probes.liveness.staleAfterSeconds) | nindent 18) "\n" }}
             initialDelaySeconds: {{ .Values.obsidianSync.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.obsidianSync.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .Values.obsidianSync.probes.liveness.timeoutSeconds }}
@@ -167,6 +167,15 @@ spec:
               value: "/data/vault"
             - name: WIKI_PORT
               value: "8080"
+            {{- if .Values.obsidianSync.heartbeat.enabled }}
+            # Written by the sync container on the shared data volume. In
+            # standalone mode this is the only sync-liveness evidence reachable
+            # from this pod — the sync state itself is on the sync pod's RWO
+            # volume. Absent until sync first writes it, which the server treats
+            # as "no reading yet" rather than an error.
+            - name: WIKI_SYNC_STATE_PATH
+              value: {{ .Values.obsidianSync.heartbeat.path | quote }}
+            {{- end }}
             {{- with .Values.baseURL }}
             - name: WIKI_BASE_URL
               value: {{ . | quote }}
