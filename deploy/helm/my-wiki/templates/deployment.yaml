@@ -171,8 +171,11 @@ spec:
             # Written by the sync container on the shared data volume. In
             # standalone mode this is the only sync-liveness evidence reachable
             # from this pod — the sync state itself is on the sync pod's RWO
-            # volume. Absent until sync first writes it, which the server treats
-            # as "no reading yet" rather than an error.
+            # volume. Absent until sync first writes it: the server reports the
+            # sentinel 0 for a configured-but-missing path, so the staleness
+            # alert FIRES rather than going quiet. That is deliberate — an
+            # init-container crashloop never reaches the heartbeat loop, so
+            # "never written" is exactly the outage this is here to catch.
             - name: WIKI_SYNC_STATE_PATH
               value: {{ .Values.obsidianSync.heartbeat.path | quote }}
             {{- end }}
