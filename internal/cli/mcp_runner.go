@@ -162,6 +162,11 @@ func runMCP(ctx context.Context, vaultDir string, cfg mcpRunConfig, logger *slog
 	// enabled — without it there is nothing to feed.
 	startInboxPoller(ctx, vaultDir, pipeline, logger)
 
+	// No vault freshness observer here on purpose: neither MCP transport mounts
+	// /metrics (promhttp is registered only in internal/server), so an observer
+	// on this path would walk the whole vault on an interval into a registry
+	// nothing can scrape. `serve` / `serve http` — which do expose /metrics —
+	// start it, including when they run MCP alongside via --mcp-port.
 	mcpSrv := buildMCPServer(v, searchSvc, notifier, pageSvc, cfg.InstanceName)
 
 	switch cfg.Transport {

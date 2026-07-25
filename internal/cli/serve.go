@@ -448,6 +448,13 @@ func runServeHTTP(cmd *cobra.Command, _ []string) error {
 	// enabled — without it there is nothing to feed.
 	startInboxPoller(ctx, vaultDir, pipeline, logger)
 
+	// Vault freshness observer: exports the newest vault mtime plus a
+	// last-scan heartbeat on /metrics, so a deployment can alert on "the vault
+	// stopped changing". Runs unconditionally — a dead sync path is otherwise
+	// indistinguishable from a quiet week, and gating this on the dispatcher
+	// would leave a default deployment with no signal at all.
+	startFreshnessObserver(ctx, vaultDir, logger)
+
 	// Start periodic search index rebuild (only if registered)
 	if len(engines) > 1 {
 		idx.StartAutoRebuild(ctx, 5*time.Minute)

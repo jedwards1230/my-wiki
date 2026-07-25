@@ -177,3 +177,62 @@ const EnvWebhooksConfig = "WIKI_WEBHOOKS_CONFIG"
 // dispatch pipeline is enabled (WIKI_WEBHOOKS_CONFIG); without a dispatcher
 // there is nothing to feed.
 const EnvInboxPollInterval = "WIKI_INBOX_POLL_INTERVAL"
+
+// ---------------------------------------------------------------------------
+// Vault freshness observer (Prometheus dead-man's switch)
+// ---------------------------------------------------------------------------
+
+// EnvVaultFreshnessInterval is the cadence of the vault freshness scan, which
+// exports wiki_vault_last_modified_timestamp_seconds and friends so a
+// deployment can alert on "the vault stopped changing" — a sync path that dies
+// is otherwise indistinguishable from a quiet week. Unlike the inbox poll this
+// runs unconditionally, independent of the webhook dispatch pipeline: a default
+// deployment must still emit the signal.
+//
+// Format: a Go duration (e.g. "5m", "15m"). Default: 5m — deliberately coarser
+// than the inbox poll, because a dead-man's switch alerting on "N days" needs
+// no finer granularity and a full vault walk over NFS is far more expensive
+// than the inbox/-only scan. A non-positive duration ("0", "-1s") disables the
+// observer entirely (no metrics registered). See docs/METRICS.md.
+const EnvVaultFreshnessInterval = "WIKI_VAULT_FRESHNESS_INTERVAL"
+
+// EnvSyncStatePath is an optional path the freshness observer stats to prove
+// the sync process is alive. When set, it also exports
+// wiki_sync_state_last_modified_timestamp_seconds — the newest mtime at that
+// path. A sync process that touches it on every tick keeps that gauge fresh
+// even when the vault itself is quiet, which is what separates "sync alive,
+// vault quiet" from "sync dead". Without it, any write to the vault (including
+// an agent/API write, which also touches meta/activity/) refreshes the vault
+// mtime, so a dead sync can hide behind ordinary activity.
+//
+// May be either a file or a directory:
+//
+//   - A file — a heartbeat the sync process touches each tick. This is the form
+//     that works when the sync process keeps its own state on a separate
+//     ReadWriteOnce volume the server cannot mount: the two sides agree on a
+//     heartbeat path on a shared volume instead. Deliberately placed outside
+//     the vault, or it would be indexed as wiki content and synced back.
+//   - A directory — newest mtime among the sync state DB files within
+//     (state.db, state.db-wal), matched at any depth. Only usable where the
+//     server can actually read the sync tool's state directory.
+//
+// The directory form deliberately considers ONLY those state DB files, not
+// every file in the tree. obsidian-headless tees its log to sync.log including
+// the errors it swallows on each failed poll, so a wedged sync keeps that file
+// perpetually fresh; and state.db-shm is recreated on every crash. A gauge
+// derived from either would stay fresh through exactly the outage it exists to
+// catch. See freshness.DefaultSyncStateFiles.
+//
+// A path that does not exist is not an error and increments no counter: "the
+// sync process has not written its heartbeat yet" is a legitimate state. Only a
+// real read failure (permissions, I/O) increments
+// wiki_sync_state_read_errors_total.
+//
+// It DOES, however, report the gauge as 0 rather than omitting it. The 2026-07
+// outage was an init-container crashloop, so the heartbeat was never created at
+// all; had that reported by absence, the staleness alert would have evaluated
+// over an empty vector and stayed silent for the full 8 days. A configured path
+// that is missing is a real negative observation, not missing information.
+//
+// Default: empty — the gauge is neither registered nor emitted.
+const EnvSyncStatePath = "WIKI_SYNC_STATE_PATH"
