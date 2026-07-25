@@ -75,12 +75,17 @@ var (
 	)
 	scanErrorsDesc = prometheus.NewDesc(
 		"wiki_vault_scan_errors_total",
-		"Total scan cycles that failed because the vault root (or the configured sync-state directory) could not be read. Emitted from zero — 0 is a true and meaningful value.",
+		"Total scan cycles that failed because the vault root could not be read. Counts vault failures only — sync-state read failures have their own counter, so a climbing value here unambiguously means the vault is unreadable. Emitted from zero — 0 is a true and meaningful value.",
 		nil, nil,
 	)
 	syncStateLastModifiedDesc = prometheus.NewDesc(
 		"wiki_sync_state_last_modified_timestamp_seconds",
-		"Unix timestamp of the newest file mtime under the configured sync-state directory (WIKI_SYNC_STATE_DIR). A sync process that touches its state on every tick keeps this fresh even when the vault is quiet, separating 'sync alive, vault quiet' from 'sync dead'. Only registered when the directory is configured.",
+		"Unix timestamp of the newest mtime at the configured sync-state path (WIKI_SYNC_STATE_PATH) — a heartbeat file the sync process touches every tick, or a directory. A sync process that touches it on every tick keeps this fresh even when the vault is quiet, which is what separates 'sync alive, vault quiet' from 'sync dead'. Only registered when the path is configured; absent until the path first exists, because a sync process that has never run is not the same as one at the Unix epoch.",
+		nil, nil,
+	)
+	syncStateErrorsDesc = prometheus.NewDesc(
+		"wiki_sync_state_read_errors_total",
+		"Total sync-state reads that failed for a reason other than the path not existing (permissions, I/O). A missing path is NOT counted here: 'the sync process has not written its heartbeat yet' is a legitimate state, signalled by the absence of wiki_sync_state_last_modified_timestamp_seconds. Only registered when the path is configured.",
 		nil, nil,
 	)
 )
@@ -91,11 +96,19 @@ type Config struct {
 	// VaultDir is the vault root to walk.
 	VaultDir string
 
-	// SyncStateDir is an optional directory whose newest mtime is exported as
+	// SyncStatePath is an optional path whose newest mtime is exported as
 	// wiki_sync_state_last_modified_timestamp_seconds. Empty disables the
 	// gauge entirely — the descriptor is not even registered, because a metric
 	// we have no value for is worse than no metric.
-	SyncStateDir string
+	//
+	// It may be either a single file (a heartbeat the sync process touches
+	// every tick) or a directory (newest mtime within). The file form is what
+	// works in the split-volume deployment: when the sync process keeps its
+	// state on its own RWO volume, the server cannot read that directory at
+	// all, so the two sides agree on a heartbeat file placed on the shared
+	// volume instead. Kept generic — this package encodes no knowledge of
+	// obsidian-headless's layout.
+	SyncStatePath string
 
 	// Interval is the scan cadence. Non-positive uses DefaultInterval;
 	// disabling the observer is the caller's decision, not this package's.
@@ -117,16 +130,16 @@ type snapshot struct {
 	lastScan     time.Time
 
 	syncStateLastModified time.Time
-	syncStateHasFiles     bool
+	syncStateHasValue     bool
 }
 
 // Observer periodically walks the vault and exports freshness metrics. It
 // implements prometheus.Collector.
 type Observer struct {
-	vaultDir     string
-	syncStateDir string
-	interval     time.Duration
-	logger       *slog.Logger
+	vaultDir      string
+	syncStatePath string
+	interval      time.Duration
+	logger        *slog.Logger
 
 	// now is time.Now, overridable in tests.
 	now func() time.Time
@@ -141,9 +154,10 @@ type Observer struct {
 	// goroutine scans.
 	scanMu sync.Mutex
 
-	mu         sync.Mutex
-	snap       snapshot
-	scanErrors float64
+	mu              sync.Mutex
+	snap            snapshot
+	scanErrors      float64
+	syncStateErrors float64
 }
 
 var _ prometheus.Collector = (*Observer)(nil)
@@ -170,11 +184,11 @@ func New(cfg Config, registerer prometheus.Registerer) (*Observer, error) {
 	}
 
 	o := &Observer{
-		vaultDir:     cfg.VaultDir,
-		syncStateDir: cfg.SyncStateDir,
-		interval:     cfg.Interval,
-		logger:       cfg.Logger,
-		now:          time.Now,
+		vaultDir:      cfg.VaultDir,
+		syncStatePath: cfg.SyncStatePath,
+		interval:      cfg.Interval,
+		logger:        cfg.Logger,
+		now:           time.Now,
 	}
 	if err := registerer.Register(o); err != nil {
 		return nil, fmt.Errorf("freshness: register collector: %w", err)
@@ -248,18 +262,26 @@ func (o *Observer) scan() {
 		// Carried forward so a sync-state read failure below cannot silently
 		// erase the last known-good sync-state observation.
 		syncStateLastModified: prev.syncStateLastModified,
-		syncStateHasFiles:     prev.syncStateHasFiles,
+		syncStateHasValue:     prev.syncStateHasValue,
 	}
 
-	if o.syncStateDir != "" {
-		// No exclusions: the sync-state directory is opaque to us on purpose,
-		// so this stays generic instead of encoding obsidian-headless layout.
-		syncRes, serr := scanTree(o.syncStateDir, nil)
-		if serr != nil {
-			o.recordScanError("freshness: sync-state scan failed, keeping previous sync-state snapshot", serr)
-		} else {
-			next.syncStateLastModified = syncRes.newest
-			next.syncStateHasFiles = syncRes.files > 0
+	if o.syncStatePath != "" {
+		switch mtime, present, serr := readSyncState(o.syncStatePath); {
+		case serr != nil:
+			// A real read failure (permissions, I/O). Keep the previous value
+			// and count it on the sync-state counter, not the vault one.
+			o.recordSyncStateError(serr)
+		case present:
+			next.syncStateLastModified = mtime
+			next.syncStateHasValue = true
+		default:
+			// The path does not exist yet. That is a legitimate state — the
+			// sync process has not written its heartbeat — not an error. Report
+			// it by absence: clear the value rather than carrying forward a
+			// stale one, so a heartbeat file that gets deleted stops looking
+			// alive. No counter moves.
+			next.syncStateLastModified = time.Time{}
+			next.syncStateHasValue = false
 		}
 	}
 
@@ -275,6 +297,14 @@ func (o *Observer) recordScanError(msg string, err error) {
 	o.logger.Warn(msg, "error", err)
 }
 
+func (o *Observer) recordSyncStateError(err error) {
+	o.mu.Lock()
+	o.syncStateErrors++
+	o.mu.Unlock()
+	o.logger.Warn("freshness: sync-state read failed, keeping previous value",
+		"path", o.syncStatePath, "error", err)
+}
+
 // Describe implements prometheus.Collector. The sync-state descriptor is
 // advertised only when the directory is configured, so an unconfigured
 // deployment does not carry a metric nobody can populate.
@@ -284,8 +314,9 @@ func (o *Observer) Describe(ch chan<- *prometheus.Desc) {
 	ch <- filesDesc
 	ch <- scanDurationDesc
 	ch <- scanErrorsDesc
-	if o.syncStateDir != "" {
+	if o.syncStatePath != "" {
 		ch <- syncStateLastModifiedDesc
+		ch <- syncStateErrorsDesc
 	}
 }
 
@@ -298,9 +329,13 @@ func (o *Observer) Collect(ch chan<- prometheus.Metric) {
 	o.mu.Lock()
 	snap := o.snap
 	scanErrors := o.scanErrors
+	syncStateErrors := o.syncStateErrors
 	o.mu.Unlock()
 
 	ch <- prometheus.MustNewConstMetric(scanErrorsDesc, prometheus.CounterValue, scanErrors)
+	if o.syncStatePath != "" {
+		ch <- prometheus.MustNewConstMetric(syncStateErrorsDesc, prometheus.CounterValue, syncStateErrors)
+	}
 
 	if !snap.valid {
 		return
@@ -315,7 +350,7 @@ func (o *Observer) Collect(ch chan<- prometheus.Metric) {
 	if snap.hasFiles {
 		ch <- prometheus.MustNewConstMetric(lastModifiedDesc, prometheus.GaugeValue, timestamp(snap.lastModified))
 	}
-	if o.syncStateDir != "" && snap.syncStateHasFiles {
+	if o.syncStatePath != "" && snap.syncStateHasValue {
 		ch <- prometheus.MustNewConstMetric(syncStateLastModifiedDesc, prometheus.GaugeValue, timestamp(snap.syncStateLastModified))
 	}
 }

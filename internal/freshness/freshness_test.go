@@ -16,12 +16,13 @@ import (
 )
 
 const (
-	mLastModified   = "wiki_vault_last_modified_timestamp_seconds"
-	mLastScan       = "wiki_vault_last_scan_timestamp_seconds"
-	mFiles          = "wiki_vault_files"
-	mScanDuration   = "wiki_vault_scan_duration_seconds"
-	mScanErrors     = "wiki_vault_scan_errors_total"
-	mSyncStateMtime = "wiki_sync_state_last_modified_timestamp_seconds"
+	mLastModified    = "wiki_vault_last_modified_timestamp_seconds"
+	mLastScan        = "wiki_vault_last_scan_timestamp_seconds"
+	mFiles           = "wiki_vault_files"
+	mScanDuration    = "wiki_vault_scan_duration_seconds"
+	mScanErrors      = "wiki_vault_scan_errors_total"
+	mSyncStateMtime  = "wiki_sync_state_last_modified_timestamp_seconds"
+	mSyncStateErrors = "wiki_sync_state_read_errors_total"
 )
 
 func testLogger() *slog.Logger {
@@ -135,15 +136,17 @@ func TestCollectBeforeFirstScanEmitsNoSnapshotMetrics(t *testing.T) {
 	vaultDir := t.TempDir()
 	writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
 
-	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStateDir: t.TempDir()})
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: t.TempDir()})
 
 	// No scan has run: every snapshot-derived metric must be absent.
 	mustAbsent(t, reg, mLastModified, mLastScan, mFiles, mScanDuration, mSyncStateMtime)
 
-	// The error counter is exported from zero — its zero value is honest.
+	// The two error counters ARE exported from zero — unlike a timestamp, 0
+	// errors is a true and meaningful value, so absence would lose information.
 	mustValue(t, reg, mScanErrors, 0)
-	if got := testutil.CollectAndCount(o); got != 1 {
-		t.Fatalf("collected %d metrics before first scan, want exactly 1 (the error counter)", got)
+	mustValue(t, reg, mSyncStateErrors, 0)
+	if got := testutil.CollectAndCount(o); got != 2 {
+		t.Fatalf("collected %d metrics before first scan, want exactly 2 (the two error counters)", got)
 	}
 
 	// Sanity: the very same collector does export them once a scan succeeds,
@@ -285,7 +288,7 @@ func TestSyncStateGauge(t *testing.T) {
 		syncDir := t.TempDir()
 		writeFile(t, syncDir, "state/sync.json", syncMtime)
 
-		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStateDir: syncDir})
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
 		o.scan()
 
 		mustValue(t, reg, mSyncStateMtime, float64(syncMtime.UnixNano())/float64(time.Second))
@@ -295,31 +298,110 @@ func TestSyncStateGauge(t *testing.T) {
 		vaultDir := t.TempDir()
 		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
 
-		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStateDir: t.TempDir()})
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: t.TempDir()})
 		o.scan()
 
 		mustAbsent(t, reg, mSyncStateMtime)
 	})
 
-	t.Run("unreadable sync dir keeps the previous value", func(t *testing.T) {
+	// The heartbeat-file form is the one that works in the split-volume
+	// deployment: the sync process keeps its own state on an RWO volume the
+	// server cannot mount, so the two sides agree on a file on a shared volume
+	// that the sync process touches every tick.
+	t.Run("heartbeat file form", func(t *testing.T) {
+		vaultDir := t.TempDir()
+		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+		beatDir := t.TempDir()
+		beat := filepath.Join(beatDir, ".sync-heartbeat")
+		if err := os.WriteFile(beat, nil, 0o644); err != nil {
+			t.Fatalf("write heartbeat: %v", err)
+		}
+		if err := os.Chtimes(beat, syncMtime, syncMtime); err != nil {
+			t.Fatalf("chtimes heartbeat: %v", err)
+		}
+
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: beat})
+		o.scan()
+		mustValue(t, reg, mSyncStateMtime, float64(syncMtime.UnixNano())/float64(time.Second))
+
+		// A later tick moves the gauge — the property the whole design rests on:
+		// the heartbeat advances even though the vault never changed.
+		tick := syncMtime.Add(90 * time.Second)
+		if err := os.Chtimes(beat, tick, tick); err != nil {
+			t.Fatalf("chtimes heartbeat tick: %v", err)
+		}
+		o.scan()
+		mustValue(t, reg, mSyncStateMtime, float64(tick.UnixNano())/float64(time.Second))
+		mustValue(t, reg, mSyncStateErrors, 0)
+	})
+
+	// A missing path is a legitimate state ("sync has not written its heartbeat
+	// yet"), not a failure. It must report by absence and move no counter —
+	// otherwise every fresh deployment generates error signal before the sync
+	// side is wired, and a deleted heartbeat would keep looking alive.
+	t.Run("missing heartbeat is absent, not an error", func(t *testing.T) {
+		vaultDir := t.TempDir()
+		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
+		beatDir := t.TempDir()
+		beat := filepath.Join(beatDir, ".sync-heartbeat")
+
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: beat})
+
+		// Never existed.
+		o.scan()
+		mustAbsent(t, reg, mSyncStateMtime)
+		mustValue(t, reg, mSyncStateErrors, 0)
+		mustValue(t, reg, mScanErrors, 0)
+
+		// Appears.
+		if err := os.WriteFile(beat, nil, 0o644); err != nil {
+			t.Fatalf("write heartbeat: %v", err)
+		}
+		if err := os.Chtimes(beat, syncMtime, syncMtime); err != nil {
+			t.Fatalf("chtimes: %v", err)
+		}
+		o.scan()
+		mustValue(t, reg, mSyncStateMtime, float64(syncMtime.UnixNano())/float64(time.Second))
+
+		// Removed again: back to absent, still no error. Carrying the old value
+		// forward here would report a dead sync as alive indefinitely.
+		if err := os.Remove(beat); err != nil {
+			t.Fatalf("remove heartbeat: %v", err)
+		}
+		o.scan()
+		mustAbsent(t, reg, mSyncStateMtime)
+		mustValue(t, reg, mSyncStateErrors, 0)
+		mustValue(t, reg, mScanErrors, 0)
+	})
+
+	// A real read failure is different from a missing path: keep the last good
+	// value and count it on the sync-state counter, never the vault one.
+	t.Run("unreadable path counts a sync-state error and keeps the value", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("running as root: permission bits do not deny access")
+		}
 		vaultDir := t.TempDir()
 		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
 		parent := t.TempDir()
 		syncDir := filepath.Join(parent, "state")
 		writeFile(t, syncDir, "sync.json", syncMtime)
 
-		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStateDir: syncDir})
+		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
 		o.scan()
 		want := float64(syncMtime.UnixNano()) / float64(time.Second)
 		mustValue(t, reg, mSyncStateMtime, want)
 
-		if err := os.RemoveAll(syncDir); err != nil {
-			t.Fatalf("remove sync dir: %v", err)
+		// Deny traversal of the parent so stat on the child fails with EACCES
+		// rather than ENOENT.
+		if err := os.Chmod(parent, 0o000); err != nil {
+			t.Fatalf("chmod parent: %v", err)
 		}
-		o.scan()
+		t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
 
-		mustValue(t, reg, mScanErrors, 1)
-		mustValue(t, reg, mSyncStateMtime, want)
+		o.scan()
+		mustValue(t, reg, mSyncStateErrors, 1)
+		mustValue(t, reg, mSyncStateMtime, want) // previous value preserved
+		mustValue(t, reg, mScanErrors, 0)        // vault counter untouched
 	})
 }
 

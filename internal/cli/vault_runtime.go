@@ -96,12 +96,12 @@ func startFreshnessObserver(ctx context.Context, vaultDir string, logger *slog.L
 		logger.Info("vault freshness observer disabled", "env", EnvVaultFreshnessInterval)
 		return nil
 	}
-	syncStateDir := strings.TrimSpace(os.Getenv(EnvSyncStateDir))
+	syncStatePath := strings.TrimSpace(os.Getenv(EnvSyncStatePath))
 	observer, err := freshness.New(freshness.Config{
-		VaultDir:     vaultDir,
-		SyncStateDir: syncStateDir,
-		Interval:     interval,
-		Logger:       logger,
+		VaultDir:      vaultDir,
+		SyncStatePath: syncStatePath,
+		Interval:      interval,
+		Logger:        logger,
 	}, nil)
 	if err != nil {
 		logger.Warn("vault freshness observer failed to start", "error", err)
@@ -109,7 +109,7 @@ func startFreshnessObserver(ctx context.Context, vaultDir string, logger *slog.L
 	}
 	go observer.Run(ctx)
 	logger.Info("vault freshness observer started",
-		"interval", interval.String(), "syncStateDir", syncStateDir)
+		"interval", interval.String(), "syncStatePath", syncStatePath)
 	return observer
 }
 

@@ -83,3 +83,46 @@ func scanTree(root string, excludeTopLevel []string) (scanResult, error) {
 	})
 	return res, err
 }
+
+// readSyncState reports the newest mtime at path, which may be either a single
+// file or a directory.
+//
+// The file form exists for the split-volume deployment: when the sync process
+// keeps its state on its own RWO volume, the server cannot read that directory
+// at all, so the two sides instead agree on a heartbeat file the sync process
+// touches every tick on a shared volume. The directory form is kept for
+// deployments where the state directory is genuinely readable.
+//
+// The three return cases are deliberately distinct:
+//
+//   - (mtime, true, nil)  — read succeeded, there is a value to export.
+//   - (zero, false, nil)  — the path does not exist. NOT an error: a sync
+//     process that has not yet written its heartbeat is a legitimate state, and
+//     conflating it with an I/O failure would make the error counter fire on
+//     every fresh deployment. Signalled to consumers by metric absence.
+//   - (zero, false, err)  — a real failure (permissions, I/O).
+//
+// An existing but empty directory returns (zero, false, nil) for the same
+// reason: there is no mtime to report, and reporting 0 would mean the epoch.
+func readSyncState(path string) (time.Time, bool, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, err
+	}
+	if !fi.IsDir() {
+		return fi.ModTime(), true, nil
+	}
+	// No exclusions: the sync-state directory is opaque to us on purpose, so
+	// this stays generic rather than encoding any particular tool's layout.
+	res, err := scanTree(path, nil)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if res.files == 0 {
+		return time.Time{}, false, nil
+	}
+	return res.newest, true, nil
+}

@@ -29,8 +29,11 @@ which is the exact problem these metrics exist to solve.
 | `wiki_vault_last_scan_timestamp_seconds` | Gauge | Unix time the last **successful** scan completed. |
 | `wiki_vault_files` | Gauge | Files counted in the last successful scan (all files, not just `.md`). |
 | `wiki_vault_scan_duration_seconds` | Gauge | Duration of the last successful scan. |
-| `wiki_vault_scan_errors_total` | Counter | Scan cycles that failed. Emitted from zero. |
-| `wiki_sync_state_last_modified_timestamp_seconds` | Gauge | Newest mtime under `WIKI_SYNC_STATE_DIR`. Only registered when that variable is set. |
+| `wiki_vault_scan_errors_total` | Counter | Vault scan cycles that failed. Emitted from zero. |
+| `wiki_sync_state_last_modified_timestamp_seconds` | Gauge | Newest mtime at `WIKI_SYNC_STATE_PATH`. Only registered when that variable is set. |
+| `wiki_sync_state_read_errors_total` | Counter | Sync-state reads that failed for a reason **other than** the path not existing. Only registered when `WIKI_SYNC_STATE_PATH` is set. |
+
+The two error counters are deliberately separate: a climbing `wiki_vault_scan_errors_total` unambiguously means the vault is unreadable, with no need to guess whether it was really the sync-state path.
 
 Scan rules: files only (directory mtimes are inconsistent across filesystems);
 top-level `.obsidian/` excluded (`vault.DefaultExcludedDirs`); every file
@@ -51,9 +54,18 @@ measured. Two corollaries:
 - A **failed scan** increments `wiki_vault_scan_errors_total` and keeps the
   previous good snapshot. A transient NFS hiccup must not regress a good
   observation to "never scanned".
+- A **missing sync-state path** exports no
+  `wiki_sync_state_last_modified_timestamp_seconds` and increments **nothing**.
+  "The sync process has not written its heartbeat yet" is a legitimate state,
+  not a failure — so the chart can set `WIKI_SYNC_STATE_PATH` before the sync
+  side starts touching the file without generating false error signal. Only a
+  real read failure (permissions, I/O) increments
+  `wiki_sync_state_read_errors_total`, and that case keeps the previous value.
+  A heartbeat that is *deleted* goes back to absent rather than carrying its
+  last value forward — otherwise a dead sync would look alive indefinitely.
 
-`wiki_vault_scan_errors_total` is exported from zero, because 0 errors is a
-true and meaningful value.
+Both error counters are exported from zero, because 0 errors is a true and
+meaningful value — unlike a timestamp, where 0 means the epoch.
 
 ### Alerting
 
@@ -84,26 +96,40 @@ absent(wiki_vault_last_scan_timestamp_seconds)
 absent(wiki_vault_last_modified_timestamp_seconds)
 wiki_vault_files == 0
 
-# Optional: scans are running but erroring (unreadable vault or sync-state dir).
+# Optional: the vault is unreadable (this counter is vault-only).
 rate(wiki_vault_scan_errors_total[15m]) > 0
 ```
 
-With `WIKI_SYNC_STATE_DIR` set, a third alert is a strictly better dead-man's
-switch than vault mtime alone: a sync process that touches its state on every
-tick keeps this fresh even when the vault is quiet, so staleness means "sync
-dead" rather than "vault quiet".
+### The sync heartbeat — the alert that actually catches a dead sync
+
+**Alert 1 is not sufficient on its own.** Any write to the vault refreshes
+`wiki_vault_last_modified_timestamp_seconds` — including agent/API writes, which
+also touch `meta/activity/*.md`. In a vault that agents write to regularly, a
+dead sync sidecar leaves alert 1 **quiet**. Vault mtime measures "did anything
+change", not "is the sync process alive".
+
+`WIKI_SYNC_STATE_PATH` closes that gap. It points at something the sync process
+touches **every tick, whether or not anything changed** — so staleness means
+"sync dead" rather than "vault quiet". The path may be:
+
+- **a heartbeat file** (recommended) — e.g. `/data/.sync-heartbeat`. This is the
+  form that works when the sync process keeps its own state on a separate
+  ReadWriteOnce volume the server cannot mount: the two sides agree on a file on
+  a *shared* volume instead. Keep it **outside the vault directory**, or it gets
+  indexed as wiki content and synced back to Obsidian.
+- **a directory** — newest mtime within. Only usable where the server can
+  actually read the sync tool's state directory.
 
 ```promql
 (time() - wiki_sync_state_last_modified_timestamp_seconds) > 3600
 absent(wiki_sync_state_last_modified_timestamp_seconds)
+rate(wiki_sync_state_read_errors_total[15m]) > 0
 ```
 
-This matters more than it looks. Any write to the vault refreshes
-`wiki_vault_last_modified_timestamp_seconds` — including agent/API writes, which
-also touch `meta/activity/*.md`. In a vault that agents write to regularly, a
-dead sync sidecar therefore leaves alert 1 **quiet**. The sync-state gauge is
-the one that isolates "the sync process stopped" from "the vault is quiet", so
-set `WIKI_SYNC_STATE_DIR` in any deployment that runs a sync sidecar.
+The `absent()` form matters here more than anywhere else: a heartbeat that never
+appears, or that gets deleted, reports as *absent* rather than stale — so the
+staleness query alone would stay silent through exactly the failure you care
+about.
 
 ### Configuration
 
@@ -114,7 +140,7 @@ inventory).
 | Variable | Format | Default | Effect |
 |---|---|---|---|
 | `WIKI_VAULT_FRESHNESS_INTERVAL` | Go duration | `5m` | Scan cadence. Non-positive disables the observer entirely (no metrics registered). Coarser than the 60s inbox poll on purpose: a "N days" dead-man's switch needs no finer granularity, and a full vault walk over NFS is expensive. |
-| `WIKI_SYNC_STATE_DIR` | path | empty | When set, also export `wiki_sync_state_last_modified_timestamp_seconds` (newest mtime under that directory, no exclusions). Unset ⇒ the gauge is neither registered nor emitted. |
+| `WIKI_SYNC_STATE_PATH` | path (file or directory) | empty | When set, also export `wiki_sync_state_last_modified_timestamp_seconds` (newest mtime at that path) and `wiki_sync_state_read_errors_total`. Unset ⇒ neither is registered nor emitted. A path that does not exist yet is not an error. |
 
 ## HTTP
 

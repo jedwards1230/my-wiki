@@ -196,12 +196,30 @@ const EnvInboxPollInterval = "WIKI_INBOX_POLL_INTERVAL"
 // observer entirely (no metrics registered). See docs/METRICS.md.
 const EnvVaultFreshnessInterval = "WIKI_VAULT_FRESHNESS_INTERVAL"
 
-// EnvSyncStateDir is an optional path to the sync process's state directory
-// (e.g. the obsidian-headless state dir). When set, the freshness observer also
-// exports wiki_sync_state_last_modified_timestamp_seconds — the newest mtime
-// under that directory, with no exclusions applied. A sync process that touches
-// its state on every tick keeps that gauge fresh even when the vault itself is
-// quiet, which separates "sync alive, vault quiet" from "sync dead".
+// EnvSyncStatePath is an optional path the freshness observer stats to prove
+// the sync process is alive. When set, it also exports
+// wiki_sync_state_last_modified_timestamp_seconds — the newest mtime at that
+// path. A sync process that touches it on every tick keeps that gauge fresh
+// even when the vault itself is quiet, which is what separates "sync alive,
+// vault quiet" from "sync dead". Without it, any write to the vault (including
+// an agent/API write, which also touches meta/activity/) refreshes the vault
+// mtime, so a dead sync can hide behind ordinary activity.
+//
+// May be either a file or a directory:
+//
+//   - A file — a heartbeat the sync process touches each tick. This is the form
+//     that works when the sync process keeps its own state on a separate
+//     ReadWriteOnce volume the server cannot mount: the two sides agree on a
+//     heartbeat path on a shared volume instead. Deliberately placed outside
+//     the vault, or it would be indexed as wiki content and synced back.
+//   - A directory — newest mtime within, no exclusions applied. Only usable
+//     where the server can actually read the sync tool's state directory.
+//
+// A path that does not exist is not an error: "the sync process has not written
+// its heartbeat yet" is a legitimate state, reported by the gauge being absent
+// rather than zero, and it does not increment
+// wiki_sync_state_read_errors_total. Only a real read failure (permissions,
+// I/O) does.
 //
 // Default: empty — the gauge is neither registered nor emitted.
-const EnvSyncStateDir = "WIKI_SYNC_STATE_DIR"
+const EnvSyncStatePath = "WIKI_SYNC_STATE_PATH"
