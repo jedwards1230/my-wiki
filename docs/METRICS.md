@@ -135,7 +135,7 @@ touches **every tick, whether or not anything changed** — so staleness means
 > rotation bumps its mtime too.) `state.db-shm` is excluded for the same reason:
 > it is a 3-byte stub recreated on every crash, so its freshness proves the
 > process is *crashing*, not syncing.
->
+
 > This is an **allowlist**, not an exclusion list, because a blocklist fails
 > open — any newly added log or lock file would silently re-contaminate the
 > gauge. An allowlist fails closed: an unrecognised file is ignored, and if
@@ -181,6 +181,31 @@ silent during an outage.
 
 `absent()` is still worth pairing for defence in depth — it catches the server
 being gone entirely, which no value-based query can.
+
+#### What this gauge does and does not prove
+
+It proves the sync process's event loop is **running**. It does *not* prove
+syncs are **succeeding** — and the difference matters when reading an alert.
+
+`requestSync()` catches sync errors in continuous mode, logs them, and swallows
+them, retrying every 30s indefinitely. Throughout that the process stays alive
+and keeps refreshing whatever the heartbeat derives from, so an error-looping
+sync reads as *alive* here. That is correct behaviour: the distinction this
+gauge draws is alive-vs-dead, not healthy-vs-unhealthy. Do not read a fresh
+heartbeat as "sync is healthy".
+
+The gap is covered from the other side. An error-looping sync is not writing to
+the vault, so `wiki_vault_last_modified_timestamp_seconds` goes stale while the
+heartbeat stays fresh. **Heartbeat fresh + vault mtime stale is the error-loop
+signature**, and deserves its own rule:
+
+```promql
+(time() - wiki_vault_last_modified_timestamp_seconds) > 7 * 86400
+  and (time() - wiki_sync_state_last_modified_timestamp_seconds) < 3600
+```
+
+Catching an error loop *directly* needs log content, not mtimes, and is out of
+scope for a filesystem-observing metric.
 
 ### Configuration
 
