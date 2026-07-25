@@ -175,9 +175,43 @@ explicitly declared and that is not there is simply **true**.
 | configured, path missing | `0` → staleness alert fires |
 | configured, path present | real mtime |
 
-Cost: a spurious alert between the chart setting the variable and sync's first
-tick. Bounded, and any real rule carries a `for:` clause. Noisy at startup beats
-silent during an outage.
+**When the sentinel actually appears — narrower than "every rollout".** The
+heartbeat lives on the shared data volume and nothing deletes it, so once the
+first successful touch has happened a restart leaves a *stale* file, not a
+missing one. The sentinel is therefore limited to:
+
+- a first-ever deploy,
+- a fresh/replaced PVC,
+- manual deletion of the heartbeat.
+
+Routine rollouts and upgrades do **not** produce it. (Nor does the #172
+migration, which deletes the old sync-state directory, not the heartbeat.)
+
+**Sizing `for:` — the init container dominates, not the heartbeat interval.**
+The obvious reading is that the window is one heartbeat interval (60s). It is
+not. Both init retry paths sleep, and a first deploy that ultimately *succeeds*
+can spend a long time in them:
+
+| Init step | Worst case before a success |
+|---|---|
+| `ob login` | 10 attempts, 30s apart → **270s** |
+| initial `ob sync` | 5 attempts, 30s doubling (30+60+120+240) → **450s** |
+
+That is **~720s (12 min) of pure sleep on a flaky-but-recovering first deploy**,
+before counting login round-trips and the initial vault sync itself. So `for:
+15m` is too tight and will page on a deploy that was going to succeed.
+
+Two options, better one second:
+
+```promql
+# Simple: widen the window past the worst-case init path.
+#   for: 30m
+
+# Better: suppress while the sync pod isn't Ready — the readiness probe already
+# reports exactly this, so a short for: stays safe.
+(time() - wiki_sync_state_last_modified_timestamp_seconds) > 3600
+  unless on(namespace) kube_pod_status_ready{pod=~".*-sync-.*"}
+```
 
 `absent()` is still worth pairing for defence in depth — it catches the server
 being gone entirely, which no value-based query can.
@@ -194,18 +228,29 @@ sync reads as *alive* here. That is correct behaviour: the distinction this
 gauge draws is alive-vs-dead, not healthy-vs-unhealthy. Do not read a fresh
 heartbeat as "sync is healthy".
 
-The gap is covered from the other side. An error-looping sync is not writing to
-the vault, so `wiki_vault_last_modified_timestamp_seconds` goes stale while the
-heartbeat stays fresh. **Heartbeat fresh + vault mtime stale is the error-loop
-signature**, and deserves its own rule:
+The gap is partly covered from the other side. An error-looping sync is not
+writing to the vault, so `wiki_vault_last_modified_timestamp_seconds` goes stale
+while the heartbeat stays fresh. **Heartbeat fresh + vault mtime stale is the
+error-loop signature**:
 
 ```promql
 (time() - wiki_vault_last_modified_timestamp_seconds) > 7 * 86400
   and (time() - wiki_sync_state_last_modified_timestamp_seconds) < 3600
 ```
 
+> **This query is weaker the more agents write to the vault — read its silence
+> as "no information", not "healthy".** The left-hand side assumes vault mtime
+> tracks *sync* activity, but **any** write refreshes it, including agent and
+> API writes (which also touch `meta/activity/`). On a vault that agents write
+> to regularly the left side never goes stale, so the query never fires even
+> with sync error-looping. It is sharp on a human-only vault and degrades toward
+> useless as agent traffic rises — which, for an agent-first deployment, means
+> assume it is degraded.
+
 Catching an error loop *directly* needs log content, not mtimes, and is out of
-scope for a filesystem-observing metric.
+scope for a filesystem-observing metric. If you need that coverage, alert on the
+error rate in `sync.log` via the log pipeline rather than trying to infer it
+here.
 
 ### Configuration
 
