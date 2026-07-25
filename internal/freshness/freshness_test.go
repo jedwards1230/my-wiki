@@ -294,14 +294,15 @@ func TestSyncStateGauge(t *testing.T) {
 		mustValue(t, reg, mSyncStateMtime, float64(syncMtime.UnixNano())/float64(time.Second))
 	})
 
-	t.Run("empty sync dir exports nothing", func(t *testing.T) {
+	t.Run("empty sync dir reports the sentinel", func(t *testing.T) {
 		vaultDir := t.TempDir()
 		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
 
 		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: t.TempDir()})
 		o.scan()
 
-		mustAbsent(t, reg, mSyncStateMtime)
+		// Configured but nothing there: 0, so the staleness query fires.
+		mustValue(t, reg, mSyncStateMtime, 0)
 	})
 
 	// The heartbeat-file form is the one that works in the split-volume
@@ -339,7 +340,7 @@ func TestSyncStateGauge(t *testing.T) {
 	// yet"), not a failure. It must report by absence and move no counter —
 	// otherwise every fresh deployment generates error signal before the sync
 	// side is wired, and a deleted heartbeat would keep looking alive.
-	t.Run("missing heartbeat is absent, not an error", func(t *testing.T) {
+	t.Run("missing heartbeat reports the sentinel, not an error", func(t *testing.T) {
 		vaultDir := t.TempDir()
 		writeFile(t, vaultDir, "note.md", time.Unix(1_700_000_000, 0))
 		beatDir := t.TempDir()
@@ -347,9 +348,10 @@ func TestSyncStateGauge(t *testing.T) {
 
 		o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: beat})
 
-		// Never existed.
+		// Never existed: sentinel 0, and NOT an error — the sync process
+		// simply has not written yet.
 		o.scan()
-		mustAbsent(t, reg, mSyncStateMtime)
+		mustValue(t, reg, mSyncStateMtime, 0)
 		mustValue(t, reg, mSyncStateErrors, 0)
 		mustValue(t, reg, mScanErrors, 0)
 
@@ -369,7 +371,7 @@ func TestSyncStateGauge(t *testing.T) {
 			t.Fatalf("remove heartbeat: %v", err)
 		}
 		o.scan()
-		mustAbsent(t, reg, mSyncStateMtime)
+		mustValue(t, reg, mSyncStateMtime, 0)
 		mustValue(t, reg, mSyncStateErrors, 0)
 		mustValue(t, reg, mScanErrors, 0)
 	})
@@ -601,7 +603,7 @@ func TestSyncStateDirNoMatchingFiles(t *testing.T) {
 	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: syncDir})
 	o.scan()
 
-	mustAbsent(t, reg, mSyncStateMtime)
+	mustValue(t, reg, mSyncStateMtime, 0)  // sentinel, not absence
 	mustValue(t, reg, mSyncStateErrors, 0) // not an error, just nothing to report
 }
 
@@ -624,4 +626,59 @@ func TestSyncStateFilesConfigurable(t *testing.T) {
 	o.scan()
 
 	mustValue(t, reg, mSyncStateMtime, float64(want.UnixNano())/float64(time.Second))
+}
+
+// TestSyncStateNeverCreatedFiresStalenessQuery is the regression test for the
+// incident's actual shape, and the reason the sentinel exists.
+//
+// The 2026-07 outage was an INIT-CONTAINER crashloop: `ob sync --continuous`
+// never started, so the heartbeat file was never created — not "created then
+// went stale". If a configured-but-missing path reported by absence, then
+//
+//	(time() - wiki_sync_state_last_modified_timestamp_seconds) > threshold
+//
+// would evaluate over an empty vector and never fire, staying silent for the
+// full 8 days. Only a separately-written absent() rule would have caught it,
+// which makes "someone remembered the second rule" a single point of failure —
+// unacceptable in a metric whose entire purpose is to defeat silent inertness.
+//
+// So: configured + missing MUST export a value, and that value must be old
+// enough that the primary staleness comparison fires.
+func TestSyncStateNeverCreatedFiresStalenessQuery(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Now())
+
+	// Configured, but the sync process never ran, so nothing was ever written.
+	neverCreated := filepath.Join(t.TempDir(), ".sync-heartbeat")
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir, SyncStatePath: neverCreated})
+	o.scan()
+
+	got, ok := gaugeValue(t, reg, mSyncStateMtime)
+	if !ok {
+		t.Fatalf("%s absent for a configured-but-missing path. The staleness "+
+			"query would evaluate over an empty vector and stay silent through "+
+			"exactly the init-crashloop outage this metric exists to catch", mSyncStateMtime)
+	}
+
+	// Simulate what Prometheus evaluates: (time() - gauge) > 1h must be true.
+	const threshold = 3600.0
+	if age := float64(time.Now().Unix()) - got; age <= threshold {
+		t.Errorf("(time() - %s) = %v, want > %v so the primary staleness alert fires; gauge was %v",
+			mSyncStateMtime, age, threshold, got)
+	}
+}
+
+// TestSyncStateUnconfiguredStaysAbsent is the other half of the split: absence
+// must still mean "not configured at all", so a deployment that never opted in
+// does not carry an alert-firing metric. Sentinel is for configured-but-missing
+// only.
+func TestSyncStateUnconfiguredStaysAbsent(t *testing.T) {
+	vaultDir := t.TempDir()
+	writeFile(t, vaultDir, "note.md", time.Now())
+
+	o, reg := newTestObserver(t, Config{VaultDir: vaultDir}) // no SyncStatePath
+	o.scan()
+
+	mustAbsent(t, reg, mSyncStateMtime, mSyncStateErrors)
 }

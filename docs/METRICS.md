@@ -30,7 +30,7 @@ which is the exact problem these metrics exist to solve.
 | `wiki_vault_files` | Gauge | Files counted in the last successful scan (all files, not just `.md`). |
 | `wiki_vault_scan_duration_seconds` | Gauge | Duration of the last successful scan. |
 | `wiki_vault_scan_errors_total` | Counter | Vault scan cycles that failed. Emitted from zero. |
-| `wiki_sync_state_last_modified_timestamp_seconds` | Gauge | Newest mtime at `WIKI_SYNC_STATE_PATH`. Only registered when that variable is set. |
+| `wiki_sync_state_last_modified_timestamp_seconds` | Gauge | Newest mtime at `WIKI_SYNC_STATE_PATH`. Only registered when that variable is set; reports `0` while the path does not exist. |
 | `wiki_sync_state_read_errors_total` | Counter | Sync-state reads that failed for a reason **other than** the path not existing. Only registered when `WIKI_SYNC_STATE_PATH` is set. |
 
 The two error counters are deliberately separate: a climbing `wiki_vault_scan_errors_total` unambiguously means the vault is unreadable, with no need to guess whether it was really the sync-state path.
@@ -54,15 +54,16 @@ measured. Two corollaries:
 - A **failed scan** increments `wiki_vault_scan_errors_total` and keeps the
   previous good snapshot. A transient NFS hiccup must not regress a good
   observation to "never scanned".
-- A **missing sync-state path** exports no
-  `wiki_sync_state_last_modified_timestamp_seconds` and increments **nothing**.
-  "The sync process has not written its heartbeat yet" is a legitimate state,
-  not a failure — so the chart can set `WIKI_SYNC_STATE_PATH` before the sync
-  side starts touching the file without generating false error signal. Only a
-  real read failure (permissions, I/O) increments
-  `wiki_sync_state_read_errors_total`, and that case keeps the previous value.
-  A heartbeat that is *deleted* goes back to absent rather than carrying its
-  last value forward — otherwise a dead sync would look alive indefinitely.
+- A **missing sync-state path** is the deliberate exception: it reports the
+  sentinel `0` rather than going absent, so the staleness alert fires. See
+  [Configured-but-missing reports `0`](#configured-but-missing-reports-0) — the
+  short version is that a sync which *never started* would otherwise be silent.
+  It is still not an *error*: no counter moves, because "has not written its
+  heartbeat yet" is a legitimate state. Only a real read failure (permissions,
+  I/O) increments `wiki_sync_state_read_errors_total`, and that case keeps the
+  previous value. A heartbeat that is *deleted* returns to the sentinel rather
+  than carrying its last value forward — otherwise a dead sync would look alive
+  indefinitely.
 
 Both error counters are exported from zero, because 0 errors is a true and
 meaningful value — unlike a timestamp, where 0 means the epoch.
@@ -74,11 +75,15 @@ quiet week: if the observer (or the whole server) is dead, its gauges freeze or
 disappear, and a stale `last_modified` proves nothing. `last_scan` is the
 liveness proof that makes `last_modified` interpretable.
 
-**Pair every staleness alert with an `absent()` alert.** Because these metrics
-are absent rather than zero (see above), `(time() - metric) > threshold`
+**Pair every staleness alert with an `absent()` alert.** Because the vault
+metrics are absent rather than zero (see above), `(time() - metric) > threshold`
 evaluates over an empty vector and **never fires** when the metric disappears.
 Staleness and absence are different queries; you need both, or the exact
 failure the absence design protects against becomes invisible instead of noisy.
+
+(The sync-state gauge is the one exception — it uses a sentinel precisely so its
+staleness query fires unaided. `absent()` is still worth adding there for
+defence in depth.)
 
 ```promql
 # 1. The vault has not changed in 7 days.
@@ -140,14 +145,42 @@ touches **every tick, whether or not anything changed** — so staleness means
 
 ```promql
 (time() - wiki_sync_state_last_modified_timestamp_seconds) > 3600
-absent(wiki_sync_state_last_modified_timestamp_seconds)
 rate(wiki_sync_state_read_errors_total[15m]) > 0
 ```
 
-The `absent()` form matters here more than anywhere else: a heartbeat that never
-appears, or that gets deleted, reports as *absent* rather than stale — so the
-staleness query alone would stay silent through exactly the failure you care
-about.
+#### Configured-but-missing reports `0`, not absence
+
+This gauge is the one deliberate exception to "absent, not zero", and the
+exception is what makes it work.
+
+The 2026-07 outage was an **init-container crashloop** — `ob sync --continuous`
+never started, so the heartbeat was *never created*, not "created then went
+stale". Had a missing path reported by absence, `(time() - gauge) > 3600` would
+have evaluated over an empty vector and stayed **silent for all 8 days**. Only a
+separately-written `absent()` rule would have caught it, which makes "someone
+remembered to add the second rule" a single point of failure.
+
+So when the path is **configured but missing**, the gauge reports `0` — old
+enough that the primary staleness query fires. This degrades toward alerting
+instead of toward silence.
+
+The rule elsewhere in this file still holds, because the cases differ in whether
+there is an observation at all. Emitting `0` for a vault we have not scanned yet
+would be a lie about a healthy system. Emitting `0` for a heartbeat the operator
+explicitly declared and that is not there is simply **true**.
+
+| State | Gauge |
+|---|---|
+| `WIKI_SYNC_STATE_PATH` unset | absent (never opted in) |
+| configured, path missing | `0` → staleness alert fires |
+| configured, path present | real mtime |
+
+Cost: a spurious alert between the chart setting the variable and sync's first
+tick. Bounded, and any real rule carries a `for:` clause. Noisy at startup beats
+silent during an outage.
+
+`absent()` is still worth pairing for defence in depth — it catches the server
+being gone entirely, which no value-based query can.
 
 ### Configuration
 
@@ -158,7 +191,7 @@ inventory).
 | Variable | Format | Default | Effect |
 |---|---|---|---|
 | `WIKI_VAULT_FRESHNESS_INTERVAL` | Go duration | `5m` | Scan cadence. Non-positive disables the observer entirely (no metrics registered). Coarser than the 60s inbox poll on purpose: a "N days" dead-man's switch needs no finer granularity, and a full vault walk over NFS is expensive. |
-| `WIKI_SYNC_STATE_PATH` | path (file or directory) | empty | When set, also export `wiki_sync_state_last_modified_timestamp_seconds` (newest mtime at that path) and `wiki_sync_state_read_errors_total`. Unset ⇒ neither is registered nor emitted. A path that does not exist yet is not an error. |
+| `WIKI_SYNC_STATE_PATH` | path (file or directory) | empty | When set, also export `wiki_sync_state_last_modified_timestamp_seconds` (newest mtime at that path) and `wiki_sync_state_read_errors_total`. Unset ⇒ neither is registered nor emitted. A path that does not exist yet is not an error, but reports the sentinel `0` so the staleness alert fires. |
 
 ## HTTP
 

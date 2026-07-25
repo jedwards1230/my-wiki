@@ -223,11 +223,16 @@ const EnvVaultFreshnessInterval = "WIKI_VAULT_FRESHNESS_INTERVAL"
 // derived from either would stay fresh through exactly the outage it exists to
 // catch. See freshness.DefaultSyncStateFiles.
 //
-// A path that does not exist is not an error: "the sync process has not written
-// its heartbeat yet" is a legitimate state, reported by the gauge being absent
-// rather than zero, and it does not increment
-// wiki_sync_state_read_errors_total. Only a real read failure (permissions,
-// I/O) does.
+// A path that does not exist is not an error and increments no counter: "the
+// sync process has not written its heartbeat yet" is a legitimate state. Only a
+// real read failure (permissions, I/O) increments
+// wiki_sync_state_read_errors_total.
+//
+// It DOES, however, report the gauge as 0 rather than omitting it. The 2026-07
+// outage was an init-container crashloop, so the heartbeat was never created at
+// all; had that reported by absence, the staleness alert would have evaluated
+// over an empty vector and stayed silent for the full 8 days. A configured path
+// that is missing is a real negative observation, not missing information.
 //
 // Default: empty — the gauge is neither registered nor emitted.
 const EnvSyncStatePath = "WIKI_SYNC_STATE_PATH"

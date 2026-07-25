@@ -103,7 +103,7 @@ var (
 	)
 	syncStateLastModifiedDesc = prometheus.NewDesc(
 		"wiki_sync_state_last_modified_timestamp_seconds",
-		"Unix timestamp of the newest mtime at the configured sync-state path (WIKI_SYNC_STATE_PATH) — a heartbeat file the sync process touches every tick, or a directory. A sync process that touches it on every tick keeps this fresh even when the vault is quiet, which is what separates 'sync alive, vault quiet' from 'sync dead'. Only registered when the path is configured; absent until the path first exists, because a sync process that has never run is not the same as one at the Unix epoch.",
+		"Unix timestamp of the newest mtime at the configured sync-state path (WIKI_SYNC_STATE_PATH) — a heartbeat file the sync process touches every tick, or a directory of sync state DB files. A sync process that touches it on every tick keeps this fresh even when the vault is quiet, which is what separates 'sync alive, vault quiet' from 'sync dead'. Only registered when the path is configured. Reports 0 while the path does not exist: a sync that never started (the 2026-07 outage was an init-container crashloop, so the heartbeat was never created) must make the staleness query FIRE, not evaluate over an empty vector and stay silent.",
 		nil, nil,
 	)
 	syncStateErrorsDesc = prometheus.NewDesc(
@@ -383,8 +383,32 @@ func (o *Observer) Collect(ch chan<- prometheus.Metric) {
 	if snap.hasFiles {
 		ch <- prometheus.MustNewConstMetric(lastModifiedDesc, prometheus.GaugeValue, timestamp(snap.lastModified))
 	}
-	if o.syncStatePath != "" && snap.syncStateHasValue {
-		ch <- prometheus.MustNewConstMetric(syncStateLastModifiedDesc, prometheus.GaugeValue, timestamp(snap.syncStateLastModified))
+	// Configured-but-missing emits the SENTINEL 0, not absence — and this is the
+	// one place that deliberately breaks the absent-not-zero rule used
+	// everywhere else in this collector. The rule exists to avoid lying about a
+	// system we have not observed. Here we HAVE observed: the operator asserted
+	// a heartbeat belongs at this path and it is not there, so "infinitely
+	// stale" is true, not a false alarm.
+	//
+	// It matters because of the incident's actual shape. That outage was an
+	// init-container crashloop: `ob sync --continuous` never started, so the
+	// heartbeat was never created. Reporting by absence would leave
+	//
+	//	(time() - wiki_sync_state_last_modified_timestamp_seconds) > N
+	//
+	// evaluating over an empty vector — silent for the entire 8 days. Only an
+	// absent() rule would have caught it, making "someone remembered to write
+	// the second rule" a single point of failure. The sentinel makes the
+	// PRIMARY query fire, so this degrades toward alerting rather than silence.
+	//
+	// Cost: a spurious alert between the chart setting the variable and sync's
+	// first tick. Bounded, and any real rule carries a `for:` clause.
+	if o.syncStatePath != "" {
+		v := 0.0
+		if snap.syncStateHasValue {
+			v = timestamp(snap.syncStateLastModified)
+		}
+		ch <- prometheus.MustNewConstMetric(syncStateLastModifiedDesc, prometheus.GaugeValue, v)
 	}
 }
 
