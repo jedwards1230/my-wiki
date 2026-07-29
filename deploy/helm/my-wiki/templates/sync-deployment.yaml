@@ -101,7 +101,7 @@ spec:
                 - sh
                 - -c
                 - |
-                  {{- regexReplaceAll "[ \t]+\n" (include "my-wiki.syncFreshnessScript" (dict "root" . "grace" false "staleAfter" .Values.obsidianSync.probes.readiness.staleAfterSeconds) | nindent 18) "\n" }}
+                  {{- regexReplaceAll "[ \t]+\n" (include "my-wiki.syncReadinessScript" (dict "staleAfter" .Values.obsidianSync.probes.readiness.staleAfterSeconds) | nindent 18) "\n" }}
             initialDelaySeconds: {{ .Values.obsidianSync.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.obsidianSync.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.obsidianSync.probes.readiness.timeoutSeconds }}
