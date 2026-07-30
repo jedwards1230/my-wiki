@@ -207,8 +207,10 @@ Two options, better one second:
 # Simple: widen the window past the worst-case init path.
 #   for: 30m
 
-# Better: suppress while the sync pod isn't Ready — the readiness probe already
-# reports exactly this, so a short for: stays safe.
+# Better: suppress while the sync pod isn't Ready. Readiness gates on the sync
+# lock — the same signal the heartbeat form of this gauge is copied from — so a
+# short for: stays safe. (With the directory form the two diverge: readiness
+# tracks the lock, the gauge tracks the state DB.)
 (time() - wiki_sync_state_last_modified_timestamp_seconds) > 3600
   unless on(namespace) kube_pod_status_ready{pod=~".*-sync-.*"}
 ```

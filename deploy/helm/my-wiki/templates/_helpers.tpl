@@ -185,42 +185,62 @@ exec ob sync --path /data/vault --continuous
 {{- end }}
 
 {{/*
-my-wiki.syncFreshnessScript — is obsidian-headless's sync state still advancing?
+my-wiki.syncReadinessScript — has sync started, and is its event loop alive?
 
-Takes (dict "root" $ "grace" <bool> "staleAfter" <int>). With grace=true, an
-absent or empty state directory passes (the container is still starting and must
-not be killed); with grace=false it fails (the pod is honestly not ready yet).
+Takes (dict "staleAfter" <int>). Asserts two things:
+
+  1. At least one state.db exists — initial sync has produced state. Its *mtime*
+     is deliberately not checked (see below); only its existence.
+  2. The sync lock exists and its mtime is within staleAfter.
+
+State-db mtime measures *activity*, not liveness, and cannot carry a readiness
+verdict: obsidian-headless's `_sync()` does no work on a tick with nothing to do,
+so a quiet vault and a wedged sync produce the identical frozen-mtime signature.
+A vault that is merely idle overnight therefore pins the Deployment at
+Available=False forever, which destroys the signal — you cannot alert on NotReady
+if it is always NotReady. Observed 2026-07-29: the sync pod sat NotReady for four
+days on `newest write 38180s ago` while sync was healthy and its lock was one
+second old.
+
+The lock carries it instead: the sync process's own timer refreshes it every
+second regardless of vault activity, so a stale lock means the event loop has
+stopped. Unlike liveness, an *absent* lock fails here — readiness may honestly
+report "not started yet"; liveness must not restart on it.
+
+staleAfter must stay below the liveness threshold so readiness degrades before a
+restart fires, leaving a NotReady window for a human or an alert to see.
 
 Deliberately does NOT consider sync.log. obsidian-headless tees every log line
 there, including the errors it catches and swallows on each poll, so a wedged
-sync that error-loops keeps sync.log fresh indefinitely — a log-based check would
-sail straight through the exact failure it exists to catch. state.db and its WAL
-advance only when sync state actually changes.
+sync that error-loops keeps sync.log fresh indefinitely.
 
 Linux-only: `stat -c %Y` is the GNU/BusyBox spelling. That is fine here — this
 only ever runs inside the container — but it does not port to BSD/macOS, where
 the equivalent is `stat -f %m`.
 */}}
-{{- define "my-wiki.syncFreshnessScript" -}}
+{{- define "my-wiki.syncReadinessScript" -}}
 d=/data/home/.config/obsidian-headless/sync
-newest=0
-for f in "$d"/*/state.db "$d"/*/state.db-wal; do
-  [ -f "$f" ] || continue
-  m=$(stat -c %Y "$f" 2>/dev/null) || m=0
-  if [ "$m" -gt "$newest" ]; then newest="$m"; fi
+lock=/data/vault/.obsidian/.sync.lock
+have_state=0
+for f in "$d"/*/state.db; do
+  if [ -f "$f" ]; then have_state=1; break; fi
 done
-if [ "$newest" -eq 0 ]; then
-{{- if .grace }}
-  # No sync state yet — initial sync is still materializing it.
-  exit 0
-{{- else }}
-  echo "no obsidian-headless sync state under $d yet" >&2
+if [ "$have_state" -eq 0 ]; then
+  echo "no obsidian-headless sync state under $d yet; initial sync has not completed" >&2
   exit 1
-{{- end }}
 fi
-age=$(( $(date +%s) - newest ))
+if [ ! -e "$lock" ]; then
+  echo "sync lock $lock is absent; the sync process is not holding the vault" >&2
+  exit 1
+fi
+m=$(stat -c %Y "$lock" 2>/dev/null) || m=0
+if [ "$m" -eq 0 ]; then
+  echo "cannot read mtime of sync lock $lock" >&2
+  exit 1
+fi
+age=$(( $(date +%s) - m ))
 if [ "$age" -gt {{ .staleAfter | int }} ]; then
-  echo "sync state stale: newest write ${age}s ago (limit {{ .staleAfter | int }}s)" >&2
+  echo "sync lock stale: refreshed ${age}s ago (limit {{ .staleAfter | int }}s); the sync process refreshes it every second, so its event loop has stopped" >&2
   exit 1
 fi
 exit 0
@@ -242,8 +262,8 @@ means sync has not started or has exited; the container is then either still
 initializing (pass, and let the pod's own restart handle a dead PID 1) or being
 reported on by readiness instead.
 
-Readiness keeps the state-freshness check: it reports the ambiguous case
-honestly without taking an irreversible action on it.
+Readiness keys off the same lock (see my-wiki.syncReadinessScript) on a shorter
+threshold, so it degrades first and a restart is never the only warning.
 
 Linux-only: `stat -c %Y` is the GNU/BusyBox spelling (BSD/macOS is `stat -f %m`).
 */}}
