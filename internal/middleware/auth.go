@@ -58,7 +58,9 @@ type AuthConfig struct {
 
 	// ResourceMetadataURL is the RFC 9728 Protected Resource Metadata URL.
 	// When set, 401 responses include a WWW-Authenticate header pointing clients
-	// to this URL for OAuth discovery (required by MCP spec 2025-06-18).
+	// to this URL for OAuth discovery (required by the MCP authorization spec
+	// since revision 2025-06-18; unchanged in 2026-07-28, which this server
+	// serves).
 	ResourceMetadataURL string
 }
 

@@ -45,7 +45,7 @@ internal/
   cli/         Cobra command tree (serve, lint, directory, log, activity)
   server/      HTTP setup, static/markdown/raw handlers, middleware chain
   api/         REST handler on /api/* — delegates to services
-  mcpserver/   MCP server (mcp-go) — bare-name tools (read, write, edit, list, search, delete, move, lint, tags, whoami, activity), streamable-http
+  mcpserver/   MCP server (modelcontextprotocol/go-sdk, protocol revision 2026-07-28) — bare-name tools (read, write, edit, list, search, delete, move, lint, tags, whoami, activity), streamable-http (stateless — required for 2026-07-28) + stdio
   service/     Business logic — one service per domain (lint, pages, search, ...)
   render/      Native Go renderer — goldmark + Obsidian extensions → site tree (HTML, listings, sitemap.xml, RSS, 404) into a memfs.Snapshot
   vault/       Vault filesystem ops — page discovery, frontmatter, wikilinks
