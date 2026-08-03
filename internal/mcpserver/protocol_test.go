@@ -84,6 +84,13 @@ func post(t *testing.T, ts *httptest.Server, req rpcRequest) (int, string, map[s
 		// Required from 2026-07-28 on: every request must echo its method
 		// in Mcp-Method.
 		httpReq.Header.Set("Mcp-Method", req.method)
+		// Mcp-Name is required for exactly three methods — tools/call,
+		// resources/read, prompts/get — and it is the same header for all
+		// three; there is no separate Mcp-Uri. For resources/read the "name"
+		// IS the resource URI: the SDK's extractName unmarshals
+		// ReadResourceParams and compares the header against p.URI
+		// (streamable_headers.go extractName + validateRequestHeaders), so a
+		// mismatch is rejected with -32020 HeaderMismatch.
 		if name, ok := params["name"].(string); ok {
 			httpReq.Header.Set("Mcp-Name", name)
 		}
@@ -200,6 +207,12 @@ func assertTruthyResourcesCapability(t *testing.T, caps map[string]any, where st
 // warning, a silent downgrade to 2025-11-25. This test fails loudly in that
 // case: it asserts the exact string "2026-07-28" is present in the advertised
 // list.
+//
+// MUTATION-CHECKED: flipping Stateless to false turns this test (and
+// TestExplicitNewProtocolRequestIsAccepted, TestStatelessMethodNotAllowed,
+// TestCacheHintsOnListTools) red. If you weaken this assertion, re-run that
+// mutation — a negotiation test that cannot fail is worse than none, because
+// it reads as coverage.
 func TestDiscoverAdvertisesNewProtocolOverHTTP(t *testing.T) {
 	ts := newTestHTTPServer(t)
 

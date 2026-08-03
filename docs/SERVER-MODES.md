@@ -47,7 +47,13 @@ The MCP layer is `github.com/modelcontextprotocol/go-sdk` (**not** mcp-go). Ever
 
 In stateless mode only `POST` is served: `DELETE /mcp` (session teardown) and a standalone `GET /mcp` (the legacy SSE stream, replaced by `subscriptions/listen`) both answer `405` with `Allow: POST`.
 
-Implemented by the SDK transport, not by this repo: the mandatory `server/discover` RPC, `resultType` on results, `Mcp-Method`/`Mcp-Name`/`MCP-Protocol-Version` header validation, and the removal of `ping` / `logging/setLevel`. This repo only supplies the `ttlMs`/`cacheScope` cache hints (`cacheHintMiddleware` in `internal/mcpserver/server.go`).
+Implemented by the SDK transport, not by this repo: the mandatory `server/discover` RPC, `resultType` on results, `Mcp-Method`/`Mcp-Name`/`MCP-Protocol-Version` header validation, and the removal of `ping` / `logging/setLevel`.
+
+This repo's contribution to the revision is three things, two of which are choices rather than code — and all three are load-bearing:
+
+1. **The stateless precondition** — `Stateless: true` in `NewStreamableHTTPServer`. Without it the revision is silently withheld (above).
+2. **The federation invariant** — leaving `mcp.ServerOptions.Capabilities` nil (below).
+3. **The `ttlMs`/`cacheScope` cache hints** — the only added code (`cacheHintMiddleware` in `internal/mcpserver/server.go`).
 
 ### ContextForge federation invariant — do not "clean up"
 
