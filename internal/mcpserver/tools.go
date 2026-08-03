@@ -14,31 +14,39 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Logging levels used by mcpLog. mcp.LoggingLevel has no exported constants
-// in the go-sdk (it is a bare string type mirroring RFC-5424 syslog
-// severities), so the small set this package actually emits is named here.
+// logLevel is the RFC-5424 syslog severity an audit event is emitted at. It is
+// a package-local type on purpose: MCP Logging (notifications/message,
+// logging/setLevel) is deprecated by SEP-2577 and removed from the 2026-07-28
+// protocol revision, so this package no longer depends on mcp.LoggingLevel.
+// The names and the level -> slog mapping below are unchanged from when these
+// were mcp.LoggingLevel constants.
+type logLevel string
+
 const (
-	logLevelDebug     mcp.LoggingLevel = "debug"
-	logLevelInfo      mcp.LoggingLevel = "info"
-	logLevelWarning   mcp.LoggingLevel = "warning"
-	logLevelError     mcp.LoggingLevel = "error"
-	logLevelCritical  mcp.LoggingLevel = "critical"
-	logLevelAlert     mcp.LoggingLevel = "alert"
-	logLevelEmergency mcp.LoggingLevel = "emergency"
+	logLevelDebug     logLevel = "debug"
+	logLevelInfo      logLevel = "info"
+	logLevelWarning   logLevel = "warning"
+	logLevelError     logLevel = "error"
+	logLevelCritical  logLevel = "critical"
+	logLevelAlert     logLevel = "alert"
+	logLevelEmergency logLevel = "emergency"
 )
 
-// mcpLog sends a structured log message to the current MCP client session and tees
-// the same event to slog.Default() so there is a durable server-side audit trail
-// regardless of whether the client is subscribed to MCP log notifications (the
-// streamable-http transport is stateless and the client may not be listening).
+// mcpLog records a structured audit event to slog.Default().
 //
-// session is the requesting call's *mcp.ServerSession (req.Session); it is nil
-// in a unit test that builds a bare *mcp.CallToolRequest with no live session —
-// the client-facing notification is skipped in that case (slog still fires).
+// It used to also push the event to the calling client as an MCP
+// notifications/message. That leg is gone: MCP Logging is deprecated
+// (SEP-2577) and removed in protocol revision 2026-07-28, which additionally
+// forbids a server from emitting notifications/message for a request that did
+// not carry io.modelcontextprotocol/logLevel in its _meta. The guidance is to
+// log to stderr/OTel instead, which is exactly what the slog tee already did —
+// so the durable audit trail is unchanged, and no information is lost to
+// clients (lint warnings still ship as a second content block, see
+// resultWithLintWarnings).
 //
-// Authenticated user identity (from the request context) is added to both sinks.
-// MCP delivery errors are silently ignored since the slog tee already recorded it.
-func mcpLog(ctx context.Context, session *mcp.ServerSession, level mcp.LoggingLevel, logger string, data map[string]any) {
+// Authenticated user identity (from the request context) is added to the
+// record.
+func mcpLog(ctx context.Context, level logLevel, logger string, data map[string]any) {
 	if user := middleware.UserFromContext(ctx); user != nil {
 		if data == nil {
 			data = map[string]any{}
@@ -51,8 +59,7 @@ func mcpLog(ctx context.Context, session *mcp.ServerSession, level mcp.LoggingLe
 		}
 	}
 
-	// Tee to slog with component=logger and the data map as attributes so the
-	// audit record survives even when no MCP client is subscribed to log events.
+	// Emit to slog with component=logger and the data map as attributes.
 	attrs := make([]any, 0, 2+2*len(data))
 	attrs = append(attrs, "component", logger)
 	for k, v := range data {
@@ -68,10 +75,6 @@ func mcpLog(ctx context.Context, session *mcp.ServerSession, level mcp.LoggingLe
 		slog.Default().Debug(msg, attrs...)
 	default:
 		slog.Default().Info(msg, attrs...)
-	}
-
-	if session != nil {
-		_ = session.Log(ctx, &mcp.LoggingMessageParams{Level: level, Logger: logger, Data: data})
 	}
 }
 
@@ -166,15 +169,15 @@ func errorResult(msg string) *mcp.CallToolResult {
 
 // resultWithLintWarnings constructs a tool result with the given text and
 // optional lint warnings. When warnings are present they are appended as a
-// second text content block and emitted as an MCP log notification at warning
-// level per the 2025-11-25 spec (notifications/message).
-func resultWithLintWarnings(ctx context.Context, session *mcp.ServerSession, text string, warnings []service.LintIssue) *mcp.CallToolResult {
+// second text content block — that content block is how the client learns
+// about them — and recorded server-side at warning level for the audit trail.
+func resultWithLintWarnings(ctx context.Context, text string, warnings []service.LintIssue) *mcp.CallToolResult {
 	result := textResult(text)
 	if len(warnings) > 0 {
 		result.Content = append(result.Content, &mcp.TextContent{
 			Text: "Lint warnings:\n" + toJSON(warnings),
 		})
-		mcpLog(ctx, session, logLevelWarning, "lint", map[string]any{
+		mcpLog(ctx, logLevelWarning, "lint", map[string]any{
 			"issues": len(warnings),
 		})
 	}
@@ -351,10 +354,10 @@ func writeHandler(svc *service.PageService, lint *service.LintService, vaultDir 
 		}
 
 		notify.MarkDirtyRelative(notifier, vaultDir, path, notify.ChangeModified)
-		mcpLog(ctx, req.Session, logLevelInfo, "vault", map[string]any{
+		mcpLog(ctx, logLevelInfo, "vault", map[string]any{
 			"action": "write", "path": path,
 		})
-		return resultWithLintWarnings(ctx, req.Session, fmt.Sprintf("Wrote page: %s", path), lint.LintPage(path)), nil
+		return resultWithLintWarnings(ctx, fmt.Sprintf("Wrote page: %s", path), lint.LintPage(path)), nil
 	}
 }
 
@@ -384,10 +387,10 @@ func editHandler(svc *service.PageService, lint *service.LintService, vaultDir s
 		}
 
 		notify.MarkDirtyRelative(notifier, vaultDir, path, notify.ChangeModified)
-		mcpLog(ctx, req.Session, logLevelInfo, "vault", map[string]any{
+		mcpLog(ctx, logLevelInfo, "vault", map[string]any{
 			"action": "edit", "path": path, "operations": len(ops),
 		})
-		return resultWithLintWarnings(ctx, req.Session, content, lint.LintPage(path)), nil
+		return resultWithLintWarnings(ctx, content, lint.LintPage(path)), nil
 	}
 }
 
@@ -486,10 +489,10 @@ func deleteHandler(svc *service.PageService, lint *service.LintService, vaultDir
 		}
 
 		notify.MarkDirtyRelative(notifier, vaultDir, path, notify.ChangeDeleted)
-		mcpLog(ctx, req.Session, logLevelWarning, "vault", map[string]any{
+		mcpLog(ctx, logLevelWarning, "vault", map[string]any{
 			"action": "delete", "path": path,
 		})
-		return resultWithLintWarnings(ctx, req.Session, fmt.Sprintf("deleted: %s", path), lint.LintDelete(path)), nil
+		return resultWithLintWarnings(ctx, fmt.Sprintf("deleted: %s", path), lint.LintDelete(path)), nil
 	}
 }
 
@@ -515,11 +518,11 @@ func moveHandler(svc *service.PageService, lint *service.LintService, vaultDir s
 
 		notify.MarkDirtyRelative(notifier, vaultDir, source, notify.ChangeDeleted)
 		notify.MarkDirtyRelative(notifier, vaultDir, destination, notify.ChangeCreated)
-		mcpLog(ctx, req.Session, logLevelInfo, "vault", map[string]any{
+		mcpLog(ctx, logLevelInfo, "vault", map[string]any{
 			"action": "move", "source": source, "destination": destination,
 		})
 		// Lint the source for broken inbound links caused by removing the old path.
-		return resultWithLintWarnings(ctx, req.Session, fmt.Sprintf("moved: %s -> %s", source, destination), lint.LintDelete(source)), nil
+		return resultWithLintWarnings(ctx, fmt.Sprintf("moved: %s -> %s", source, destination), lint.LintDelete(source)), nil
 	}
 }
 
@@ -546,7 +549,7 @@ func activityHandler(svc *service.ActivityService, vaultDir string, notifier *no
 		for _, p := range svc.DirtyPaths() {
 			notify.MarkDirtyRelative(notifier, vaultDir, p, notify.ChangeModified)
 		}
-		mcpLog(ctx, req.Session, logLevelInfo, "activity", map[string]any{
+		mcpLog(ctx, logLevelInfo, "activity", map[string]any{
 			"action": "log", "type": entry.Type, "title": entry.Title,
 		})
 		return textResult("Activity logged successfully"), nil
