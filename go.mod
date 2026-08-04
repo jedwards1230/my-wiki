@@ -11,7 +11,7 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2
 	github.com/spf13/cobra v1.10.2
-	github.com/yuin/goldmark v1.8.4
+	github.com/yuin/goldmark v1.8.5
 	github.com/yuin/goldmark-emoji v1.0.6
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	github.com/yuin/goldmark-meta v1.1.0
