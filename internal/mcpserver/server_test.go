@@ -48,6 +48,18 @@ func TestInitializeCapabilities(t *testing.T) {
 		t.Fatal("expected a non-nil InitializeResult after the handshake")
 	}
 
+	// The negotiated revision is part of the contract, not incidental — assert
+	// it rather than discarding it. mcp.Client.Connect probes server/discover
+	// at the latest revision first and only falls back to the legacy
+	// initialize handshake (capped at 2025-11-25) if the server can't serve
+	// it, so anything other than protocolRevision here means the handshake
+	// silently downgraded. See TestDiscoverAdvertisesNewProtocolOverHTTP for
+	// the HTTP-transport equivalent, which is the one that catches a lost
+	// StreamableHTTPOptions{Stateless: true}.
+	if result.ProtocolVersion != protocolRevision {
+		t.Errorf("negotiated protocolVersion = %q, want %q", result.ProtocolVersion, protocolRevision)
+	}
+
 	capsJSON, err := json.MarshalIndent(result.Capabilities, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal capabilities: %v", err)

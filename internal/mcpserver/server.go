@@ -89,6 +89,15 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *mcp.
 	// ContextForge's federation (`if capabilities.get("resources"):`) treats
 	// as absent. Leaving Capabilities nil is what makes it serialize truthy.
 	//
+	// The same holds for the SEP-2575 `server/discover` response added in
+	// protocol revision 2026-07-28: go-sdk v1.7.0 builds the DiscoverResult
+	// from the very same Server.capabilities(), so `initialize` and
+	// `server/discover` emit byte-identical capabilities and a falsy `{}` here
+	// would break federation on both surfaces.
+	// TestDiscoverAdvertisesFederationSafeCapabilities and
+	// TestLegacyInitializeKeepsFederationCapabilities (protocol_test.go)
+	// assert the truthy shape on both, over the real HTTP transport.
+	//
 	// The go-sdk's Implementation type has no Description field (unlike
 	// mcp-go's nonstandard extension) — the description text is folded into
 	// the leading sentence of Instructions instead, so it's still surfaced to
@@ -113,8 +122,61 @@ func New(v *vault.Vault, searchSvc *service.SearchService, opts ...Option) *mcp.
 
 	registerResources(s, pages)
 	registerTools(s, v.Dir, cfg.instanceName, cfg.notifier, lint, directory, activity, pages, tags, searchSvc)
+	s.AddReceivingMiddleware(cacheHintMiddleware)
 
 	return s
+}
+
+// Cache-hint values advertised via the SEP-2575 `ttlMs`/`cacheScope` result
+// fields (protocol revision 2026-07-28).
+const (
+	// listTTLMs applies to the tool/resource/template listings. The set is
+	// fixed at construction (registerTools/registerResources) and never
+	// changes at runtime, so five minutes is conservative.
+	listTTLMs = 300_000
+
+	// readResourceTTLMs applies to wiki://schema. Its handler re-reads
+	// meta/schema from disk on every call and the vault mutates underneath
+	// us, so keep the window short.
+	readResourceTTLMs = 60_000
+)
+
+// cacheHintMiddleware stamps the SEP-2575 `ttlMs`/`cacheScope` cache hints
+// (protocol revision 2026-07-28) onto the results that carry them.
+//
+// It must be installed with Server.AddReceivingMiddleware, NOT
+// AddSendingMiddleware. The go-sdk's own docs/server.md says to use
+// AddSendingMiddleware for this; that is wrong — sending middleware only wraps
+// outbound *requests* the server initiates, so it silently no-ops for inbound
+// list/read calls. Receiving middleware wraps the inbound method handler and
+// runs after the handler returns, which is the only hook that works here: the
+// SDK unconditionally overwrites CacheScope with "public" *after* a
+// resources/read handler returns (mcp.Cacheable.setDefaultCacheableValues), so
+// a handler cannot set these fields itself.
+//
+// cacheScope is "public" because every authenticated user of this server sees
+// the same 11 tools and the same single resource — auth is uniform and there
+// is no per-user visibility filtering. If that ever changes (per-user tool
+// visibility, per-space resource listings), these MUST become "private" or a
+// shared intermediary cache will serve one user's listing to another.
+func cacheHintMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		res, err := next(ctx, method, req)
+		if err != nil {
+			return res, err
+		}
+		switch r := res.(type) {
+		case *mcp.ListToolsResult:
+			r.TTLMs, r.CacheScope = listTTLMs, "public"
+		case *mcp.ListResourcesResult:
+			r.TTLMs, r.CacheScope = listTTLMs, "public"
+		case *mcp.ListResourceTemplatesResult:
+			r.TTLMs, r.CacheScope = listTTLMs, "public"
+		case *mcp.ReadResourceResult:
+			r.TTLMs, r.CacheScope = readResourceTTLMs, "public"
+		}
+		return res, err
+	}
 }
 
 // registerResources exposes wiki content as MCP resources.
@@ -148,6 +210,13 @@ func registerResources(s *mcp.Server, pages *service.PageService) {
 // s. The tool set is process-wide: getServer always returns the same,
 // already-configured *mcp.Server, matching the previous mcp-go
 // WithStateLess(true) behavior.
+//
+// Stateless: true is also the precondition for protocol revision 2026-07-28:
+// the SDK's StreamableServerTransport.SupportsProtocolVersion withholds that
+// revision from a stateful handler. Removing it does NOT error — the revision
+// just vanishes from server/discover's supportedVersions and every client
+// silently downgrades. Do not remove it; TestDiscoverAdvertisesNewProtocol-
+// OverHTTP guards this.
 func NewStreamableHTTPServer(s *mcp.Server) *mcp.StreamableHTTPHandler {
 	return mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return s },

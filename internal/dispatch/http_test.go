@@ -179,6 +179,15 @@ func TestHTTPDispatcher_HappyPath(t *testing.T) {
 	}
 
 	waitUntil(t, 2*time.Second, func() bool { return atomic.LoadInt32(&hits) == 1 })
+	// Wait for the success counter too, not just for hits — the counter is
+	// incremented after the request returns to the dispatcher goroutine, so
+	// polling hits alone leaves a race window where the counter is still 0
+	// (asserted at the end of this test). Same race already handled in
+	// TestHTTPDispatcher_RetryThenSucceed. Waited for before taking mu so the
+	// poll never holds the lock the server handler needs.
+	waitUntil(t, 5*time.Second, func() bool {
+		return labelledCounterValue(t, d.dispatchTotal, "outcome", outcomeSuccess) >= 1
+	})
 
 	mu.Lock()
 	defer mu.Unlock()
