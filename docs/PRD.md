@@ -116,6 +116,11 @@ surface wins."*
 | Sync | Obsidian Sync via `obsidian-headless`, not git | E2E encryption means family content is private *even from the server*; offline-first mobile; no merge conflicts. Cost: a subscription and a Node sidecar. |
 | Auth | OIDC bearer JWT only, **fails closed** | The network entry points refuse to start without an issuer unless `WIKI_AUTH_DISABLED` is explicitly set. No API keys, no password store. |
 | Vault schema | Lives *in* the vault (`meta/schema.md`), exposed as MCP resource `wiki://schema` | The operating manual is content, co-evolved by humans and agents; only its mechanically-checkable subset is compiled into lint. |
+| Schema vs lint authority | **The schema is authoritative.** A mechanical check it advertises must exist; a lint rule with no schema clause is a bug | It ships as an MCP resource. An agent that trusts it and finds it wrong stops trusting all of it. |
+| Write concurrency | **Optimistic concurrency, opt-in** — `read` returns a version token, `write`/PUT accept `If-Match`, mismatch is 409 — plus **atomic temp-file-and-rename** on every write | Detection and durability are different problems: rename fixes torn files, `If-Match` fixes lost updates. Opt-in means an agent that omits the token keeps today's behavior. |
+| Sync backend | **Pluggable: `sync.backend: obsidian \| git \| none`** | Obsidian Sync is the homelab's choice, not the product's. `none` makes the chart installable by anyone; `git` serves deployments that already have a repo. |
+| Version history | **Optional `GitTracker`, enabled when `.git` exists**; tools named `history` / `diff` / `revert` | Git on disk is still markdown on a filesystem, so "no database" survives. It gives agents an undo, which is what makes aggressive agent writes safe to encourage. Bare names, per the tool-naming convention. |
+| Multi-vault ("Spaces") | Declared direction; **no epic, nothing built** until a second vault exists. The only standing cost is a design constraint: pass the vault as a parameter, never a process global | Keeping the option open is nearly free; building for a tenant that does not exist is not. |
 | `.obsidian/` | Excluded and denied on every surface | Editor state is not content. Denial returns 404, not 403, so the API doesn't confirm existence. |
 | `private/` | Excluded from server sync entirely | Personal-device-only via Obsidian Sync. Everything else is LAN-visible and agent-visible by design. |
 
@@ -136,10 +141,17 @@ the homelab come from ContextForge's federation prefix, not from this server. Ev
 | `search` | Ranked full-text | `query`* (≥2 chars), `limit` (20), `engine` (`index`\|`substring`\|`all`) | Matches title, tags, content. Returns score, snippet, match class, and per-engine timings. |
 | `delete` | Remove a page | `path`* | Errors if absent. Returns the wikilinks the deletion broke. |
 | `move` | Rename/relocate | `source`*, `destination`* | Fails if source missing or destination exists. Destination slugified. Returns newly-broken wikilinks. |
-| `lint` | Check the vault | `check` (`all`\|`frontmatter`\|`tags`\|`links`\|`orphans`\|`size`\|`log`) | Structured `LintReport`. See §6.5 — the enum here is narrower than the service supports. |
+| `lint` | Check the vault | `check` (`all`\|`frontmatter`\|`tags`\|`links`\|`orphans`\|`size`\|`log`) | Structured `LintReport`. The enum exposes six of the eight checks — `clippings` and `stub` are unreachable from MCP though REST accepts them (§6.5). |
 | `tags` | Tag census | — | Every tag with page count, sorted by frequency. The "check before inventing a tag" call. |
 | `whoami` | Instance identity | — | `{name, version, vault_dir, go_version, instance_name?, user?}` — lets an agent tell which wiki it is connected to. |
 | `activity` | Narrative log entry | `type`* (`edit`\|`create`\|`delete`\|`lint`\|`note`\|`migrate`\|`move`), `title`*, `time`, `summary`, `day_summary`, `touched` | **For session summaries only** — individual page mutations are auto-logged by the server; duplicating them here is a defect. |
+| `history` | Commit log for one page | `path`*, `limit` | *End state, not built.* Only when `GitTracker` is active. |
+| `diff` | Change between two revisions | `path`*, `from`, `to` | *End state, not built.* Read-only; safe under every sync backend. |
+| `revert` | Restore a page to a revision | `path`*, `hash`* | *End state, not built.* Writes a new commit, never rewrites history. Refused under `sync.backend: git` (§7). |
+
+**Version tokens (end state, not built).** `read` returns an opaque version token for the page.
+`write` and `edit` accept it as an optional precondition; a stale token is a conflict, not an
+overwrite. Omitting it preserves today's last-write-wins behavior, so no existing caller breaks.
 
 *Annotations:* `read`/`list`/`search`/`lint`/`tags`/`whoami` are read-only + idempotent; `write`/`edit`/
 `delete`/`move` are marked destructive. **There is no dry-run parameter on any tool.**
@@ -165,7 +177,7 @@ instance.
 |---|---|
 | `GET /api/pages/{path...}` | `{path, content}`; 404 on miss or denied prefix |
 | `GET /api/pages` | `?prefix`, `?sort_by`, `?limit` |
-| `PUT /api/pages/{path...}` | Body = raw markdown, **10 MB cap** (413). 400 on frontmatter validation failure |
+| `PUT /api/pages/{path...}` | Body = raw markdown, **10 MB cap** (413). 400 on frontmatter validation failure. *End state:* honors `If-Match`, **409** on a stale token |
 | `PATCH /api/pages/{path...}` | `{operations:[{find,replace}]}`; **422** when a `find` misses |
 | `DELETE /api/pages/{path...}` | |
 | `GET /api/search` | `q` (≥2), `limit` (20), `engine`; **501** if search unconfigured |
@@ -219,6 +231,11 @@ variants (`LintPage`, `LintDelete`) run on the write path so mutations return wa
 | `clippings` | A `clipping`-tagged descriptor with no markdown URL into `raw/clippings/` (missing `## Sources`) | WARN |
 | `stub` | Empty vault-root `.md` idle past a cooldown — the file Obsidian creates when you click a broken wikilink | WARN |
 | `log` | Hash mismatch between `meta/log.md` and a daily activity file — i.e. unprocessed changes | WARN |
+
+**The schema governs this table.** Two checks `meta/schema.md` advertises — stale `inbox/` files
+past N days, and `note` activity entries worth promoting to pages — are not implemented and must be.
+Conversely the MCP `lint` enum lists only six of the eight checks above (`clippings` and `stub` are
+missing) while REST accepts all eight, so the agent surface is narrower than the human one.
 
 Only `clippings.tag`, `clippings.raw_path_prefix`, and `stub.min_idle_seconds` are configurable, via
 `<vault>/meta/lint-config.yaml`; a malformed file surfaces as an ERROR issue rather than failing
@@ -304,12 +321,22 @@ frontmatter (`title` + non-empty `tags` + ISO `date`; `raw/**` exempt), slugifie
 server-side, writes, then fires a mutation callback that feeds the rebuild notifier, the activity
 log, and the webhook router. Path traversal is blocked at the `Storage` seam.
 
-**There is no write-conflict detection.** No ETag, no `If-Match`, no CAS, no per-path lock. Two
-concurrent writes to one page race at `os.WriteFile`; `write` overwrites unconditionally. `edit`'s
-find/replace is the *de facto* mitigation — it fails loudly if the text it expected has moved — but
-it is not a guarantee, and the file write itself is not atomic (no temp-file + rename). This is
-tracked as "multi-agent write safety" on the wiki's engine backlog and is the largest correctness
-gap in the product (§12).
+**Today there is no write-conflict detection.** No ETag, no `If-Match`, no CAS, no per-path lock.
+Two concurrent writes to one page race at `os.WriteFile`; `write` overwrites unconditionally.
+`edit`'s find/replace is the *de facto* mitigation — it fails loudly if the text it expected has
+moved — but it is not a guarantee, and the write itself is not atomic (no temp-file + rename).
+
+**End state: optimistic concurrency plus atomic writes.** `read` returns a version token derived
+from the file's mtime and size. `write` and PUT accept it as an optional `If-Match` precondition and
+answer a stale token with 409 rather than an overwrite; `edit` accepts it the same way, on top of
+the find/replace guard it already has. Every write goes through a temp file in the destination
+directory followed by `os.Rename`, so a reader never sees a half-written page and a crash mid-write
+leaves the previous version intact. The precondition is opt-in — a caller that omits the token gets
+today's behavior — so nothing existing breaks, but the schema will tell agents to send it.
+
+Note what this does and does not cover: it makes *server-mediated* writes safe against each other.
+A race between the server and the sync process writing the same file from outside is still resolved
+by whichever wrote last, because the server does not own that file's lifecycle.
 
 **Invalidation.** fsnotify (`.md` only, recursive, with a synthetic-create walk to close the
 atomic-`mv` race) and API/MCP mutations both feed a `FanoutSink`: one leg debounces 2 s and triggers
@@ -322,6 +349,24 @@ HMAC-SHA256 over `timestamp.body`, exponential backoff with full jitter, per-con
 breaker, path include/exclude filters, and `skip_all_deletes` to stop an agent's own cleanup from
 re-triggering itself. An empty secret is a non-retriable refusal to send. The envelope carries a URL
 to a prompt page in the vault, which the consumer fetches as the agent's system message.
+
+**Version history and the sync backend must not both own `.git`.** With `sync.backend` pluggable
+(§8) and `GitTracker` enabled whenever `.git` exists, the two can collide: a sync sidecar pulling on
+an interval and a server auto-committing on every mutation are two writers to one working tree, and
+the server has no merge strategy and no human to escalate to. The resolution is explicit and
+enforced, not left to configuration luck:
+
+| `sync.backend` | `GitTracker` auto-commit | `history` / `diff` | `revert` |
+|---|---|---|---|
+| `none` | **enabled** (the intended pairing — git is the history store, not the transport) | yes | yes |
+| `obsidian` | **enabled** — Obsidian Sync moves files, git only observes them. A sidecar's incoming edit arrives as an ordinary file change and is committed like any other, attributed to `wiki-server`, which is exactly how a remote edit should enter history | yes | yes |
+| `git` | **disabled** — the sync process owns the repo | yes, read from the sync remote's own log | **refused** |
+
+`history` and `diff` only read `.git`, so they stay available everywhere. Only the two operations
+that *write* commits are gated. Under `sync.backend: git` a revert would race the next pull, so it
+is refused with an explanatory error rather than silently queued. The chart enforces the
+mutual exclusion as a `fail` precondition, matching the ten guard-rails it already carries (§8) —
+an unshippable combination should fail at `helm template`, not at 3 a.m.
 
 **Identity.** OIDC bearer JWT only, verified for signature, issuer, audience, and expiry, then a
 group allowlist. `NewAuth` refuses to construct with an empty allowlist unless `AllowAnyUser` is
@@ -338,7 +383,15 @@ Helmfile CMP; chart `oci://ghcr.io/jedwards1230/charts/my-wiki`, image `ghcr.io/
 
 - **`wiki`** — one replica of `wiki-server serve --mcp-port=8081`. Non-root uid 1001, all caps
   dropped, `readOnlyRootFilesystem: true`. Liveness `/healthz`, readiness `/readyz`.
-- **`wiki-sync`** — `obsidian-headless` running `ob sync --continuous`, with a `setup-sync` init
+**Sync is a pluggable backend** (`sync.backend`), not a fixed dependency. `obsidian` runs
+obsidian-headless as today; `git` runs a `git-sync` sidecar against a remote; `none` omits the sync
+workload entirely and treats the vault as a volume somebody else fills. The Go server is already
+fully decoupled from all three — this is chart and Dockerfile work: a conditional init container, a
+conditional sidecar, a `sync.git` block (`repo`, `branch`, `interval`, `sshSecretName`), and making
+the `obsidian-headless` install conditional in the image. `none` is what makes the chart installable
+by anyone without an Obsidian subscription, and it also lets those images drop the amd64 pin.
+
+- **`wiki-sync`** (`sync.backend: obsidian`) — `obsidian-headless` running `ob sync --continuous`, with a `setup-sync` init
   container that logs in and pulls the vault. Probes are plain filesystem checks on the sync **lock**
   age (readiness 180 s, liveness 300 s) and deliberately never invoke `ob`; the readiness window
   stays below liveness so a pod goes NotReady before a restart fires. Both pinned to `amd64` —
@@ -409,29 +462,34 @@ Criteria 5 and 6 are not met today.
 | Capability | End-state intent | Status | Tracking |
 |---|---|---|---|
 | Render + serve an Obsidian vault | Full dialect, in-process, no build step | shipped | — |
-| MCP tool surface | 11 tools at parity with REST, current protocol | shipped | `jedwards1230/my-wiki#184` (ttlMs leg) |
-| REST API + self-served OpenAPI | Machine-readable, drift-proof | shipped | — |
-| Search | Fast ranked default, graceful fallback | shipped | semantic/vector search unfiled |
-| Lint | Machine-checkable subset of the schema, inline on write | partial | MCP enum gap, defeated `orphans`, noisy `size` — all unfiled |
+| MCP tool surface | Tools at parity with REST, current protocol | shipped | `jedwards1230/my-wiki#184` (ttlMs leg) |
+| REST API + self-served OpenAPI | Machine-readable, drift-proof incl. parameter schemas | partial | `jedwards1230/my-wiki#197` |
+| Search | Fast ranked default, graceful fallback, same default on every surface | partial | `jedwards1230/my-wiki#196` |
+| Lint — mechanical checks | Exactly the machine-checkable subset of `meta/schema.md`, reachable from both surfaces | partial | `jedwards1230/my-wiki#193`, `#195`; the two schema-advertised checks (stale `inbox/`, promotable `note`s) unfiled |
+| Lint — signal quality | `size` skips the `raw/` source tier, whose transcripts are meant to be long | not started | unfiled |
 | Freshness alerting | Dead-man's switch on vault + sync | shipped | — |
 | Webhook dispatch | Signed, debounced, circuit-broken | shipped | — |
 | OIDC auth | Fails closed, group-gated, RFC 9728 | shipped but **not enabled in prod** | deployment task, not engine |
-| Multi-agent write safety | No silent lost update | **not started** | unfiled |
-| Change provenance (author/agent in activity) | Attribution from JWT claims | not started | unfiled |
-| Page/folder conflict auto-relocation | `foo.md` → `foo/index.md` on demand | not started | unfiled |
+| Multi-agent write safety | Opt-in `If-Match` + 409, atomic temp-file-and-rename | **not started** | `jedwards1230/my-wiki#194` |
+| Change provenance | Author/agent on every activity entry, from JWT claims | not started | `jedwards1230/my-wiki#198` |
+| Sync backend abstraction | `sync.backend: obsidian \| git \| none`, all three shippable | not started | unfiled |
+| Version history | Optional `GitTracker` + `history`/`diff`/`revert`, gated per backend (§7) | not started | unfiled |
+| Page/folder conflict auto-relocation | `foo.md` → `foo/index.md` on demand, instead of an agent-side workaround | not started | unfiled |
+| Directory-level wikilinks | `[[research/neuroscience]]` resolves to the directory index | not started | unfiled (SCHEMA-004 in the audits) |
+| Literal `$` in prose | Does not silently become KaTeX math on the rendered site | not started | unfiled |
 | Renderer golden tests | Per-template regression coverage | not started | `jedwards1230/my-wiki#76` |
 | Backlink snippets | Context excerpt per backlink | not started | `jedwards1230/my-wiki#77` |
 | Webfont CDN fallback | Vendor script degrades instead of failing | not started | `jedwards1230/my-wiki#78` |
 | Init-sync failure diagnosability | Permanent vs transient distinguishable *and observable* | partial | `jedwards1230/my-wiki#185`, `jedwards1230/homelab-k8s#1089` |
-| Sync backend abstraction (`obsidian`\|`git`\|`none`) | Deployable without an Obsidian subscription | not started | unfiled (§12 Q3) |
-| Git version history (`history`/`diff`/`revert`) | Page-level time travel | not started | unfiled (§12 Q4) |
 | OTLP traces | API/MCP spans to Tempo | not started | unfiled |
-| Spaces (multi-vault) | Vaults per OIDC group | declared direction only | §12 |
+| Spaces (multi-vault) | Vaults per OIDC group | direction only, deliberately unbuilt (§5) | none by design |
 
 ## 11. Risks & accepted limits
 
-- **Concurrent writes can silently lose an edit.** Accepted so far because write volume is low and
-  `edit` fails loudly on drift, but it is the correctness gap that scales worst with agent count.
+- **Concurrent writes can silently lose an edit** until `#194` lands. The decision is made (§5, §7);
+  the gap is real today and scales worst with agent count. Even afterwards, a race between the
+  server and the sync process is resolved by whoever wrote last — the server does not own that
+  file's lifecycle, and no `If-Match` can change that.
 - **Full re-render on every change.** No incremental invalidation; a 477-page vault rebuilds in
   full every 2 s debounce window. Fine now, linear in vault size.
 - **The single-vault assumption is everywhere.** Deepening it makes Spaces more expensive later.
@@ -452,79 +510,29 @@ Criteria 5 and 6 are not met today.
   the rendered site — a foot-gun that is currently a documented authoring rule rather than a fix.
 - **Search has no stemming, stopwords, or phrase support**, and `engine=all` concatenates results
   from both engines without merging, deduping, or re-ranking.
-- **The `orphans` check is structurally defeated.** It harvests link targets from every page
-  including the auto-generated `index.md` files, which link everything — so it reports 0 on a
-  477-page vault and always will. `size` has the inverse problem: it flags `raw/clippings/`
+- **The `orphans` check is structurally defeated** (`#193`): it harvests link targets from every
+  page including the auto-generated `index.md` files, which link everything, so it reports 0 on a
+  477-page vault and always will. `size` has the inverse problem — it flags `raw/clippings/`
   verbatim transcripts, which are supposed to be long, drowning the real splitting candidates.
+- **Enabling `sync.backend: git` costs the vault its `revert`** (§7). Two writers to one `.git` is
+  not a configuration to tune, so the chart refuses it; deployments that want page-level undo
+  should choose `none` or `obsidian`.
 
-## 12. Open decisions
+## 12. Decisions taken
 
-**Q1 — Write-conflict semantics.** Nothing prevents two agents from silently overwriting each other.
-What is the contract?
+All five forks that were open when this document was drafted are settled. They are reflected in the
+locked-decision table (§5) and in the sections named below; this table is the record of *what was
+chosen and why*, not an open question list.
 
-- **(a)** Accept last-write-wins; rely on `edit` failing loudly. Zero work, zero guarantee.
-- **(b)** Optimistic concurrency: return an mtime/ETag from `read`, accept `If-Match` on `write`
-  and PUT, reject with 409 on mismatch. Opt-in — an agent that omits it keeps today's behavior.
-- **(c)** Per-path mutex + atomic temp-file-and-rename writes. Fixes torn writes and same-process
-  races, but not a race against the Obsidian sync process.
+| # | Question | Decision | Where the end state is described |
+|---|---|---|---|
+| 1 | Write-conflict semantics | Optimistic concurrency — a version token from `read`, optional `If-Match` on `write`/`edit`/PUT, 409 on mismatch — **plus** atomic temp-file-and-rename on every write. Opt-in, so omitting the token preserves today's behavior | §6.1, §6.2, §7 · `jedwards1230/my-wiki#194` |
+| 2 | Does lint own the schema, or the schema own lint? | **The schema is authoritative.** The two checks `meta/schema.md` advertises but does not implement (stale `inbox/` files, promotable `note` entries) must be built; any lint rule with no schema clause is a bug | §6.5 · `jedwards1230/my-wiki#193`, `#195` |
+| 3 | Is Obsidian Sync permanent? | **No — the full backend abstraction is the end state:** `sync.backend: obsidian \| git \| none`, all three shippable. Entirely chart and Dockerfile work; the Go server is already decoupled | §8 |
+| 4 | Git version history | **Optional**, enabled when `.git` exists, exposed as `history` / `diff` / `revert` — bare names, matching every other tool | §6.1, §7 |
+| 5 | Spaces (multi-vault) | **Keep the constraint, build nothing.** Pass the vault as a parameter rather than a process global; file no epic until a second vault exists | §5 |
 
-*Recommendation:* **(b) plus the atomic-write half of (c).** (c) alone gives durability without
-detection; (b) gives the fleet a way to be correct, and atomic rename removes the torn-file case for
-free. *Consequence:* one new optional field on `read`/`write`/`edit` in both surfaces, and agents
-must be told to use it — a schema/prompt change, not just code.
-
-**Q2 — Does lint own the schema, or does the schema own lint?** `meta/schema.md` advertises
-mechanical checks the binary doesn't implement (stale `inbox/` files, `note` entries worth
-promoting), and lint enforces rules the schema doesn't state. Two ways out:
-
-- **(a)** Schema is authoritative: implement the missing checks, and treat any lint rule with no
-  schema clause as a bug.
-- **(b)** Lint is authoritative for the mechanical layer: trim the schema's claims to what actually
-  runs and keep the rest as prose guidance for LLM audits.
-
-*Recommendation:* **(a).** The schema is the agent-facing contract and is shipped as an MCP resource;
-an agent that trusts it and finds it wrong loses trust in all of it. *Consequence:* two new lint
-checks, and an ongoing obligation to keep them in step — which is exactly what criterion 5 in §9 asks
-for.
-
-**Q3 — Is Obsidian Sync permanent, or is the sync backend pluggable?** The wiki's engine backlog
-carries a large `sync.backend: obsidian|git|none` epic, and notes the Go server is already fully
-decoupled — it is entirely chart and Dockerfile work.
-
-- **(a)** Obsidian-only. Simplest; keeps a paid dependency and a Node runtime in the image forever.
-- **(b)** Ship `none` only — the vault is a volume someone else fills. Small, and it's what the
-  work-laptop and any OSS adopter already need.
-- **(c)** Full epic: `none` + `git-sync` + `obsidian`, conditional init container and sidecar.
-
-*Recommendation:* **(b) now, (c) as a later increment.** `none` is a conditional template and a
-Dockerfile branch; it makes the chart installable by anyone without an Obsidian subscription, which
-is the main thing blocking the repo from being usable as the OSS project it is published as.
-*Consequence:* the image can drop `obsidian-headless` for non-Obsidian installs, which also removes
-the arm64 pin.
-
-**Q4 — Git version history: in scope, or does it violate "no database, ever"?** The backlog proposes
-a `GitTracker` auto-committing on mutation plus `history` / `diff` / `revert` on both surfaces.
-
-- **(a)** Out of scope. Obsidian Sync already keeps version history; the wiki is current state.
-- **(b)** In scope as an optional feature, enabled when `.git` exists. Git on disk is still
-  markdown on a filesystem, so the principle survives.
-- **(c)** In scope and default-on.
-
-*Recommendation:* **(b).** It gives agents an undo for their own mistakes — the thing that makes
-aggressive agent writes safe to encourage — without becoming a required dependency. Note the backlog
-drafts these MCP tools as `wiki_history`/`wiki_diff`/`wiki_revert`, which contradicts the bare-name
-convention; they should be `history`/`diff`/`revert`. *Consequence:* a `go-git` dependency, and a
-real question about how auto-commits interleave with a concurrent `git-sync` pull under Q3(c).
-
-**Q5 — Spaces (multi-vault): committed direction or aspiration?** `CLAUDE.md` declares it as
-direction and asks that single-vault coupling not be deepened, but nothing is built and no issue
-tracks it.
-
-- **(a)** Commit: file the epic, and treat "does this deepen single-vault coupling?" as a review
-  question on every PR.
-- **(b)** Park it: delete the constraint from `CLAUDE.md` and let the code assume one vault until a
-  second one actually exists.
-
-*Recommendation:* **(a), narrowly** — keep the constraint (it costs nothing; it is just "pass the
-vault as a parameter"), but file no epic and build nothing until there is a second vault to serve.
-*Consequence:* a standing, cheap design tax in exchange for keeping the option open.
+Decisions 3 and 4 interact — a `git-sync` sidecar and a `GitTracker` auto-committer are two writers
+to one working tree. That interaction is resolved explicitly in §7: auto-commit and `revert` are
+disabled under `sync.backend: git`, `history` and `diff` stay available everywhere because they only
+read, and the chart enforces the exclusion as a `fail` precondition.
