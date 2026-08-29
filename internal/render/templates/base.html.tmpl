@@ -32,8 +32,16 @@
 {{- end }}
 
 <meta name="generator" content="my-wiki native renderer">
+{{/* htmx 4 swaps all non-204/304 responses by default (htmx 2 skipped
+     4xx/5xx). Our 404 page reuses this same base template -- a real
+     #main/#page-tools chrome -- so swapping it into a boosted nav is
+     correct and desired. Our 5xx paths (readiness-gate "service
+     unavailable", markdown 500) are bare text with no matching
+     selectors, so letting them swap would wipe #main via an empty
+     outerHTML replace. Restore htmx 2's no-swap behavior for 5xx only. */}}
+<meta name="htmx-config" content='{"noSwap": ["5xx"]}'>
 </head>
-<body hx-ext="morph" data-active-path="{{ .ActivePath }}"
+<body data-active-path="{{ .ActivePath }}"
       x-data="{
         drawer: false,
         rightCollapsed: $persist(false).as('rightRailCollapsed'),
@@ -72,7 +80,7 @@
 
 <div class="layout">
 
-  <aside class="sidebar sidebar-left" :class="{ 'is-open': drawer }" aria-label="Navigation" hx-boost="true" hx-target="#main" hx-select="#main, #page-tools" hx-swap="outerHTML show:window:top" x-on:click="if ($event.target.closest('a')) drawer = false">
+  <aside class="sidebar sidebar-left" :class="{ 'is-open': drawer }" aria-label="Navigation" hx-boost:inherited="true" hx-target:inherited="#main" hx-select:inherited="#main, #page-tools" hx-swap:inherited="outerHTML show:top showTarget:window" x-on:click="if ($event.target.closest('a')) drawer = false">
     <h1 class="page-title"><a href="/">{{ .SiteTitle }}</a></h1>
     <div class="search" x-data="{
         q: '', results: [], open: false, idx: -1, seq: 0,
@@ -124,7 +132,7 @@
     {{- end }}
   </aside>
 
-  <main id="main" tabindex="-1" hx-boost="true" hx-target="#main" hx-select="#main, #page-tools" hx-swap="outerHTML show:window:top">
+  <main id="main" tabindex="-1" hx-history-elt hx-boost:inherited="true" hx-target:inherited="#main" hx-select:inherited="#main, #page-tools" hx-swap:inherited="outerHTML show:top showTarget:window">
     {{ template "content" . }}
   </main>
 
@@ -141,7 +149,7 @@
          wrapper shrinks — content overflowing the wrapper scrolls.
          The id="page-tools" target lets htmx OOB-swap this block on
          every SPA nav so the graph, TOC, and backlinks stay synced
-         with the active page (see wiki.js htmx:afterSwap and
+         with the active page (see wiki.js htmx:after:swap and
          RenderFragment in internal/render/render.go). Always rendered
          — empty on list pages — so the OOB target exists even when
          navigating list → content. The block lives in its own named
@@ -200,7 +208,6 @@
 </footer>
 
 <script src="/_/static/vendor/htmx.min.js" defer></script>
-<script src="/_/static/vendor/htmx-idiomorph-ext.min.js" defer></script>
 <script src="/_/static/vendor/alpine-persist.min.js" defer></script>
 <script src="/_/static/vendor/alpine.min.js" defer></script>
 <script src="/_/static/wiki.js?v={{ .Version }}" defer></script>

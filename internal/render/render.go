@@ -550,10 +550,12 @@ func (r *Renderer) RenderToBytes(_ *Page, data TemplateData) ([]byte, error) {
 // HX-Request: true branch to swap #main without re-shipping the full
 // shell. The `content` block emits the inner article; we wrap it in
 // the same `<main id="main">` element the base template uses so that
-// htmx's `hx-select="#main" hx-swap="outerHTML"` finds a #main in the
-// response and the new element keeps the hx-boost / hx-target wiring
-// for subsequent navigations. Without the wrapper htmx selects
-// nothing — the main area renders empty until the user refreshes.
+// htmx's `hx-select:inherited="#main" hx-swap:inherited="outerHTML"` finds
+// a #main in the response and the new element keeps the hx-boost /
+// hx-target / hx-history-elt wiring for subsequent navigations (and for
+// back/forward restores, which htmx 4 re-fetches into [hx-history-elt]
+// instead of localStorage). Without the wrapper htmx selects nothing —
+// the main area renders empty until the user refreshes.
 //
 // The fragment also includes the `page-tools` block (graph / TOC /
 // backlinks) carrying `hx-swap-oob="outerHTML"`. htmx pulls that out
@@ -563,7 +565,7 @@ func (r *Renderer) RenderToBytes(_ *Page, data TemplateData) ([]byte, error) {
 // not this block, on htmx requests.
 func (r *Renderer) RenderFragment(_ *Page, data TemplateData) ([]byte, error) {
 	var buf bytes.Buffer
-	buf.WriteString(`<main id="main" tabindex="-1" hx-boost="true" hx-target="#main" hx-select="#main, #page-tools" hx-swap="outerHTML show:window:top">`)
+	buf.WriteString(`<main id="main" tabindex="-1" hx-history-elt hx-boost:inherited="true" hx-target:inherited="#main" hx-select:inherited="#main, #page-tools" hx-swap:inherited="outerHTML show:top showTarget:window">`)
 	if err := r.templates.ExecuteTemplate(&buf, "content", data); err != nil {
 		return nil, err
 	}
