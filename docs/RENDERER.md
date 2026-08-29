@@ -31,7 +31,7 @@ The embedded bundle mounts under `/_/static/`:
 
 ```
 /_/static/wiki.css, wiki.js
-/_/static/vendor/{htmx,alpine,htmx-idiomorph-ext,alpine-persist}.min.js
+/_/static/vendor/{htmx,alpine,alpine-persist}.min.js
 /_/static/vendor/katex/..., /_/static/vendor/mermaid.min.js
 /_/static/fonts/*.woff2
 ```

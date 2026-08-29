@@ -78,8 +78,7 @@ if [[ "${CHECK_MODE}" == "true" ]]; then
 fi
 
 # --- Pinned versions -------------------------------------------------------
-HTMX_VERSION="2.0.4"
-HTMX_IDIOMORPH_VERSION="0.7.3"
+HTMX_VERSION="4.0.0"
 ALPINE_VERSION="3.14.9"
 KATEX_VERSION="0.16.11"
 MERMAID_VERSION="11.4.1"
@@ -94,12 +93,12 @@ fetch() {
     curl -fsSL --retry 3 --retry-delay 1 -o "${dest}" "${url}"
 }
 
-# --- htmx + idiomorph + Alpine --------------------------------------------
+# --- htmx + Alpine ----------------------------------------------------------
 echo "==> htmx ${HTMX_VERSION}"
 fetch "https://unpkg.com/htmx.org@${HTMX_VERSION}/dist/htmx.min.js" \
     "${VENDOR_DIR}/htmx.min.js"
-fetch "https://unpkg.com/idiomorph@${HTMX_IDIOMORPH_VERSION}/dist/idiomorph-ext.min.js" \
-    "${VENDOR_DIR}/htmx-idiomorph-ext.min.js"
+# htmx 4 folded idiomorph into core (innerMorph/outerMorph swap styles),
+# so there's no separate idiomorph extension to vendor anymore.
 
 echo "==> Alpine ${ALPINE_VERSION}"
 fetch "https://cdn.jsdelivr.net/npm/alpinejs@${ALPINE_VERSION}/dist/cdn.min.js" \

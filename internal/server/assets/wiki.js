@@ -68,34 +68,41 @@
   }
 
   // -------------------------- htmx config --------------------------
-  document.addEventListener("htmx:configRequest", function (e) {
-    e.detail.headers["X-Requested-With"] = "wiki-htmx";
+  // htmx 4 restructured the config-request detail: htmx 2 exposed the
+  // outgoing headers directly on evt.detail; htmx 4 nests the whole
+  // request under evt.detail.ctx.request.
+  document.addEventListener("htmx:config:request", function (e) {
+    e.detail.ctx.request.headers["X-Requested-With"] = "wiki-htmx";
   });
 
-  // After every #main swap, restore focus + announce title for SR users.
-  document.body.addEventListener("htmx:afterSwap", function (e) {
+  // htmx 4 collapses htmx 2's separate "afterSwap" (per main target)
+  // and "oobAfterSwap" (per OOB target) events into a single htmx:after:swap
+  // fired ONCE per response, after every swap task (main + OOB) has
+  // already completed -- evt.detail.ctx is the whole request context,
+  // not a single swapped element. A naive per-event rename would have
+  // left two listeners on the same event (double-firing initGraph /
+  // bindTOCScrollSpy on every nav), so both handlers are merged here.
+  //
+  // ctx.target is resolved from hx-target at request time (before the
+  // swap), so it still points at the *old* #main element after an
+  // outerHTML swap replaces it -- comparing by .id rather than identity
+  // is what htmx 2's evt.detail.target.id check did too. The #page-tools
+  // OOB block is always present in the fragment response (see the
+  // page-tools comment in base.html.tmpl), so it's always safe to
+  // re-init the rail widgets whenever the #main swap fires.
+  document.body.addEventListener("htmx:after:swap", function (e) {
+    const ctx = e.detail && e.detail.ctx;
+    if (!ctx || !ctx.target || ctx.target.id !== "main") return;
     const main = document.getElementById("main");
-    if (e.detail.target === main || (e.detail.target && e.detail.target.id === "main")) {
-      if (main && typeof main.focus === "function") {
-        main.focus({ preventScroll: false });
-      }
-      const announcer = document.getElementById("a11y-announcer");
-      if (announcer) announcer.textContent = document.title;
-      initDynamicAssets();
-      injectCodeCopy();
-      initTableSort();
-      syncExplorerActive();
+    if (main && typeof main.focus === "function") {
+      main.focus({ preventScroll: false });
     }
-  });
-
-  // The right-rail block (#page-tools — graph, TOC, backlinks) is brought
-  // in alongside #main via hx-swap-oob on the fragment response. htmx
-  // fires a separate htmx:oobAfterSwap event for OOB swaps; the regular
-  // htmx:afterSwap above never sees the page-tools target, so re-init
-  // the rail-specific widgets here against the freshly-swapped DOM.
-  document.body.addEventListener("htmx:oobAfterSwap", function (e) {
-    const targetId = e.detail && e.detail.target && e.detail.target.id;
-    if (targetId !== "page-tools") return;
+    const announcer = document.getElementById("a11y-announcer");
+    if (announcer) announcer.textContent = document.title;
+    initDynamicAssets();
+    injectCodeCopy();
+    initTableSort();
+    syncExplorerActive();
     initGraph();
     bindTOCScrollSpy();
   });
@@ -587,8 +594,8 @@
     // values. Reading cv.width directly is unsafe because the previous
     // assignment (cv.width = W * dpr) also updates the attribute, so a
     // second init on the same canvas would compound the scaling and
-    // visibly stretch the graph. htmx fires htmx:oobAfterSwap more than
-    // once per page-tools swap, and initGraph also runs on the initial
+    // visibly stretch the graph. initGraph runs from the merged
+    // htmx:after:swap handler above on every nav AND on the initial
     // DOMContentLoaded pass, so this idempotency matters.
     if (!cv.dataset.cssWidth) {
       cv.dataset.cssWidth = String(cv.width);

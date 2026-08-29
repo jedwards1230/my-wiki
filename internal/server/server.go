@@ -144,6 +144,11 @@ func (s *Server) readinessMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if !s.ready.Load() {
+			// Bare text, no #main/#page-tools markup. htmx 4 swaps 5xx
+			// responses by default (htmx 2 didn't) -- a boosted nav hitting
+			// this mid-rebuild would otherwise wipe #main via an empty
+			// outerHTML replace. Mitigated client-side via the
+			// htmx-config noSwap:["5xx"] meta tag in base.html.tmpl.
 			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 			return
 		}
