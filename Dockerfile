@@ -1,7 +1,7 @@
 # --- Go builder stage ---
 # Runs natively on the build host and cross-compiles to $TARGETARCH,
 # avoiding QEMU emulation for multi-arch builds.
-FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.27.0-alpine AS go-builder
 WORKDIR /src
 
 ARG TARGETOS
