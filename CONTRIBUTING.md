@@ -58,7 +58,7 @@ Keep documentation current as part of the change, not as a follow-up — update 
 Every push to `main` is evaluated for a release automatically:
 
 1. A `semver:major|minor|patch` label on the merged PR sets that bump; `semver:none` skips the release. A label always wins, even on a dev-only diff.
-2. With no label, the PR releases as `patch` **unless every changed file is dev-only** (CI workflows, `.claude/`, `CLAUDE.md`/`AGENTS.md`, `CONTRIBUTING*`, `docs/*.md`, `scripts/`, tests and `testdata/`, linter configs). In that case no release is cut. The list is the `DEV_ONLY` array in the detect step of `.github/workflows/release.yml`; anything not listed (source, embedded assets/templates, `docs/openapi.*`, `deploy/`, `README.md`, `plugins/`, `compose.yaml`, dependency manifests) counts as product.
+2. With no label, the PR releases as `patch` **unless every changed file is dev-only**, in which case no release is cut. The dev-only list is `.github/.releaseignore` (gitignore syntax, matched with `git check-ignore`). Anything it does not match (source, embedded assets/templates, `docs/openapi.*`, `deploy/`, `README.md`, `plugins/`, `compose.yaml`, dependency manifests) is product. A missing or empty file means nothing is dev-only. Note git semantics: a file cannot be re-included if a parent directory is excluded, so `docs/**` + `!docs/x/**` does not work; use `!docs/x/` and `!docs/x/**`.
 3. If there is no associated PR (direct push) or the changed-file list cannot be read, it releases as `patch` and logs a warning.
 
 Each release publishes an immutable `vX.Y.Z` Docker image to GHCR, a Helm chart to `oci://ghcr.io/jedwards1230/charts/my-wiki`, and a GitHub Release with AI-generated notes.

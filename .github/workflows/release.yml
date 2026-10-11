@@ -67,6 +67,12 @@ jobs:
       bump_type: ${{ steps.bump.outputs.type }}
       dry_run: ${{ steps.bump.outputs.dry_run }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/.releaseignore
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Determine bump type
         id: bump
         env:
@@ -78,47 +84,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Dev-only paths. With no semver:* label, a merged PR releases as
-          # patch UNLESS every changed file matches one of these. Patterns are
-          # bash [[ == ]] globs, where `*` also matches `/` -- so 'scripts/*'
-          # covers the whole subtree and '*_test.go' matches at any depth.
-          # Anything not listed counts as product. Product here = what the
-          # Dockerfile COPYs (go.mod/go.sum, cmd/, internal/ incl. the embedded
-          # assets + templates, docs/openapi.go + docs/openapi.yaml), the Helm
-          # chart under deploy/, README.md, and the Claude plugin under
-          # plugins/ + .claude-plugin/ (published to users). The wiki vault
-          # content is not in this repo (it lives on a PVC), so nothing here is
-          # "wiki content". docs/*.md are NOT copied into the image or served,
-          # but docs/openapi.* are, hence the '*.md' restriction.
-          DEV_ONLY=(
-            '.github/*'
-            '.devcontainer/*'
-            '.claude/*'
-            'CLAUDE.md'
-            'AGENTS.md'
-            '*/CLAUDE.md'
-            '*/AGENTS.md'
-            'CONTRIBUTING*'
-            'docs/*.md'
-            'scripts/*'
-            '*_test.go'
-            '*/testdata/*'
-            '.golangci*'
-            '.pre-commit-config.yaml'
-            '.editorconfig'
-            '.gitignore'
-            '.mcp.json'
-            '.markdownlint*'
-            '.yamllint*'
-          )
-          is_dev_only() {
-            local p
-            for p in "${DEV_ONLY[@]}"; do
-              # shellcheck disable=SC2053 # unquoted on purpose: $p is a glob
-              [[ $1 == $p ]] && return 0
-            done
-            return 1
-          }
+          # Dev-only paths live in .github/.releaseignore (gitignore syntax),
+          # matched with git's own engine via `git check-ignore`. Anything the
+          # file does not match is product.
+          RELEASEIGNORE="${GITHUB_WORKSPACE}/.github/.releaseignore"
 
           # workflow_dispatch: use provided inputs, always release
           if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
@@ -176,17 +145,38 @@ jobs:
           fi
           [ -z "$FILES" ] && FILES_OK=false
 
-          # Reports the first non-dev-only file (into FIRST_PRODUCT) and counts.
+          # Classify the files with .github/.releaseignore. FIRST_PRODUCT stays
+          # empty only when EVERY file is dev-only. A missing/empty ignore file
+          # means nothing is dev-only; a check-ignore error is treated like an
+          # unreadable diff (FILES_OK=false -> rule 3).
           FIRST_PRODUCT=""
           TOTAL=0
           if [ "$FILES_OK" = true ]; then
-            while IFS= read -r f; do
-              [ -z "$f" ] && continue
-              TOTAL=$((TOTAL + 1))
-              if [ -z "$FIRST_PRODUCT" ] && ! is_dev_only "$f"; then
-                FIRST_PRODUCT="$f"
+            mapfile -t FILE_LIST < <(printf '%s\n' "$FILES" | sort -u)
+            TOTAL=${#FILE_LIST[@]}
+            if [ ! -s "$RELEASEIGNORE" ]; then
+              echo "::notice::.github/.releaseignore is missing or empty; no path is dev-only"
+              FIRST_PRODUCT="${FILE_LIST[0]}"
+            else
+              SCRATCH=$(mktemp -d)
+              git init -q "$SCRATCH"
+              printf '%s\0' "${FILE_LIST[@]}" > "$SCRATCH.paths"
+              rc=0
+              git -C "$SCRATCH" -c core.excludesFile="$RELEASEIGNORE" \
+                check-ignore --no-index -z --stdin < "$SCRATCH.paths" > "$SCRATCH.matched" || rc=$?
+              if [ "$rc" -gt 1 ]; then
+                echo "::warning::git check-ignore failed (exit ${rc}); cannot classify changed files"
+                FILES_OK=false
+              else
+                mapfile -d '' MATCHED < "$SCRATCH.matched"
+                declare -A IS_DEV=()
+                for m in "${MATCHED[@]}"; do IS_DEV["$m"]=1; done
+                for f in "${FILE_LIST[@]}"; do
+                  if [ -z "${IS_DEV[$f]:-}" ]; then FIRST_PRODUCT="$f"; break; fi
+                done
               fi
-            done <<< "$FILES"
+              rm -rf "$SCRATCH" "$SCRATCH.paths" "$SCRATCH.matched"
+            fi
           fi
 
           # Rule 1: an explicit label wins, even for a dev-only diff.
@@ -230,7 +220,7 @@ jobs:
           # Rule 2: no label -> release unless every file is dev-only.
           if [ -z "$FIRST_PRODUCT" ]; then
             echo "::notice::Dev-only rule: all ${TOTAL} changed file(s) in PR #${PR} are dev-only; skipping the release"
-            echo "$FILES" | sort -u | head -10 | sed 's/^/  dev-only: /'
+            printf '  dev-only: %s\n' "${FILE_LIST[@]:0:10}"
             {
               echo "release=false"
               echo "type=patch"
