@@ -151,32 +151,36 @@ jobs:
           # unreadable diff (FILES_OK=false -> rule 3).
           FIRST_PRODUCT=""
           TOTAL=0
-          if [ "$FILES_OK" = true ]; then
-            mapfile -t FILE_LIST < <(printf '%s\n' "$FILES" | sort -u)
+          # Every step returns non-zero explicitly: inside `if ! classify`, set -e
+          # is suspended, so an unchecked failure would silently misclassify.
+          classify() {
+            local scratch rc=0 m f
+            mapfile -t FILE_LIST < <(printf '%s\n' "$FILES" | sort -u) || return 1
             TOTAL=${#FILE_LIST[@]}
             if [ ! -s "$RELEASEIGNORE" ]; then
               echo "::notice::.github/.releaseignore is missing or empty; no path is dev-only"
               FIRST_PRODUCT="${FILE_LIST[0]}"
-            else
-              SCRATCH=$(mktemp -d)
-              git init -q "$SCRATCH"
-              printf '%s\0' "${FILE_LIST[@]}" > "$SCRATCH.paths"
-              rc=0
-              git -C "$SCRATCH" -c core.excludesFile="$RELEASEIGNORE" \
-                check-ignore --no-index -z --stdin < "$SCRATCH.paths" > "$SCRATCH.matched" || rc=$?
-              if [ "$rc" -gt 1 ]; then
-                echo "::warning::git check-ignore failed (exit ${rc}); cannot classify changed files"
-                FILES_OK=false
-              else
-                mapfile -d '' MATCHED < "$SCRATCH.matched"
-                declare -A IS_DEV=()
-                for m in "${MATCHED[@]}"; do IS_DEV["$m"]=1; done
-                for f in "${FILE_LIST[@]}"; do
-                  if [ -z "${IS_DEV[$f]:-}" ]; then FIRST_PRODUCT="$f"; break; fi
-                done
-              fi
-              rm -rf "$SCRATCH" "$SCRATCH.paths" "$SCRATCH.matched"
+              return 0
             fi
+            scratch=$(mktemp -d) || return 1
+            # shellcheck disable=SC2064 # expand now: scratch is local to this function
+            trap "rm -rf '$scratch' '$scratch.paths' '$scratch.matched'" RETURN
+            git init -q "$scratch" || return 1
+            printf '%s\0' "${FILE_LIST[@]}" > "$scratch.paths" || return 1
+            git -C "$scratch" -c core.excludesFile="$RELEASEIGNORE" \
+              check-ignore --no-index -z --stdin < "$scratch.paths" > "$scratch.matched" || rc=$?
+            [ "$rc" -le 1 ] || return 1
+            mapfile -d '' MATCHED < "$scratch.matched" || return 1
+            declare -gA IS_DEV=()
+            for m in "${MATCHED[@]}"; do IS_DEV["$m"]=1; done
+            for f in "${FILE_LIST[@]}"; do
+              if [ -z "${IS_DEV[$f]:-}" ]; then FIRST_PRODUCT="$f"; break; fi
+            done
+            return 0
+          }
+          if [ "$FILES_OK" = true ] && ! classify; then
+            echo "::warning::Could not classify changed files against .github/.releaseignore; defaulting to a patch release (a semver:* label still wins)"
+            FILES_OK=false
           fi
 
           # Rule 1: an explicit label wins, even for a dev-only diff.
@@ -209,7 +213,7 @@ jobs:
 
           # Rule 3: cannot inspect the diff -> keep the old default (patch).
           if [ "$FILES_OK" != true ]; then
-            echo "::warning::Could not list changed files for PR #${PR}; defaulting to a patch release"
+            echo "::warning::Could not inspect changed files for PR #${PR}; defaulting to a patch release"
             {
               echo "release=true"
               echo "type=patch"
