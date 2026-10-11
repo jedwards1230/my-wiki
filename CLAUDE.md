@@ -108,7 +108,7 @@ Assets are embedded via `//go:embed` in `internal/server/assets/assets.go`, serv
 ## Build & Release
 
 - **Docker**: multi-stage — Go binary built in `golang:1.25.6-alpine`, copied into `node:24-alpine` (obsidian-headless).
-- **Helm**: `deploy/helm/my-wiki/`, published to `oci://ghcr.io/jedwards1230/charts/my-wiki`. Chart version auto-bumped by the release workflow.
+- **Helm**: `deploy/helm/my-wiki/`, published to `oci://ghcr.io/jedwards1230/charts/my-wiki`. Chart version auto-bumped by the release workflow. Releases are skipped for `semver:none` PRs and for unlabeled PRs touching only dev-only files (list: `.github/.releaseignore`; see CONTRIBUTING.md Releases).
 - **CI** (`.github/workflows/ci.yml`): test (race + coverage), lint (go vet + golangci-lint + mod tidy), build.
 
 ## Environment Variables

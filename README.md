@@ -53,7 +53,7 @@ A macOS LaunchAgent for daily lint (`--instance-name` is appended to the plist l
 
 ## Deployment
 
-Helm chart: `oci://ghcr.io/jedwards1230/charts/my-wiki`. Images: `ghcr.io/jedwards1230/my-wiki`. Both released by `release.yml` on push to `main` (semver via `semver:patch|minor|major` PR labels).
+Helm chart: `oci://ghcr.io/jedwards1230/charts/my-wiki`. Images: `ghcr.io/jedwards1230/my-wiki`. Both released by `release.yml` on push to `main` (semver via `semver:patch|minor|major` PR labels; `semver:none`, or a PR touching only dev-only files, skips the release — see [CONTRIBUTING.md](CONTRIBUTING.md#releases)).
 
 Key Helm values (see `deploy/helm/my-wiki/values.yaml` for the full list): `instanceName` sets `WIKI_INSTANCE_NAME` and is surfaced by the `whoami` MCP tool so agents can distinguish multiple wiki instances. `obsidianSync.standalone: true` moves obsidian-headless to a separate Deployment: the vault still needs an RWX PVC, but obsidian-headless's SQLite sync state lives under `$HOME` and SQLite's WAL shared memory can't run on NFS (which RWX means, including Longhorn RWX), so it also needs its own RWO volume — `obsidianSync.homePersistence`, on by default. The same applies to the in-pod sidecar whenever the shared PVC is RWX.
 

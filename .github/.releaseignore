@@ -1,0 +1,41 @@
+# .github/.releaseignore -- dev-only paths for the release gate (gitignore syntax).
+# A merged PR whose changed files ALL match here releases nothing, unless it carries a
+# semver:* label (an explicit label always wins). Anything not matched is product and
+# releases as a patch. Read by .github/workflows/release.yml.
+# NOTE git semantics: a file can't be re-included if a parent DIRECTORY is excluded.
+#   docs/**  +  !docs/user/**   does NOT work (docs/user/ itself is excluded);
+#   docs/**  +  !docs/user/  +  !docs/user/**   does. File-level `!docs/openapi.yaml` works.
+#
+# Product (deliberately NOT listed): everything the Dockerfile COPYs (go.mod/go.sum, cmd/,
+# internal/ incl. embedded assets + templates, docs/openapi.go + docs/openapi.yaml), deploy/
+# (Helm chart), README.md, compose.yaml, .dockerignore, and the Claude plugin
+# (plugins/, .claude-plugin/), which is published to users. Wiki content (the vault) is not
+# in this repo.
+
+# CI and dev environment
+/.github/
+/.devcontainer/
+/.claude/
+/.mcp.json
+/.golangci*
+/.pre-commit-config.yaml
+/.editorconfig
+/.gitignore
+/.markdownlint*
+/.yamllint*
+
+# Agent and contributor docs
+CLAUDE.md
+AGENTS.md
+/CONTRIBUTING*
+
+# Developer docs only: docs/*.md is never COPYed into the image or served.
+# docs/openapi.go and docs/openapi.yaml are embedded and served, so they stay product.
+/docs/*.md
+
+# Dev tooling not used by the Dockerfile or chart
+/scripts/
+
+# Tests and fixtures
+*_test.go
+testdata/

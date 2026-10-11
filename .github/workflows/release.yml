@@ -1,6 +1,15 @@
 # Auto-version and release on push to main.
-# Detects bump type from PR labels (defaults to patch), then delegates the
-# version/tag/AI-release-notes pipeline to the shared
+# Decides whether to release and the bump type from the merged PR:
+#   1. A semver:major|minor|patch label always wins; semver:none skips the
+#      release. This holds even when the diff is dev-only.
+#   2. No label: the PR's changed files are checked against the DEV_ONLY list
+#      in the detect step. If EVERY file is dev-only (CI, docs, tests, dev
+#      tooling) no release is cut; otherwise it releases as patch.
+#   3. No associated PR (direct push) or the files API fails: patch, with a
+#      ::warning::.
+#   4. workflow_dispatch always releases with the chosen bump.
+# When a release is due, it delegates the version/tag/AI-release-notes
+# pipeline to the shared
 # jedwards1230/release-workflows/.github/workflows/ai-release.yml workflow,
 # builds the Docker image + publishes the Helm chart, and creates the GitHub
 # Release with install snippets prepended to the AI-generated body.
@@ -54,57 +63,180 @@ jobs:
     name: Detect bump type
     runs-on: ubuntu-latest
     outputs:
+      release: ${{ steps.bump.outputs.release }}
       bump_type: ${{ steps.bump.outputs.type }}
       dry_run: ${{ steps.bump.outputs.dry_run }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/.releaseignore
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Determine bump type
         id: bump
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_BUMP_TYPE: ${{ inputs.bump_type }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          # workflow_dispatch: use provided inputs
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "type=${{ inputs.bump_type }}" >> $GITHUB_OUTPUT
-            if [ "${{ inputs.dry_run }}" = "true" ]; then
-              echo "dry_run=true" >> $GITHUB_OUTPUT
-              echo "::notice::Dry run: previewing release with bump_type=${{ inputs.bump_type }}"
+          set -euo pipefail
+
+          # Dev-only paths live in .github/.releaseignore (gitignore syntax),
+          # matched with git's own engine via `git check-ignore`. Anything the
+          # file does not match is product.
+          RELEASEIGNORE="${GITHUB_WORKSPACE}/.github/.releaseignore"
+
+          # workflow_dispatch: use provided inputs, always release
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            {
+              echo "release=true"
+              echo "type=${INPUT_BUMP_TYPE}"
+            } >> "$GITHUB_OUTPUT"
+            if [ "${INPUT_DRY_RUN}" = "true" ]; then
+              echo "dry_run=true" >> "$GITHUB_OUTPUT"
+              echo "::notice::Dry run: previewing release with bump_type=${INPUT_BUMP_TYPE}"
             else
-              echo "dry_run=false" >> $GITHUB_OUTPUT
+              echo "dry_run=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          echo "dry_run=false" >> "$GITHUB_OUTPUT"
+
+          # push event: find the merged PR. Retry up to 3 times -- the API may
+          # not have the merge commit indexed immediately after the push fires.
+          # The same response carries the PR's labels, so there is no second
+          # call whose failure could masquerade as "no label".
+          PR=""
+          LABELS=""
+          for attempt in 1 2 3; do
+            INFO=$(gh api "repos/${GH_REPO}/commits/${GITHUB_SHA}/pulls" \
+              --jq "[.[] | select(.merge_commit_sha == \"${GITHUB_SHA}\")][0] // empty | {number, labels: [.labels[].name]}" \
+              2>/dev/null || true)
+            if [ -n "$INFO" ]; then
+              PR=$(jq -r '.number' <<< "$INFO")
+              LABELS=$(jq -r '.labels[]' <<< "$INFO")
+              break
+            fi
+            echo "Attempt ${attempt}: no PR found for ${GITHUB_SHA}, retrying in 5s..."
+            sleep 5
+          done
+
+          if [ -z "$PR" ]; then
+            echo "::warning::No merged PR found for ${GITHUB_SHA}; cannot read labels or files, defaulting to a patch release"
+            {
+              echo "release=true"
+              echo "type=patch"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "PR #${PR} labels: ${LABELS:-<none>}"
+
+          # Changed files, including the old path of renames (a rename OUT of a
+          # product path must count as a product change). Empty -> ""; an API
+          # failure -> FILES_OK=false.
+          FILES_OK=true
+          if ! FILES=$(gh api "repos/${GH_REPO}/pulls/${PR}/files" --paginate \
+            --jq '.[] | .filename, (.previous_filename // empty)'); then
+            FILES_OK=false
+          fi
+          [ -z "$FILES" ] && FILES_OK=false
+
+          # Classify the files with .github/.releaseignore. FIRST_PRODUCT stays
+          # empty only when EVERY file is dev-only. A missing/empty ignore file
+          # means nothing is dev-only; a check-ignore error is treated like an
+          # unreadable diff (FILES_OK=false -> rule 3).
+          FIRST_PRODUCT=""
+          TOTAL=0
+          if [ "$FILES_OK" = true ]; then
+            mapfile -t FILE_LIST < <(printf '%s\n' "$FILES" | sort -u)
+            TOTAL=${#FILE_LIST[@]}
+            if [ ! -s "$RELEASEIGNORE" ]; then
+              echo "::notice::.github/.releaseignore is missing or empty; no path is dev-only"
+              FIRST_PRODUCT="${FILE_LIST[0]}"
+            else
+              SCRATCH=$(mktemp -d)
+              git init -q "$SCRATCH"
+              printf '%s\0' "${FILE_LIST[@]}" > "$SCRATCH.paths"
+              rc=0
+              git -C "$SCRATCH" -c core.excludesFile="$RELEASEIGNORE" \
+                check-ignore --no-index -z --stdin < "$SCRATCH.paths" > "$SCRATCH.matched" || rc=$?
+              if [ "$rc" -gt 1 ]; then
+                echo "::warning::git check-ignore failed (exit ${rc}); cannot classify changed files"
+                FILES_OK=false
+              else
+                mapfile -d '' MATCHED < "$SCRATCH.matched"
+                declare -A IS_DEV=()
+                for m in "${MATCHED[@]}"; do IS_DEV["$m"]=1; done
+                for f in "${FILE_LIST[@]}"; do
+                  if [ -z "${IS_DEV[$f]:-}" ]; then FIRST_PRODUCT="$f"; break; fi
+                done
+              fi
+              rm -rf "$SCRATCH" "$SCRATCH.paths" "$SCRATCH.matched"
+            fi
+          fi
+
+          # Rule 1: an explicit label wins, even for a dev-only diff.
+          LABEL_TYPE=""
+          for t in major minor patch none; do
+            if echo "$LABELS" | grep -qx "semver:${t}"; then
+              LABEL_TYPE="$t"
+              break
+            fi
+          done
+          if [ -n "$LABEL_TYPE" ]; then
+            if [ "$LABEL_TYPE" = none ]; then
+              echo "::notice::PR #${PR} is labelled semver:none; skipping the release"
+              {
+                echo "release=false"
+                echo "type=patch"
+              } >> "$GITHUB_OUTPUT"
+            else
+              echo "::notice::PR #${PR} is labelled semver:${LABEL_TYPE}; releasing as ${LABEL_TYPE}"
+              {
+                echo "release=true"
+                echo "type=${LABEL_TYPE}"
+              } >> "$GITHUB_OUTPUT"
+              if [ "$FILES_OK" = true ] && [ -z "$FIRST_PRODUCT" ]; then
+                echo "::warning::PR #${PR} is labelled semver:${LABEL_TYPE} but every changed file is dev-only; semver:none (or no label) would have skipped this release"
+              fi
             fi
             exit 0
           fi
 
-          # push event: check PR labels for semver override, default to patch.
-          # Retry up to 3 times — GitHub API may not have the merge commit indexed
-          # immediately after the push event fires.
-          LABELS=""
-          for attempt in 1 2 3; do
-            LABELS=$(gh pr list --state merged --base main --limit 100 \
-              --json labels,mergeCommit \
-              | jq -r --arg sha "$GITHUB_SHA" \
-                '.[] | select(.mergeCommit.oid == $sha) | .labels[].name' 2>/dev/null || echo "")
-            if [ -n "$LABELS" ]; then
-              break
-            fi
-            echo "Attempt ${attempt}: no labels found for ${GITHUB_SHA}, retrying in 5s..."
-            sleep 5
-          done
-
-          echo "Labels for commit ${GITHUB_SHA}: ${LABELS:-<none>}"
-
-          if echo "$LABELS" | grep -q 'semver:major'; then
-            echo "type=major" >> $GITHUB_OUTPUT
-          elif echo "$LABELS" | grep -q 'semver:minor'; then
-            echo "type=minor" >> $GITHUB_OUTPUT
-          else
-            echo "type=patch" >> $GITHUB_OUTPUT
+          # Rule 3: cannot inspect the diff -> keep the old default (patch).
+          if [ "$FILES_OK" != true ]; then
+            echo "::warning::Could not list changed files for PR #${PR}; defaulting to a patch release"
+            {
+              echo "release=true"
+              echo "type=patch"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          echo "dry_run=false" >> $GITHUB_OUTPUT
+
+          # Rule 2: no label -> release unless every file is dev-only.
+          if [ -z "$FIRST_PRODUCT" ]; then
+            echo "::notice::Dev-only rule: all ${TOTAL} changed file(s) in PR #${PR} are dev-only; skipping the release"
+            printf '  dev-only: %s\n' "${FILE_LIST[@]:0:10}"
+            {
+              echo "release=false"
+              echo "type=patch"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Releasing PR #${PR} as patch; first non-dev-only file: ${FIRST_PRODUCT}"
+            {
+              echo "release=true"
+              echo "type=patch"
+            } >> "$GITHUB_OUTPUT"
+          fi
 
   prepare:
     name: Tag & Generate Notes
     needs: [detect]
+    if: needs.detect.outputs.release == 'true'
     uses: jedwards1230/release-workflows/.github/workflows/ai-release.yml@9a48fc8ec1985081e7337e4ae6669a2753f847ef # v1
     with:
       service_name: my-wiki
@@ -118,7 +250,7 @@ jobs:
   build:
     name: Build and Push Image
     needs: [detect, prepare]
-    if: needs.detect.outputs.dry_run != 'true'
+    if: needs.detect.outputs.release == 'true' && needs.detect.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -162,7 +294,7 @@ jobs:
   helm:
     name: Publish Helm Chart
     needs: [detect, prepare]
-    if: needs.detect.outputs.dry_run != 'true'
+    if: needs.detect.outputs.release == 'true' && needs.detect.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -184,17 +316,19 @@ jobs:
       - name: Write summary
         run: |
           CHART_VERSION=$(grep '^version:' deploy/helm/my-wiki/Chart.yaml | awk '{print $2}')
-          echo "## Helm Chart Published" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Chart Version | ${CHART_VERSION} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Registry | \`oci://ghcr.io/${{ github.repository_owner }}/charts/my-wiki\` |" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Helm Chart Published"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Chart Version | ${CHART_VERSION} |"
+            echo "| Registry | \`oci://ghcr.io/${{ github.repository_owner }}/charts/my-wiki\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   release:
     name: Create GitHub Release
     needs: [detect, prepare, build, helm]
-    if: needs.detect.outputs.dry_run != 'true'
+    if: needs.detect.outputs.release == 'true' && needs.detect.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -260,4 +394,4 @@ jobs:
             echo "| Image | \`${REGISTRY}/${IMAGE_NAME}:${VERSION}\` |"
             echo "| Chart | \`oci://ghcr.io/${REPO_OWNER}/charts/my-wiki:${VERSION}\` |"
             echo "| Bump | ${BUMP_TYPE} |"
-          } >> $GITHUB_STEP_SUMMARY
+          } >> "$GITHUB_STEP_SUMMARY"
