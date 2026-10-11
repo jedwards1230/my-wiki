@@ -138,12 +138,19 @@ jobs:
 
           # push event: find the merged PR. Retry up to 3 times -- the API may
           # not have the merge commit indexed immediately after the push fires.
+          # The same response carries the PR's labels, so there is no second
+          # call whose failure could masquerade as "no label".
           PR=""
+          LABELS=""
           for attempt in 1 2 3; do
-            PR=$(gh api "repos/${GH_REPO}/commits/${GITHUB_SHA}/pulls" \
-              --jq "[.[] | select(.merge_commit_sha == \"${GITHUB_SHA}\")][0].number // empty" \
+            INFO=$(gh api "repos/${GH_REPO}/commits/${GITHUB_SHA}/pulls" \
+              --jq "[.[] | select(.merge_commit_sha == \"${GITHUB_SHA}\")][0] // empty | {number, labels: [.labels[].name]}" \
               2>/dev/null || true)
-            [ -n "$PR" ] && break
+            if [ -n "$INFO" ]; then
+              PR=$(jq -r '.number' <<< "$INFO")
+              LABELS=$(jq -r '.labels[]' <<< "$INFO")
+              break
+            fi
             echo "Attempt ${attempt}: no PR found for ${GITHUB_SHA}, retrying in 5s..."
             sleep 5
           done
@@ -157,7 +164,6 @@ jobs:
             exit 0
           fi
 
-          LABELS=$(gh api "repos/${GH_REPO}/issues/${PR}/labels" --jq '.[].name' 2>/dev/null || true)
           echo "PR #${PR} labels: ${LABELS:-<none>}"
 
           # Changed files, including the old path of renames (a rename OUT of a
