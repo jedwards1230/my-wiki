@@ -164,8 +164,8 @@ readLoop:
 	case waitErr = <-waitCh:
 	case <-time.After(5 * time.Second):
 		_ = cmd.Process.Kill()
-		<-waitCh
-		t.Fatal("subprocess did not exit after stdin close")
+		killedErr := <-waitCh
+		t.Fatalf("subprocess did not exit after stdin close (wait after kill: %v)", killedErr)
 	}
 
 	stderrBytes := <-stderrCh
