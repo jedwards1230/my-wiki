@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Go 1.25.6 or later (`go version`)
+- Go 1.26.10 or later (`go version`)
 - `golangci-lint` (for linting — install via `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest` or your package manager)
 
 ## Build, test & lint
